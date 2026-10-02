@@ -36,13 +36,13 @@
 
     <template id="ws-template">
       <main class="grid">
-        <section class="pane pane-agent"><div class="title agent-title"><span class="agent-name">Agent</span><span class="grow"></span><button class="sess-add" title="이 폴더에 셸 하나 더 (⌘⇧T) · 셸 이동 ⌃⌘1~9">＋ 셸</button></div><div class="term"></div></section>
+        <section class="pane pane-agent"><div class="title agent-title"><span class="agent-name">Agent</span><span class="grow"></span><button class="sess-add" title="이 폴더에 셸 하나 더 (⌘⇧T) · 셸 이동 ⌃⌘1~9">＋ 셸</button></div><div class="where-banner" data-pane="agent" hidden></div><div class="term"></div></section>
         <!-- M1: this folder's agent sessions (shown when there are 2 or more) -->
         <nav class="rail" hidden></nav>
         <aside class="side">
           <section class="pane pane-avatar"><div class="title">🐾 Avatar</div><div class="avatar-box"><div class="stage"><div class="pokeball" title="불러오는 중…"></div><div class="empty-ball" title="파트너가 없어요" hidden></div><img class="poke" alt="" hidden /><div class="fx"></div></div><div class="caption"><span class="poke-label"></span> <span class="state-line dim"></span></div><div class="poke-exp dim"></div></div><ul class="activity"></ul></section>
           <section class="pane pane-changes"><div class="title">📝 변경 사항 <span class="changes-count"></span><span class="grow"></span><button class="changes-refresh" title="새로 고침">↻</button></div><ul class="changes"></ul></section>
-          <section class="pane pane-shell"><div class="title">🐚 Shell</div><div class="term"></div></section>
+          <section class="pane pane-shell"><div class="title">🐚 Shell</div><div class="where-banner" data-pane="shell" hidden></div><div class="term"></div></section>
         </aside>
       </main>
     </template>

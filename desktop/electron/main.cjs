@@ -97,16 +97,19 @@ function spawnPty({ id, cmd, cwd, cols, rows, env }) {
     encoding: null, // Buffers: the UI reassembles UTF-8 split across chunks
   });
   p.startedAt = Date.now();
-  const [wsId, kind] = id.split(":");
+  // its terminal id can change: a running agent moved to another tab (pty_move, #3)
+  p.cvimId = id;
   // a replaced process (agent switch) keeps talking for a moment after kill(): its late output
   // and exit notice must not land in its successor's terminal
   p.onData((buf) => {
+    const id = p.cvimId, [wsId, kind] = id.split(":");
     if (ptys.get(id) !== p) return;
     if (kind === "agent") { const s = sessions.get(wsId); if (!(s?.host && !s.hostKey)) outputSeen(wsId); } // activity adapter (agents without a log); wsId = session id; a bare host shell isn't
     else if (kind === "shell" && workspaces.get(wsId)?.shell) outputSeen(workspaces.get(wsId).shell.id); // an agent run in the shell
     send("pty", { id, data: Buffer.from(buf).toString("base64") });
   });
   p.onExit(() => {
+    const id = p.cvimId, [wsId, kind] = id.split(":");
     if (ptys.get(id) !== p) return;
     ptys.delete(id);
     const sess = kind === "agent" ? sessions.get(wsId) : null;
@@ -903,6 +906,45 @@ const commands = {
     const res = await run(["extensions", "link", "--consent", ext]);
     logLine(`gemini link ok=${res.ok}`);
     return { ok: res.ok && agents.geminiLinked(), msg: res.ok ? "연결했어요 — 다음에 띄우는 Gemini부터 적용" : res.out.trim().split("\n").slice(-2).join(" ") };
+  },
+  // #3: an agent typed after `cd` into another folder moves — still running — into that folder's tab
+  // (`to`, its session `toSession`): the terminal process is handed over, the source shell/session
+  // gets its own folder back (the UI starts a fresh shell there). Its hook log keeps the source id.
+  async pty_move({ from, pane, session, to, toSession }) {
+    const src = wsOf(from), dst = wsOf(to), t = sessOf(dst, toSession);
+    const s = pane === "shell" ? null : sessOf(src, session);
+    const fromId = pane === "shell" ? `${src.id}:shell` : `${s.id}:agent`;
+    const key = pane === "shell" ? src.shell?.key : s.hostKey;
+    const p = ptys.get(fromId);
+    if (!p || !key) throw new Error("no agent to move");
+    const coreFrom = pane === "shell" ? src.shell.id : s.id;
+    // the target's fresh shell makes way (once its rc files ran)
+    await shellSettled(t);
+    // its tracking moves along as it is (adapter, read position, hook log under its old id)
+    const moved = await core.request("move", { from: coreFrom, to: t.id }).catch(() => null);
+    // the source starts over with its own folder (the UI starts a fresh shell there)
+    if (pane === "shell") { if (src.shell) { shellOf.delete(src.shell.id); src.shell = null; } send("shell-agent", { ws: src.id, agent: null, where: null }); }
+    else {
+      s.hostKey = null;
+      s.running = false;
+      await core.request("open", { ws: s.id, kind: "activity", cwd: s.cwd, tabs: TABS }).catch(() => {});
+    }
+    const old = ptys.get(`${t.id}:agent`);
+    ptys.delete(fromId);
+    p.cvimId = `${t.id}:agent`;
+    ptys.set(p.cvimId, p);
+    if (old && old !== p) { try { old.kill(); } catch {} }
+    t.host = true;
+    t.hostKey = key;
+    t.running = true;
+    t.agent = key;
+    agents.remember(t.cwd, key);
+    const fresh = moved;
+    logLine(`pty-move ${fromId} -> ${p.cvimId} ${key}`);
+    saveSession();
+    send("host-agent", { ws: dst.id, session: t.id, agent: agentInfo(t), where: null });
+    if (fresh) send("agent-state", { ws: dst.id, session: t.id, source: "agent", agent: agentInfo(t), ...fresh });
+    return { agent: agentInfo(t), id: p.cvimId };
   },
   // official install pages only
   open_url({ url }) {

@@ -153,16 +153,57 @@ const paneTitle = (tab, a) => (tab.shellOnly ? (tab.hostAgent ? `🐚 Shell · $
 function titleHTML(text, where) {
   if (!where) return esc(text);
   return esc(text) + (where.outside
-    ? ` <button class="where out" data-cwd="${esc(where.cwd)}" title="다른 폴더에서 실행 중: ${esc(where.full)} — 이 탭의 변경 사항·파트너는 원래 폴더 기준이에요. 눌러서 그 폴더를 새 탭으로 열기">⚠ ${esc(where.label)} · 새 탭으로</button>`
+    ? ` <span class="where out" title="다른 폴더에서 실행 중: ${esc(where.full)}">⚠ ${esc(where.label)}</span>`
     : ` <span class="where" title="${esc(where.cwd)}">📁 ${esc(where.rel)}</span>`);
 }
-function whereNotice(where) {
-  if (where?.outside) toast(`에이전트가 다른 폴더(${where.label})에서 실행 중 — 칸 제목의 "새 탭으로"로 따로 열 수 있어요`);
+
+// #3: an agent running in another folder — a banner over its pane: move it (still running) into
+// that folder's tab, the shell here gets its own folder back; or keep it here
+function renderWhere(tab) {
+  const host = curSession(tab);
+  const rows = [["agent", tab.hostAgent && host?.hostWhere], ["shell", tab.shellAgent && tab.shellWhere]];
+  for (const [pane, where] of rows) {
+    const el = $(`.where-banner[data-pane="${pane}"]`, tab.view);
+    if (!el) continue;
+    const show = !!(where?.outside && !where.dismissed);
+    el.hidden = !show;
+    if (!show) continue;
+    el.innerHTML = `<span class="msg">⚠ 이 에이전트는 다른 폴더 <b>${esc(where.label)}</b>에서 실행 중이에요 — 이 탭(${esc(base(tab.cwd))})의 변경 사항·파트너와는 따로예요</span>`
+      + `<button class="move" title="${esc(where.full)}">새 탭으로 옮기기</button><button class="ghost keep">그대로 두기</button>`;
+    el.querySelector(".move").onclick = () => moveAgent(tab, pane);
+    el.querySelector(".keep").onclick = () => { where.dismissed = true; renderWhere(tab); };
+  }
 }
-document.addEventListener("click", (e) => {
-  const b = e.target.closest(".where.out");
-  if (b) { e.preventDefault(); openFolder(b.dataset.cwd); }
-});
+
+async function moveAgent(tab, pane) {
+  const host = curSession(tab);
+  const where = pane === "shell" ? tab.shellWhere : host?.hostWhere;
+  if (!where?.outside) return;
+  toast(`${where.label} 탭으로 옮기는 중…`);
+  const target = byId.get([...byId.values()].find((t) => t.cwd === where.cwd)?.id) || (await openFolder(where.cwd));
+  if (!target) return;
+  // the target tab's session: its first one if free, else one more shell there
+  let ts = target.sessions[0];
+  if (ts.running || !ts.host) ts = await newSession(target);
+  try {
+    const r = await invoke("pty_move", { from: tab.id, pane, session: host?.id, to: target.id, toSession: ts.id });
+    // the source gets its own folder back
+    if (pane === "shell") { onShellAgent(tab, null); startPane(tab.panes.shell); }
+    else await startHost(tab, host);
+    renderWhere(tab);
+    // the moved program redraws in its new terminal (a size change = SIGWINCH)
+    selectTab(target);
+    switchSession(target, ts.id);
+    const p = ts.pane;
+    p.term.reset();
+    fitPane(p);
+    await invoke("pty_resize", { id: r.id, cols: p.term.cols, rows: Math.max(2, p.term.rows - 1) });
+    setTimeout(() => invoke("pty_resize", { id: r.id, cols: p.term.cols, rows: p.term.rows }), 150);
+    toast(`${r.agent.label}을(를) ${base(target.cwd)} 탭으로 옮겼어요 — 원래 탭은 다시 ${base(tab.cwd)} 셸`);
+  } catch (e) {
+    toast(`옮기지 못했어요: ${e?.message || e}`);
+  }
+}
 
 function showAgent(tab, a) {
   tab.agent = a;
@@ -471,6 +512,7 @@ function switchSession(tab, sid, { quiet = false } = {}) {
   tab.panes.agent = sess.pane;
   resize(sess.pane);
   if (sess.agent) showAgent(tab, sess.agent);
+  renderWhere(tab);
   tab.agentState = sess.state || null;
   if (sess.state && !(tab.swapped && tab.shellAgent)) renderState(tab, sess.state, { quiet: true });
   renderRail(tab);
@@ -588,12 +630,12 @@ const shownOf = (tab) => (tab.swapped && tab.shellAgent ? tab.shellState : tab.s
 function onShellAgent(tab, agent, where = null) {
   tab.shellAgent = agent;
   tab.shellWhere = agent ? where : null;
-  whereNotice(tab.shellWhere);
   tab.shellState = null;
   if (!agent && tab.shellOnly && !tab.hostAgent && tab.autoSwapped) renderState(tab, SHELL_STATE); // the agent run in the shell pane ended
   else if (!agent && tab.agentState && !tab.autoSwapped) renderState(tab, tab.agentState); // back to the agent pane's state
   const title = $(".pane-shell .title", tab.view);
   title.innerHTML = titleHTML(agent ? `🐚 Shell · ${agent.label}` : "🐚 Shell", tab.shellWhere);
+  renderWhere(tab);
   if (agent && !tab.swapped) {
     swapPanes(tab, true);
     tab.autoSwapped = true;
@@ -1588,7 +1630,7 @@ listen("host-agent", (e) => {
   sess.hostAgent = a;
   sess.hostWhere = a ? e.payload.where : null;
   sess.running = !!a;
-  if (t.sid === sess.id) whereNotice(sess.hostWhere);
+  renderWhere(t);
   if (a) sess.agent = a;
   if (t.sid === sess.id) {
     if (a) showAgent(t, a);
@@ -2381,15 +2423,23 @@ async function cdTest() {
     const bin = info.test.fake_bin;
     await run(tab, tab.panes.agent, `cd sub && ${bin}/claude`, true);
     await run(tab, tab.panes.agent, `cd ../../other && ${bin}/codex`, true);
-    await type(tab.panes.agent, `${bin}/codex`); // still in "other": the ⚠ button while it runs
+    // still in "other": a long-running one — the banner, then moved (running) into other's tab
+    await type(tab.panes.agent, `${bin}2/codex`);
     for (let i = 0; i < 30 && !tab.hostAgent; i++) await wait(300);
     await wait(500);
-    const b = $(".agent-name .where.out", tab.view);
+    const banner = $('.where-banner[data-pane="agent"]', tab.view);
     await invoke("shot_test", { name: "cd-outside" });
-    await log(`outside-button=${b?.textContent} cwd=${b?.dataset.cwd}`);
-    b?.click();
-    await wait(2500);
-    await log(`tabs=${tabs.length} new=${tabs.at(-1)?.cwd === b?.dataset.cwd}`);
+    await log(`banner shown=${!banner.hidden} text=${banner.textContent}`);
+    banner.querySelector(".move").click();
+    for (let i = 0; i < 40 && tabs.length < 2; i++) await wait(250);
+    const other = tabs.at(-1);
+    for (let i = 0; i < 40 && !other.hostAgent; i++) await wait(250);
+    await wait(1500);
+    await log(`moved: tabs=${tabs.length} target=${base(other.cwd)} target-agent=${other.hostAgent?.key} target-title=${$(".agent-name", other.view).textContent} source-agent=${tab.hostAgent?.key || "-"} source-title=${$(".agent-name", tab.view).textContent} source-banner-hidden=${banner.hidden}`);
+    const seen = [];
+    for (let i = 0; i < 60; i++) { const st = other.state?.state; if (seen.at(-1) !== st) seen.push(st); if (st === "done") break; await wait(250); }
+    await log(`moved agent states in target=${seen.join(">")} usage=${$("#usage").textContent}`);
+    await invoke("shot_test", { name: "cd-moved" });
     await run(tabs[0], tabs[0].panes.shell, `cd sub && ${bin}/claude`, false);
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("autotype done");

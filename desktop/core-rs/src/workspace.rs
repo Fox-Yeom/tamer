@@ -30,6 +30,9 @@ pub struct Workspace {
     pub last_sent: String,
     /// activity: when the current stretch of output began (a long one that goes quiet = "done", guessed)
     busy_since: Option<Instant>,
+    /// an agent moved here from another shell keeps writing its hook log under that shell's id
+    /// (its CVIM_TAB_ID can't change): read that log instead of this workspace's
+    pub log_id: Option<String>,
     /// hooks: an event has arrived since the agent started (none for a while = fall back to output)
     any_event: bool,
     started: Instant,
@@ -66,14 +69,15 @@ impl Workspace {
             id: id.into(), kind, cwd: cwd.into(), tabs: tabs.into(), st: State::default(),
             offset: 0, status: None, status_mtime: None, usage: None, codex: None, claude: None,
             hits: VecDeque::new(), output_seen: false, last_output: None, esc_at: None, last_sent: String::new(),
-            busy_since: None, any_event: false, started: Instant::now(),
+            busy_since: None, any_event: false, started: Instant::now(), log_id: None,
         };
         ws.restart(kind);
         ws
     }
 
     fn files(&self) -> [PathBuf; 2] {
-        [self.tabs.join(format!("{}.log", self.id)), self.tabs.join(format!("{}.status.json", self.id))]
+        let id = self.log_id.as_deref().unwrap_or(&self.id);
+        [self.tabs.join(format!("{id}.log")), self.tabs.join(format!("{id}.status.json"))]
     }
 
     /// A new agent process (start / ⌘G switch): fresh state, start clean.

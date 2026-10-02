@@ -4,6 +4,7 @@
 //!   {"id":1,"method":"open","params":{"ws":"<id>","kind":"hooks|codex_log|activity","cwd":"…","tabs":"…/tabs"}}
 //!   {"id":2,"method":"restart","params":{"ws":"<id>","kind":"…","cwd":"…"?}}  new agent process in the workspace (cwd: where it runs, for its logs)
 //!   {"id":3,"method":"close","params":{"ws":"<id>"}}
+//!   {"id":7,"method":"move","params":{"from":"<id>","to":"<id>"}}     an agent moved to another session (keeps its state)
 //!   {"id":4,"method":"snapshot","params":{"ws":"<id>"}}                -> current state payload
 //!   {"id":5,"method":"set_state","params":{"ws":"<id>","state":"sleep"}}  agent process exited
 //!   {"id":6,"method":"path_inside","params":{"root":"…","path":"…"}}   -> {"inside":bool,"real":…}
@@ -70,8 +71,32 @@ impl Core {
                 if let Some(cwd) = p["cwd"].as_str() {
                     ws.cwd = Path::new(cwd).into();
                 }
+                // an agent moved over from another shell: its hook log keeps that shell's id
+                ws.log_id = p["log_id"].as_str().map(Into::into);
                 ws.restart(kind);
                 Ok(ws.payload())
+            }
+            // an agent moved, still running, into another session (#3): its whole state goes along
+            // (adapter, read position, log claims); a hook agent keeps writing under its old id
+            "move" => {
+                let (from, to) = (str_param(p, "from")?, str_param(p, "to")?);
+                let mut ws = self.workspaces.remove(from).ok_or("no such workspace")?;
+                if let Some(old) = self.workspaces.remove(to) {
+                    self.release(&old);
+                }
+                if ws.log_id.is_none() {
+                    ws.log_id = Some(from.into());
+                }
+                for owner in self.claimed.values_mut() {
+                    if owner == from {
+                        *owner = to.into();
+                    }
+                }
+                ws.id = to.into();
+                ws.last_sent.clear();
+                let payload = ws.payload();
+                self.workspaces.insert(to.into(), ws);
+                Ok(payload)
             }
             "close" => {
                 if let Some(ws) = self.workspaces.remove(str_param(p, "ws")?) {

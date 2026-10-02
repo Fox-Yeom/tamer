@@ -206,6 +206,12 @@ body.away #wild { visibility: hidden; }
 .agents-note { font-size: 12px; line-height: 1.5; }
 /* #3: where an agent typed after `cd` runs */
 .title .where { margin-left: 6px; font-size: 11px; color: var(--dim); }
+.where-banner { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: rgba(217, 119, 87, .16); border-bottom: 1px solid #a8663a; color: #f6c7a6; font-size: 13px; }
+.where-banner[hidden] { display: none; }
+.where-banner .msg { flex: 1; min-width: 0; }
+.where-banner b { color: #fff; }
+.where-banner button { border: 1px solid #d98a5a; background: #d97757; color: #1b1b1f; font: inherit; font-weight: 700; border-radius: 6px; padding: 4px 12px; cursor: pointer; white-space: nowrap; }
+.where-banner button.ghost { background: transparent; color: #f6c7a6; font-weight: 400; }
 .title .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; vertical-align: bottom; display: inline-block; }
 .title .where.out { border: 1px solid #a8663a; background: rgba(217, 119, 87, .14); color: #f0b48a; border-radius: 5px; padding: 0 6px; font: inherit; font-size: 11px; cursor: pointer; }
 .choose-box { width: min(760px, 94vw); max-height: 86vh; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
