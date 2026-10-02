@@ -63,17 +63,31 @@ function usualPath(login = "") {
   const usual = [path.join(HOME, ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", path.join(HOME, ".bun/bin"), ...nvm];
   return [login, process.env.PATH || "", ...usual].filter(Boolean).join(":");
 }
+// The user's shell (any: zsh, bash, fish, ksh, tcsh/csh, nu …) — $SHELL if it runs, else zsh.
+// csh / tcsh can't take -l with other options; they read ~/.tcshrc / ~/.cshrc for every shell.
+const isCsh = (sh) => /^t?csh$/.test(path.basename(sh));
+function userShell() {
+  const sh = process.env.SHELL;
+  try { if (sh && path.isAbsolute(sh)) { fs.accessSync(sh, fs.constants.X_OK); return sh; } } catch {}
+  return "/bin/zsh";
+}
+// how an interactive terminal starts it: a login shell where the shell allows it
+const shellArgs = (sh = userShell()) => (isCsh(sh) ? [] : ["-l"]);
+
 function prepareEnv() {
   if (preparing) return preparing;
-  const shell = process.env.SHELL || "/bin/zsh";
+  const shell = userShell();
+  // absolute paths: the shell's own syntax (fish, nu, csh …) doesn't matter
+  const script = `/usr/bin/printf '\\n${MARK}\\n'; /usr/bin/env -0`;
   preparing = (async () => {
-    const out = await run(shell, ["-lic", `printf '\\n${MARK}\\n'; env -0`], 3000);
+    const out = await run(shell, isCsh(shell) ? ["-c", script] : ["-l", "-i", "-c", script], 3000);
     if (out != null && out.includes(`${MARK}\n`)) {
       const body = out.slice(out.lastIndexOf(`${MARK}\n`) + MARK.length + 1); // rc files may print first
       const env = Object.fromEntries(body.split("\0").filter((kv) => kv.includes("=")).map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]));
-      if (env.PATH) return (termEnv = env);
+      // plus the usual places after it (an agent installed where this shell's config doesn't look)
+      if (env.PATH) return (termEnv = { ...env, PATH: [...new Set(usualPath(env.PATH).split(":"))].join(":") });
     }
-    const login = await run(shell, ["-lc", "printf %s \"$PATH\""], 2000);
+    const login = isCsh(shell) ? null : await run(shell, ["-l", "-c", "/usr/bin/printenv PATH"], 2000);
     return (termEnv = { PATH: usualPath(login || "") });
   })();
   return preparing;
@@ -203,4 +217,4 @@ function next(key) {
 
 const label = (key) => `${get(key).icon} ${get(key).name}`;
 
-module.exports = { all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, where, status, INSTALL };
+module.exports = { all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };

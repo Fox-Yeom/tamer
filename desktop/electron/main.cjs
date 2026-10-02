@@ -84,12 +84,14 @@ function isDir(p) {
 }
 
 // ── PTYs ────────────────────────────────────────────────────────────────────
-// the user's login shell runs the command (an app started from Finder has no PATH)
-function spawnPty({ id, cmd, cwd, cols, rows, env }) {
+// shell: the user's own shell, interactive (any shell — zsh, bash, fish, tcsh …); otherwise the
+// command (agents) runs through /bin/sh with the user's terminal environment (PATH etc. from
+// agents.loginEnv) — the user's shell can't be relied on to take `-l -c <POSIX command>` (csh)
+function spawnPty({ id, cmd, shell = false, cwd, cols, rows, env }) {
   const old = ptys.get(id);
   if (old) { try { old.kill(); } catch {} ptys.delete(id); }
-  const shell = process.env.SHELL || "/bin/zsh";
-  const p = pty.spawn(shell, ["-l", "-c", cmd], {
+  const [file, args] = shell ? [agents.userShell(), agents.shellArgs()] : ["/bin/sh", ["-c", cmd]];
+  const p = pty.spawn(file, args, {
     name: "xterm-256color", cols, rows, cwd,
     // the user's terminal environment (PATH from their rc files, CODEX_HOME …) — agents installed
     // with nvm / Homebrew / pnpm start the same as in their terminal
@@ -283,7 +285,7 @@ function startHost(s, { cols, rows }) {
   s.hostKey = null;
   s.running = false;
   s.resumed = false;
-  spawnPty({ id: `${s.id}:agent`, cmd: process.env.SHELL || "/bin/zsh", cwd: s.cwd, cols: num(cols), rows: num(rows), env: shellEnv(s.id) });
+  spawnPty({ id: `${s.id}:agent`, shell: true, cwd: s.cwd, cols: num(cols), rows: num(rows), env: shellEnv(s.id) });
   core.request("set_state", { ws: s.id, state: "idle" }).catch(() => {});
   logLine(`host-shell ws=${s.id}`);
   saveSession();
@@ -793,7 +795,7 @@ const commands = {
     const restored = sess?.tabs?.filter(isDir) || [];
     const open = [...new Set([...restored, ...handed])];
     return {
-      home: HOME, shell: process.env.SHELL || "/bin/zsh", recent: recentDirs(), open,
+      home: HOME, shell: agents.userShell(), recent: recentDirs(), open,
       restored: restored.length ? { tabs: restored, active: sess.active, sessions: sess.sessions || {}, shell: sess.shell || [] } : null,
       // a new folder opens as a shell; the agent starts with ⌘G (or typed in the shell). Tests and
       // CVIM_DESKTOP_AUTOSTART=1: the agent starts right away like before
@@ -842,10 +844,9 @@ const commands = {
   // the shell pane: the command is fixed here (the agent pane uses agent_start)
   pane_start({ ws: id, kind, cols, rows }) {
     const ws = wsOf(id);
-    let cmd;
-    if (kind === "shell") cmd = TEST && process.env.CVIM_DESKTOP_PERF ? "seq 1 300000" : process.env.SHELL || "/bin/zsh";
-    else throw new Error(`no such pane: ${kind}`);
-    spawnPty({ id: `${ws.id}:${kind}`, cmd, cwd: ws.cwd, cols: num(cols), rows: num(rows), env: shellEnv(`${ws.id}~shell`) });
+    if (kind !== "shell") throw new Error(`no such pane: ${kind}`);
+    const perf = TEST && process.env.CVIM_DESKTOP_PERF;
+    spawnPty({ id: `${ws.id}:${kind}`, ...(perf ? { cmd: "seq 1 300000" } : { shell: true }), cwd: ws.cwd, cols: num(cols), rows: num(rows), env: shellEnv(`${ws.id}~shell`) });
   },
   pty_write({ id, data }) {
     const p = ptys.get(String(id));
