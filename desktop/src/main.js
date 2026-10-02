@@ -2518,6 +2518,12 @@ async function main() {
   if (info.test.s2x_test) s2xTest();
   if (info.test.u1_test) u1Test();
   if (info.test.agents_test) agentsTest();
+  if (info.test.diag_test) setTimeout(async () => {
+    const d = await invoke("diag_test");
+    const leak = tabs.flatMap((t) => [t.cwd, base(t.cwd)]).filter((x) => d.includes(x));
+    await invoke("log_line", { line: `diag-test tabs=${tabs.length} leaks=${JSON.stringify(leak)} cwd-lines=${JSON.stringify(d.split("\n").filter((l) => l.includes("cwd=")))}` });
+    invoke("log_line", { line: "autotype done" });
+  }, 4000);
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();

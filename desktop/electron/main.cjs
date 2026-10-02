@@ -822,6 +822,7 @@ const commands = {
         u1_test: !!process.env.CVIM_DESKTOP_U1_TEST, // usage before the first reply, shell Claude's model/ctx
         s3_test: !!process.env.CVIM_DESKTOP_S3_TEST, // Gemini / OpenCode typed into the shells
         agents_test: !!process.env.CVIM_DESKTOP_AGENTS_TEST, // the agent connection list
+        diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
         multi_test: !!process.env.CVIM_DESKTOP_MULTI_TEST, // a shell finishing while another needs you
         cd_test: !!process.env.CVIM_DESKTOP_CD_TEST, // agents typed after a cd (#3)
         tour_test: !!process.env.CVIM_DESKTOP_TOUR_TEST, // README screenshots (no Pokémon on screen)
@@ -1089,7 +1090,9 @@ function diagnostics() {
   const label = new Map(folders.map((f, i) => [f, `폴더${i + 1}`]));
   const clean = (t) => {
     let s = String(t);
-    for (const [f, l] of label) s = s.split(f).join(l).split(` ${path.basename(f)}`).join(` ${l}`).split(`=${path.basename(f)}`).join(`=${l}`);
+    // longest first: a folder inside another open folder must not end up as "폴더1/<its path>" (#6)
+    for (const [f, l] of [...label].sort((a, b) => b[0].length - a[0].length)) s = s.split(f).join(l).split(` ${path.basename(f)}`).join(` ${l}`).split(`=${path.basename(f)}`).join(`=${l}`);
+    s = s.replace(/(폴더\d+)\/[^\s"')]+/g, "$1/<경로>"); // a path under a hidden folder (e.g. a tab closed since)
     s = s.replace(/^(\S+ changes revert \S+ \S+) .*$/, "$1 <파일>"); // the reverted file's name
     s = s.replace(/(^|[\s=:("'])(\/|~\/)[^\s"')]+/g, "$1<경로>");
     return s.split(HOME).join("~");
