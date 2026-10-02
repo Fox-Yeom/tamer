@@ -1075,6 +1075,10 @@ const num = (v) => Math.max(1, Math.min(1000, Number(v) || 1));
 
 // beta: where feedback goes, the open-source notices, the About panel
 const FEEDBACK = "yeomjae5766@gmail.com";
+// the version as people see it: a release build = the version, a dev build adds its commit
+// (scripts/stamp.cjs → build-info.json; docs/VERSIONING.md 5)
+const BUILD = (() => { try { return require("./build-info.json"); } catch { return { kind: "dev", commit: null }; } })();
+const VERSION = () => app.getVersion() + (BUILD.kind === "release" || !BUILD.commit ? "" : `+${BUILD.commit}`);
 const NOTICES = () => [process.resourcesPath && path.join(process.resourcesPath, "THIRD_PARTY_NOTICES.txt"), path.join(__dirname, "..", "build", "THIRD_PARTY_NOTICES.txt")].find((f) => f && fs.existsSync(f));
 // "진단 정보 복사": version, macOS, agent connections, open tabs/shells and the recent app log —
 // for the tester to paste into a feedback mail (nothing is sent by the app). No conversations,
@@ -1092,7 +1096,7 @@ function diagnostics() {
   const agentRows = agents.status().map((a) => `  ${a.name}: ${{ full: "전체", basic: "기본", none: "없음" }[a.level]}${a.path ? ` (${a.path.split(HOME).join("~")})` : ""}${a.fix ? " · Gemini 확장 미연결" : ""}`);
   const tabRows = [...workspaces.values()].map((w) => `  ${label.get(w.cwd)}: 셸 ${w.sessions.length}개 — ${w.sessions.map((s, i) => `${i + 1}:${s.host ? (s.hostKey ? `셸(${s.hostKey})` : "셸") : s.agent}/${s.agentState || "idle"}`).join(", ")}${w.shell ? ` · 셸 칸: ${w.shell.key}/${w.shell.state}` : ""}`);
   return [
-    `Tamer ${app.getVersion()} · macOS ${process.getSystemVersion()} · ${process.arch} · Electron ${process.versions.electron}`,
+    `Tamer ${VERSION()} · macOS ${process.getSystemVersion()} · ${process.arch} · Electron ${process.versions.electron}`,
     `만든 시각 ${new Date().toISOString()} · 켜진 지 ${Math.round(process.uptime() / 60)}분 · 야생 포켓몬 ${wild.enabled() ? "켬" : "끔"}`,
     "", "에이전트 연결:", ...agentRows,
     "", `열린 탭 ${workspaces.size}개:`, ...tabRows,
@@ -1105,11 +1109,11 @@ const helpItems = [
     clipboard.writeText(diagnostics());
     dialog.showMessageBox(win, { type: "info", message: "진단 정보를 복사했어요", detail: `피드백 메일(${FEEDBACK})에 붙여넣어 주세요. 버전·macOS·에이전트 연결 상태·최근 앱 기록이 들어 있고, 대화 내용·명령어·파일 이름은 없으며 폴더 이름은 "폴더1"처럼 가려져 있어요. 보내기 전에 내용을 확인할 수 있어요.` });
   } },
-  { label: "피드백 보내기…", click: () => shell.openExternal(`mailto:${FEEDBACK}?subject=${encodeURIComponent(`Tamer ${app.getVersion()} 피드백`)}&body=${encodeURIComponent(`무엇을 했고:\n무엇을 기대했고:\n무엇이 보였는지:\n\n(메뉴 Tamer → 진단 정보 복사 후 여기에 붙여넣기)\n\nTamer ${app.getVersion()} · macOS ${process.getSystemVersion()} · ${process.arch}\n`)}`) },
+  { label: "피드백 보내기…", click: () => shell.openExternal(`mailto:${FEEDBACK}?subject=${encodeURIComponent(`Tamer ${VERSION()} 피드백`)}&body=${encodeURIComponent(`무엇을 했고:\n무엇을 기대했고:\n무엇이 보였는지:\n\n(메뉴 Tamer → 진단 정보 복사 후 여기에 붙여넣기)\n\nTamer ${VERSION()} · macOS ${process.getSystemVersion()} · ${process.arch}\n`)}`) },
   { label: "오픈소스 고지", click: () => { const f = NOTICES(); if (f) shell.openPath(f); } },
 ];
 app.setAboutPanelOptions({
-  applicationName: "Tamer", applicationVersion: app.getVersion(),
+  applicationName: "Tamer", applicationVersion: VERSION(),
   credits: "AI 코딩 에이전트와 함께 쓰는 터미널 · 피드백: " + FEEDBACK + "\n오픈소스 고지: Tamer 메뉴 → 오픈소스 고지\nPokémon은 비공식 팬 기능이며 권리는 Nintendo / Creatures / GAME FREAK / The Pokémon Company에 있습니다.",
 });
 

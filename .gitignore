@@ -52,3 +52,4 @@ AGENTS.md
 FEATURES.md
 desktop/README.md
 .claude/
+desktop/electron/build-info.json

@@ -10,12 +10,13 @@
     "tauri": "tauri",
     "electron": "vite build && electron .",
     "electron:rebuild": "electron-rebuild -f -w node-pty",
-    "electron:pack": "npm run core:build && chmod +x node_modules/node-pty/prebuilds/*/spawn-helper && python3 build/make_icon.py >/dev/null && node scripts/notices.cjs && vite build && electron-packager . Tamer --out=out --overwrite --icon=build/icon.icns --app-bundle-id=dev.tamer.desktop --ignore=\"^/src-tauri\" --ignore=\"^/src$\" --ignore=\"^/out\" --ignore=\"^/core-rs\" --ignore=\"^/scripts\" --ignore=\"^/build\" --extra-resource=core-rs/target/release/cvim-core --extra-resource=../claude --extra-resource=../agents --extra-resource=build/THIRD_PARTY_NOTICES.txt --extra-resource=node_modules/electron/dist/LICENSES.chromium.html --extend-info=electron/Info.extra.plist --asar.unpack=\"**/node_modules/node-pty/**\" && node scripts/fuses.cjs",
+    "electron:pack": "npm run core:build && chmod +x node_modules/node-pty/prebuilds/*/spawn-helper && python3 build/make_icon.py >/dev/null && node scripts/notices.cjs && node scripts/stamp.cjs dev && vite build && electron-packager . Tamer --out=out --overwrite --icon=build/icon.icns --app-bundle-id=dev.tamer.desktop --ignore=\"^/src-tauri\" --ignore=\"^/src$\" --ignore=\"^/out\" --ignore=\"^/core-rs\" --ignore=\"^/scripts\" --ignore=\"^/build\" --extra-resource=core-rs/target/release/cvim-core --extra-resource=../claude --extra-resource=../agents --extra-resource=build/THIRD_PARTY_NOTICES.txt --extra-resource=node_modules/electron/dist/LICENSES.chromium.html --extend-info=electron/Info.extra.plist --asar.unpack=\"**/node_modules/node-pty/**\" && node scripts/fuses.cjs",
     "core:build": "PATH=\"/opt/homebrew/opt/rustup/bin:$PATH\" cargo build --release --manifest-path core-rs/Cargo.toml",
     "core:test": "PATH=\"/opt/homebrew/opt/rustup/bin:$PATH\" cargo test --manifest-path core-rs/Cargo.toml",
     "audit": "npm audit && node scripts/audit-crates.cjs",
     "beta": "node scripts/build-beta.cjs",
-    "release": "node scripts/release.cjs"
+    "release": "node scripts/release.cjs",
+    "bump": "node scripts/bump.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

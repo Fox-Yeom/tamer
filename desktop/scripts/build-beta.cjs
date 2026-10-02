@@ -82,6 +82,7 @@ async function build(arch, id) {
   fs.mkdirSync(OUT, { recursive: true });
   run("python3", ["build/make_icon.py"]);
   run("node", ["scripts/notices.cjs"]);
+  run("node", ["scripts/stamp.cjs", "release"]);
   run("chmod", ["+x", ...fs.readdirSync(path.join(ROOT, "node_modules/node-pty/prebuilds")).map((d) => `node_modules/node-pty/prebuilds/${d}/spawn-helper`).filter((f) => fs.existsSync(path.join(ROOT, f)))]);
   run("npx", ["vite", "build"]);
   const id = identity();
