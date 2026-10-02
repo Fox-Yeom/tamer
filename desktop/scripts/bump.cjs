@@ -21,7 +21,8 @@ const end = log.indexOf("\n## ", at + 1);
 const body = log.slice(at + "## 다음 버전".length, end < 0 ? undefined : end).trim();
 if (!body) { console.error("CHANGELOG '## 다음 버전' is empty — write what changed first"); process.exit(1); }
 
-const today = new Date().toISOString().slice(0, 10);
+const d = new Date();
+const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; // local date (UTC was a day behind after midnight KST)
 const updated = log.slice(0, at) + `## 다음 버전\n\n## ${next} (${today})\n${body}\n` + (end < 0 ? "" : log.slice(end));
 fs.writeFileSync(LOG, updated);
 pkg.version = next;
