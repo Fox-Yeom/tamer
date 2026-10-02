@@ -1,0 +1,2479 @@
+// CVIM Desktop (v2, Electron) — UI. One tab = one workspace (folder): agent / Neovim / shell panes
+// (xterm.js on PTYs owned by the main process) + partner Pokémon + activity. Agent state, usage and
+// partner data arrive as events (electron/main.cjs ← cvim-core). X0 findings: docs/PLATFORM.md 3.3c–3.5.
+import { invoke, listen } from "./host.js";
+import { Terminal } from "@xterm/xterm";
+import { FitAddon } from "@xterm/addon-fit";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { createWild, josa } from "./wild.js";
+
+// diagnostics: surface JS errors in the footer (release builds have no devtools)
+const showErr = (m) => { const h = document.getElementById("hint"); h.textContent = "오류: " + m; h.style.color = "#e5484d"; };
+window.addEventListener("error", (e) => showErr(e.message));
+window.addEventListener("unhandledrejection", (e) => showErr(String(e.reason?.message || e.reason)));
+
+const THEME = {
+  background: "#1b1b22", foreground: "#e6e6e6", cursor: "#e6e6e6", selectionBackground: "#3a3a4a",
+  black: "#1b1b1f", red: "#e5484d", green: "#3ddc84", yellow: "#f5c542", blue: "#4f8df7",
+  magenta: "#c678dd", cyan: "#56b6c2", white: "#d0d0d0", brightBlack: "#5c5c66",
+};
+const ICON = {
+  idle: "😌", sleep: "💤", thinking: "💭", coding: "⌨️", reading: "📖", searching: "🔍",
+  bash: "💻", agent: "🤝", tool: "🛠", waiting: "❓", done: "🎉", compact: "🗜", error: "💥", interrupted: "⏹",
+  shell: "🐚",
+};
+const DOING = {
+  idle: "대기", sleep: "쉬는 중", thinking: "생각 중", coding: "편집", reading: "읽는 중", searching: "검색",
+  bash: "실행", agent: "하위 에이전트", tool: "도구", waiting: "입력 필요", done: "완료", compact: "압축 중", error: "실패", interrupted: "중단됨",
+  shell: "셸",
+};
+const EVENT_ICON = { UserPromptSubmit: "💬", Notification: "❓", Stop: "✅", StopFailure: "💥", Interrupted: "⏹", PreCompact: "🗜", SessionStart: "🚀", SessionEnd: "🛑" };
+const TOOL_ICON = { coding: "✏️", reading: "📖", searching: "🔍", bash: "💻", agent: "🤝", tool: "🛠" };
+const TOOL_STATE = { Edit: "coding", MultiEdit: "coding", Write: "coding", NotebookEdit: "coding", WebSearch: "searching",
+  WebFetch: "searching", Read: "reading", Grep: "reading", Glob: "reading", LS: "reading", Bash: "bash", Task: "agent", Agent: "agent" };
+const DETAIL_STATES = ["coding", "reading", "searching", "bash", "tool", "agent"];
+// first type -> attack effect (same as the CVIM.app overlay / native avatar)
+const TYPE_FX = {
+  electric: "⚡", fire: "🔥", water: "💧", grass: "🍃", ice: "❄️", psychic: "🔮", ghost: "👻", dark: "🌑",
+  poison: "☠️", ground: "⛰️", rock: "🪨", fighting: "👊", flying: "🌪️", bug: "🐛", dragon: "🐉", steel: "⚙️", fairy: "✨",
+};
+const TYPE_ICON = { ...TYPE_FX, normal: "⭐" };
+
+let info;
+let lastPick = null; // the last text selected in a terminal { text, from: pane id, tab }
+// terminal font size (⌘= ⌘- ⌘0), remembered on this machine
+const FONT_DEFAULT = 14;
+let fontSize = FONT_DEFAULT;
+try { fontSize = Number(localStorage.getItem("cvim.fontSize")) || FONT_DEFAULT; } catch {}
+const tabs = []; // ordered Tab objects
+const byId = new Map(); // ws id -> Tab
+const panes = new Map(); // pane id "<ws>:<kind>" -> Pane
+let active = null;
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const short = (d) => { d = String(d ?? ""); return d.startsWith("/") ? d.split("/").pop() : d; };
+const level = (p) => (p == null ? "dim" : p >= 80 ? "bad" : p >= 50 ? "warn" : "ok");
+const base = (p) => p.split("/").filter(Boolean).pop() || p;
+
+function b64bytes(s) {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+function toast(msg) {
+  const t = $("#toast");
+  t.textContent = msg;
+  t.classList.add("show");
+  clearTimeout(toast.timer);
+  toast.timer = setTimeout(() => t.classList.remove("show"), 1800);
+}
+
+// ── panes (xterm.js) ────────────────────────────────────────────────────────
+// opts.id / opts.el: an agent session's terminal (M1) — its own element inside the agent pane
+function makePane(tab, kind, opts = {}) {
+  const id = opts.id || `${tab.id}:${kind}`;
+  const section = $(`.pane-${kind}`, tab.view);
+  const el = opts.el || $(".term", section);
+  const term = new Terminal({
+    fontFamily: '"Fira Code", "CVIM Hangul", Menlo, monospace',
+    fontSize, theme: THEME, macOptionIsMeta: true, scrollback: 100000, allowProposedApi: true,
+  });
+  const fit = new FitAddon();
+  term.loadAddon(fit);
+  // character widths like the shell's (Unicode 11: emoji such as 🦊 are 2 cells). With the default
+  // (Unicode 6) zsh and xterm disagree on the prompt width, and long lines wrap/erase wrongly.
+  term.loadAddon(new Unicode11Addon());
+  term.unicode.activeVersion = "11";
+  term.open(el);
+  // ⌘ shortcuts belong to the app, never to the program in the terminal
+  term.attachCustomKeyEventHandler((e) => !e.metaKey);
+  const p = { id, kind, tab, term, fit, el, section, bytes: 0, discard: false };
+  term.onData((data) => {
+    imeLog(id, "onData", JSON.stringify(data));
+    // drop only the text a cancelled composition commits — never terminal replies (ESC …), e.g. the
+    // answer to Codex's background-colour query that arrives right after a switch
+    if (p.discard && !data.startsWith("\x1b")) {
+      p.discard = false;
+      return imeLog(id, "dropped", JSON.stringify(data));
+    }
+    invoke("pty_write", { id, data });
+  });
+  // iTerm-style: selecting copies; typing keeps going to the program
+  term.onSelectionChange(() => {
+    const s = term.getSelection();
+    if (!s) return;
+    invoke("copy_text", { text: s }).then(() => toast(`복사됨 (${s.length}자)`));
+    lastPick = { text: s, from: id, tab }; // M2: can be handed to another session from the rail
+  });
+  term.textarea.addEventListener("focus", () => focusMark(tab, section));
+  watchIme(id, term.textarea);
+  // while composing Hangul, the terminal cursor stays at the start of the composing syllable;
+  // hide it and draw a caret after the composition instead (style.css .composing)
+  term.textarea.addEventListener("compositionstart", () => term.element.classList.add("composing"));
+  term.textarea.addEventListener("compositionend", () => term.element.classList.remove("composing"));
+  term.textarea.addEventListener("blur", () => term.element.classList.remove("composing"));
+  new ResizeObserver(() => resize(p)).observe(el);
+  panes.set(id, p);
+  return p;
+}
+
+// hidden tabs have no size: fit only what is on screen
+function fitPane(p) {
+  if (!p.el.offsetParent) return false;
+  try { p.fit.fit(); } catch { return false; }
+  return true;
+}
+
+function resize(p) {
+  if (fitPane(p)) invoke("pty_resize", { id: p.id, cols: p.term.cols, rows: p.term.rows }).catch(() => {});
+}
+
+function focusMark(tab, section) {
+  tab.view.querySelectorAll(".pane").forEach((s) => s.classList.toggle("focus", s === section));
+}
+
+// editor / shell: the main process decides what runs (the page never names a program)
+function startPane(p) {
+  fitPane(p);
+  p.term.reset();
+  return invoke("pane_start", { ws: p.tab.id, kind: p.kind, cols: p.term.cols, rows: p.term.rows })
+    .catch((err) => p.term.write(`\x1b[31m실행 실패: ${err}\x1b[0m\r\n`));
+}
+
+// ── tabs ────────────────────────────────────────────────────────────────────
+// the agent pane's title: the agent, or (S2) the shell it runs and an agent typed into it
+const paneTitle = (tab, a) => (tab.shellOnly ? (tab.hostAgent ? `🐚 Shell · ${tab.hostAgent.label}` : "🐚 Shell") : a?.label || "Agent");
+
+// an agent typed after a `cd` (#3): where it runs, next to the pane's title — a subfolder of the
+// tab's folder, or another folder (⚠, a button opens it as its own tab; the tab's changes and
+// partner stay with the tab's folder)
+function titleHTML(text, where) {
+  if (!where) return esc(text);
+  return esc(text) + (where.outside
+    ? ` <button class="where out" data-cwd="${esc(where.cwd)}" title="다른 폴더에서 실행 중: ${esc(where.full)} — 이 탭의 변경 사항·파트너는 원래 폴더 기준이에요. 눌러서 그 폴더를 새 탭으로 열기">⚠ ${esc(where.label)} · 새 탭으로</button>`
+    : ` <span class="where" title="${esc(where.cwd)}">📁 ${esc(where.rel)}</span>`);
+}
+function whereNotice(where) {
+  if (where?.outside) toast(`에이전트가 다른 폴더(${where.label})에서 실행 중 — 칸 제목의 "새 탭으로"로 따로 열 수 있어요`);
+}
+document.addEventListener("click", (e) => {
+  const b = e.target.closest(".where.out");
+  if (b) { e.preventDefault(); openFolder(b.dataset.cwd); }
+});
+
+function showAgent(tab, a) {
+  tab.agent = a;
+  $(".agent-name", tab.view).innerHTML = titleHTML(tab.sessions?.length > 1 ? `${paneTitle(tab, a)} · 셸 ${sessNo(tab, curSession(tab)) || 1}` : paneTitle(tab, a), tab.hostAgent && curSession(tab)?.hostWhere);
+  if (tab === active) {
+    const tag = $("#agent"), bare = tab.shellOnly && !tab.hostAgent; // S2: no agent yet
+    tag.textContent = bare ? "🐚 셸 · ⌘G 에이전트" : a.label;
+    tag.style.background = bare ? "#33333f" : a.color;
+    tag.style.color = bare ? "var(--fg)" : "";
+  }
+  renderTab(tab);
+}
+
+async function startAgent(tab, cmd = "agent_start", resume = false) {
+  const sess = curSession(tab);
+  const p = tab.panes.agent;
+  fitPane(p);
+  p.term.reset();
+  const a = await invoke(cmd, { ws: tab.id, session: sess.id, cols: p.term.cols, rows: p.term.rows, resume });
+  sess.agent = a;
+  sess.running = true;
+  showAgent(tab, a);
+  renderRail(tab);
+  // the choose dialog keeps the keyboard (Esc there = "later", not "cancel the agent")
+  if (tab === active && !chooseOpen()) p.term.focus();
+  return a;
+}
+
+// A half-typed syllable must not follow the user into the next agent: blurring ends the IME
+// composition, and whatever it commits is dropped instead of being typed into the new process.
+function cancelComposition(p) {
+  if (!p.term.element.classList.contains("composing")) return;
+  p.discard = true;
+  p.term.textarea.blur();
+  setTimeout(() => { p.discard = false; }, 300);
+}
+
+// ⌘G: pick the agent for this session (S2). Installed ones by number, Enter = this folder's last
+// one; replacing a running agent asks first.
+async function switchAgent(tab = active) {
+  if (!tab) return;
+  const sess = curSession(tab);
+  // running: the agent pane's agent, or one typed into its shell; otherwise the folder's last one
+  // (picked or typed) comes first
+  const { current, running, last, list } = await invoke("agents_list", { ws: tab.id, session: sess.id });
+  const first = running ? current : last || current;
+  const items = list.map((a) => [a.icon, `${a.name}${!a.installed ? " (설치 안 됨)" : running && a.key === current ? " · 실행 중" : !running && a.key === last ? " · 이 폴더에서 지난번" : ""}`,
+    () => (!a.installed ? toast(`${a.name}이(가) 설치돼 있지 않아요`) : running && a.key === current ? stayAgent(tab, a) : pickAgent(tab, a, running))]);
+  items.push(["⚙", "에이전트 연결 상태…", () => openAgents()]);
+  const box = tab.panes.agent.el.getBoundingClientRect();
+  showMenu(items, box.left + box.width / 2 - 120, box.top + 40, { def: Math.max(0, list.findIndex((a) => a.key === first)), title: "에이전트 선택 (↑↓ · 숫자 · Enter · Esc)" });
+}
+
+// the agent already running in this session: keep it (no restart — that would end its conversation)
+function stayAgent(tab, a) {
+  if (tab.swapped) { tab.autoSwapped = false; swapPanes(tab, false); }
+  tab.panes.agent.term.focus();
+  toast(`${a.name}은(는) 이미 실행 중이에요`);
+}
+
+async function pickAgent(tab, a, running) {
+  const sess = curSession(tab), typed = sess.hostAgent;
+  if (running && !confirm(typed ? `셸에서 실행 중인 ${typed.name}을(를) 끝내고 ${a.name}(으)로 바꿀까요?` : `지금 에이전트를 끝내고 ${a.name}(으)로 바꿀까요?`)) return;
+  // the agent replaces the pane's shell (and whatever runs in it)
+  sess.host = false;
+  sess.hostAgent = null;
+  // the agent pane goes back to the big slot (an agent run in the shell keeps running there, small)
+  if (tab.swapped) { tab.autoSwapped = false; swapPanes(tab, false); }
+  cancelComposition(tab.panes.agent);
+  const p = tab.panes.agent;
+  fitPane(p);
+  p.term.reset();
+  const info2 = await invoke("agent_pick", { ws: tab.id, session: sess.id, agent: a.key, cols: p.term.cols, rows: p.term.rows });
+  sess.agent = info2;
+  sess.running = true;
+  showAgent(tab, info2);
+  renderRail(tab);
+  if (tab === active) p.term.focus();
+  toast(`에이전트: ${info2.label}`);
+}
+
+// ── agent connections: what CVIM sees of each agent, one-click fixes, how to install ───────────
+const agentsOpen = () => !$("#agents").hidden;
+const LEVEL = { full: "🟢 전체", basic: "🟡 기본", none: "⚪ 없음" };
+async function openAgents() {
+  const { list } = await invoke("agents_status");
+  const ul = $("#agents-list");
+  ul.innerHTML = "";
+  for (const a of list) {
+    const li = document.createElement("li");
+    const note = a.level === "none" ? "설치 안 됨" : a.fix === "gemini_link" ? "확장을 연결하면 전체" : a.path;
+    li.innerHTML = `<span>${esc(a.icon)}</span><b>${esc(a.name)}</b><span class="lv">${LEVEL[a.level]}</span><span class="where" title="${esc(a.path || "")}">${esc(note || "")}</span><span class="act"></span>`;
+    const act = li.querySelector(".act");
+    const button = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.addEventListener("click", fn); act.appendChild(b); };
+    if (a.fix === "gemini_link") button("확장 연결", async () => { const r = await invoke("agent_fix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); });
+    if (a.level === "none" && a.install) {
+      button("설치 명령 복사", () => invoke("copy_text", { text: a.install.cmd }).then(() => toast(`복사됨 — 터미널에 붙여넣어 실행: ${a.install.cmd}`)));
+      button("공식 안내", () => invoke("open_url", { url: a.install.url }));
+    }
+    ul.appendChild(li);
+  }
+  $("#agents").hidden = false;
+  $("#agents").focus();
+  invoke("agents_seen");
+}
+function closeAgents() { $("#agents").hidden = true; focusBig(active); }
+$("#agents-close").addEventListener("click", closeAgents);
+$("#agents").addEventListener("mousedown", (e) => { if (e.target.id === "agents") closeAgents(); });
+
+// tests: the next installed agent without the picker (the old ⌘G)
+async function nextAgent(tab) {
+  const { current, list } = await invoke("agents_list", { ws: tab.id, session: curSession(tab).id });
+  const ok = list.filter((a) => a.installed);
+  return pickAgent(tab, ok[(ok.findIndex((a) => a.key === current) + 1) % ok.length], false);
+}
+
+// S2 shell first: a folder opens with a shell in the agent pane (the big slot; the shell pane stays
+// bottom right) until an agent is picked with ⌘G. An agent typed into that shell is the session's
+// agent (tracked, remembered); when it ends the shell is back. The composer goes to the big slot.
+const SHELL_STATE = { state: "shell", log: [] };
+async function startHost(tab, sess = curSession(tab)) {
+  sess.host = true;
+  sess.hostAgent = null;
+  sess.running = false;
+  sess.hostAt = Date.now();
+  const p = sess.pane;
+  fitPane(p);
+  p.term.reset();
+  await invoke("host_shell", { ws: tab.id, session: sess.id, cols: p.term.cols, rows: p.term.rows });
+  if (tab.sid !== sess.id) return;
+  if (!(tab.swapped && tab.shellAgent)) renderState(tab, SHELL_STATE, { quiet: true });
+  if (tab.agent) showAgent(tab, tab.agent);
+  if (tab === active && !chooseOpen()) p.term.focus();
+}
+// an agent is on in this tab's big slot (the agent pane's, one typed into its shell, or one run in
+// the shell pane and swapped in) — what the microphone (voice input, later) needs
+const agentOn = (tab) => !!tab && ((tab.swapped && !!tab.shellAgent) || !!curSession(tab)?.running);
+
+// resume: session restore — the agent picks up the folder's last conversation
+async function openFolder(cwd, { resume = false } = {}) {
+  hideStart();
+  const ws = await invoke("workspace_open", { cwd });
+  if (ws.existing && byId.has(ws.id)) {
+    selectTab(byId.get(ws.id));
+    toast(`이미 열려 있어요: ${base(ws.cwd)}`);
+    return byId.get(ws.id);
+  }
+  const view = $("#ws-template").content.firstElementChild.cloneNode(true);
+  $("#views").appendChild(view);
+  const tab = { id: ws.id, cwd: ws.cwd, agent: ws.agent, view, state: null, partner: null, panes: {} };
+  // S2: the current session's agent pane runs a shell / the agent typed into that shell
+  Object.defineProperties(tab, {
+    shellOnly: { get() { return !!curSession(this)?.host; } },
+    hostAgent: { get() { return curSession(this)?.hostAgent || null; } },
+  });
+  tabs.push(tab);
+  byId.set(tab.id, tab);
+  // the first agent session (same id as the tab); more come with ⌘⇧T (M1)
+  const first = { id: tab.id, n: 1, el: sessionEl(tab, tab.id) };
+  first.pane = makePane(tab, "agent", { id: `${tab.id}:agent`, el: first.el });
+  tab.sessions = [first];
+  tab.sid = tab.id;
+  tab.panes.agent = first.pane;
+  tab.panes.shell = makePane(tab, "shell");
+  selectTab(tab);
+  // panes need their size before the processes start
+  await new Promise((r) => setTimeout(r, 30));
+  if (resume || info.autostart) await startAgent(tab, "agent_start", resume);
+  else await startHost(tab, first);
+  refreshChanges(tab);
+  if (info.test.perf) perfTest(tab);
+  else startPane(tab.panes.shell).then(() => { if (info.test.shell_input) autoType(tab, info.test.shell_input); });
+  if (!tab.shellOnly) invoke("agent_state", { ws: tab.id });
+  invoke("partner_state", { ws: tab.id }).then((pk) => { if (pk?.choose) needPartner(tab); else if (pk) showPartner(tab, pk); });
+  return tab;
+}
+
+function selectTab(tab) {
+  if (!tab) return;
+  active = tab;
+  for (const t of tabs) t.view.hidden = t !== tab;
+  for (const p of Object.values(tab.panes)) resize(p);
+  $("#cwd").textContent = tab.cwd.replace(info.home, "~");
+  if (tab.agent) showAgent(tab, tab.agent);
+  if (tab.state) renderBar(tab);
+  renderTabs();
+  if (chooseOpen()) closeChoose(false); // the dialog belongs to the tab it was opened for
+  refreshChanges(tab);
+  bigPane(tab)?.term.focus();
+  if (!tab.partner?.uid && tab.partnerChecked && !tab.askedOnce) openChoose(tab, true); // no partner yet: ask once
+  invoke("tab_active", { ws: tab.id });
+}
+
+async function closeTab(tab = active) {
+  if (!tab) return;
+  const i = tabs.indexOf(tab);
+  tabs.splice(i, 1);
+  byId.delete(tab.id);
+  for (const p of [...tab.sessions.map((x) => x.pane), tab.panes.shell]) { panes.delete(p.id); p.term.dispose(); }
+  tab.view.remove();
+  renderSummary();
+  await invoke("workspace_close", { ws: tab.id });
+  if (tabs.length) selectTab(tabs[Math.min(i, tabs.length - 1)]);
+  else { active = null; renderTabs(); showStart(true); }
+}
+
+function renderTabs() {
+  const nav = $("#tabs");
+  nav.querySelectorAll(".tab").forEach((b) => b.remove());
+  tabs.forEach((t, i) => {
+    const b = document.createElement("button");
+    b.className = "tab";
+    b.dataset.ws = t.id;
+    nav.insertBefore(b, $("#new-tab"));
+    renderTab(t, b, i);
+  });
+}
+
+// one tab button: number · state icon · folder · what it's doing; red when it needs you
+function renderTab(t, b = $(`#tabs .tab[data-ws="${t.id}"]`), i = tabs.indexOf(t)) {
+  if (!b) return;
+  const st = urgentOf(t); // several sessions: the one that needs you most
+  const many = t.sessions?.length > 1 ? `<span class="sess-count">×${t.sessions.length}</span>` : "";
+  const waiting = st === "waiting";
+  b.classList.toggle("active", t === active);
+  b.classList.toggle("attention", waiting || st === "error");
+  const doing = waiting ? "❗ 입력 필요" : st && st !== "idle" && st !== "sleep" ? DOING[st] : "";
+  b.innerHTML = `<span class="num">${i < 9 ? i + 1 : ""}</span><span>${ICON[st] || "·"}</span>`
+    + `<span class="name">${esc(base(t.cwd))}</span>${many}<span class="doing">${esc(doing)}</span><span class="close" title="닫기 (⌘W)">✕</span>`;
+  b.title = `${t.cwd}${t.agent ? ` — ${t.agent.label}` : ""}`;
+}
+
+$("#tabs").addEventListener("click", (e) => {
+  if (e.target.id === "new-tab") return showStart(false);
+  const b = e.target.closest(".tab");
+  if (!b) return;
+  const tab = byId.get(b.dataset.ws);
+  if (e.target.classList.contains("close")) closeTab(tab);
+  else selectTab(tab);
+});
+
+// ── all tabs at a glance (top bar): needs you → working → finished → failed ──
+const WORKING = ["thinking", "coding", "reading", "searching", "bash", "agent", "tool", "compact"];
+function renderSummary() {
+  // per session (M1): every agent counts
+  const all = tabs.flatMap((t) => (t.sessions?.length > 1 ? t.sessions.map((x) => x.state?.state) : [t.state?.state]));
+  const n = (f) => all.filter(f).length;
+  const parts = [
+    ["bad", "❗", n((s) => s === "waiting")], ["", "⌨️", n((s) => WORKING.includes(s))],
+    ["ok", "✅", n((s) => s === "done")], ["bad", "💥", n((s) => s === "error")],
+  ].filter(([, , c]) => c > 0);
+  // one tab says it all in its own status; the summary is for several
+  $("#summary").innerHTML = all.length > 1 ? parts.map(([cls, icon, c]) => `<span class="${cls}">${icon}${c}</span>`).join(" ") : "";
+}
+
+// ── M1: several agent sessions in one folder ──────────────────────────────────
+// Each session: its own agent process and terminal (an element inside the agent pane, one shown).
+// Shared per folder: the partner, the changes panel, the shell. The rail lists them (2 or more).
+const URG = (st) => (st === "waiting" ? 0 : st === "error" ? 1 : WORKING.includes(st) ? 2 : st === "done" ? 3 : st === "interrupted" ? 4 : st === "sleep" ? 6 : 5);
+const curSession = (tab) => tab.sessions?.find((x) => x.id === tab.sid);
+// a session's number = its place in the rail (closing 4 and opening one gives 4 again)
+const sessNo = (tab, x) => tab.sessions.indexOf(x) + 1;
+function urgentOf(t) {
+  if (!(t.sessions?.length > 1)) return t.state?.state;
+  const own = t.sessions.map((x) => (x.id === t.sid ? t.state?.state : x.state?.state));
+  return own.sort((a, b) => URG(a) - URG(b))[0];
+}
+
+function sessionEl(tab, sid) {
+  const el = document.createElement("div");
+  el.className = "sterm";
+  el.dataset.sid = sid;
+  $(".pane-agent .term", tab.view).appendChild(el);
+  return el;
+}
+
+async function newSession(tab = active, agentKey = null) {
+  if (!tab) return;
+  const r = await invoke("session_new", { ws: tab.id, agent: agentKey });
+  const sess = { id: r.id, n: r.n, agent: r.agent, el: sessionEl(tab, r.id) };
+  sess.pane = makePane(tab, "agent", { id: `${r.id}:agent`, el: sess.el });
+  tab.sessions.push(sess);
+  switchSession(tab, sess.id, { quiet: true });
+  await new Promise((res) => setTimeout(res, 30)); // its size before the process starts
+  // S2: a new session is a shell (⌘G / typed there for an agent); restored ones with an agent and
+  // CVIM_DESKTOP_AUTOSTART start their agent
+  if (agentKey || info.autostart) {
+    await startAgent(tab, "agent_start");
+    invoke("agent_state", { ws: tab.id, session: sess.id });
+    toast(`셸 ${sessNo(tab, sess)} — ${r.agent.label} (⌃⌘${sessNo(tab, sess)}로 이동)`);
+  } else {
+    await startHost(tab, sess);
+    renderRail(tab);
+    toast(`새 셸 ${sessNo(tab, sess)} (⌘G 에이전트 · ⌃⌘${sessNo(tab, sess)}로 이동)`);
+  }
+  saveRail(tab);
+  return sess;
+}
+
+function switchSession(tab, sid, { quiet = false } = {}) {
+  const sess = tab.sessions.find((x) => x.id === sid);
+  if (!sess) return;
+  if (tab.composer && !tab.composer.box.hidden) composerClose(tab);
+  tab.sid = sid;
+  for (const x of tab.sessions) x.el.style.display = x === sess ? "" : "none";
+  tab.panes.agent = sess.pane;
+  resize(sess.pane);
+  if (sess.agent) showAgent(tab, sess.agent);
+  tab.agentState = sess.state || null;
+  if (sess.state && !(tab.swapped && tab.shellAgent)) renderState(tab, sess.state, { quiet: true });
+  renderRail(tab);
+  renderTab(tab);
+  if (tab === active && !quiet) sess.pane.term.focus();
+}
+
+function stepSession(d) {
+  const tab = active;
+  if (!(tab?.sessions.length > 1)) return;
+  const i = tab.sessions.findIndex((x) => x.id === tab.sid);
+  switchSession(tab, tab.sessions[(i + d + tab.sessions.length) % tab.sessions.length].id);
+}
+
+async function closeSession(tab, sid) {
+  const sess = tab.sessions.find((x) => x.id === sid);
+  if (!sess || sess.id === tab.id) return toast("첫 셸은 탭과 함께 닫혀요 (⌘W)");
+  await invoke("session_close", { ws: tab.id, session: sid });
+  panes.delete(sess.pane.id);
+  sess.pane.term.dispose();
+  sess.el.remove();
+  const i = tab.sessions.indexOf(sess);
+  tab.sessions.splice(i, 1);
+  if (tab.sid === sid) switchSession(tab, tab.sessions[Math.max(0, i - 1)].id);
+  renderRail(tab);
+  renderTab(tab);
+  renderSummary();
+}
+
+// the rail: one button per session (agent icon, number, state dot), ✕ (not the first), ＋
+function renderRail(tab) {
+  const rail = $(".rail", tab.view);
+  const multi = tab.sessions?.length > 1;
+  rail.hidden = !multi;
+  tab.view.classList.toggle("multi", !!multi);
+  if (!multi) { $(".agent-name", tab.view).innerHTML = titleHTML(paneTitle(tab, tab.agent), tab.hostAgent && curSession(tab)?.hostWhere); return; }
+  rail.innerHTML = tab.sessions.map((x) => {
+    const st = x.id === tab.sid ? tab.state?.state : x.state?.state;
+    const dot = st === "waiting" || st === "error" ? "bad" : WORKING.includes(st) ? "work" : st === "done" ? "ok" : "idle";
+    const no = sessNo(tab, x);
+    return `<button class="sess${x.id === tab.sid ? " cur" : ""}" data-sid="${esc(x.id)}" title="셸 ${no} (⌃⌘${no}) — ${esc(x.host && !x.hostAgent ? "셸" : x.agent?.label || "")} · ${esc(DOING[st] || "대기")}">`
+      + `<span class="ic">${esc(x.host && !x.hostAgent ? "🐚" : x.agent?.icon || "▸")}</span><span class="n">${no}</span><i class="dot ${dot}"></i>`
+      + `${x.id === tab.id ? "" : '<span class="x" title="셸 닫기">✕</span>'}</button>`;
+  }).join("") + '<button class="sess-new" title="새 셸 (⌘⇧T)">＋</button>';
+}
+
+// ── M2 (1단계): handing text between sessions by hand ─────────────────────────
+// a session's label for a "where it came from" line
+const sessLabel = (tab, x) => `셸 ${sessNo(tab, x)}(${x.host && !x.hostAgent ? "에이전트 없음" : x.agent?.short || x.agent?.name || "에이전트"})`;
+
+// paste (and maybe send) text into a session's agent: bracketed paste, then Enter separately
+async function pasteTo(sess, text, enter) {
+  await invoke("pty_write", { id: sess.pane.id, data: `\x1b[200~${text}\x1b[201~` });
+  if (enter) setTimeout(() => invoke("pty_write", { id: sess.pane.id, data: "\r" }), 120);
+}
+
+// the last selection, from another session of this tab, into `sess` (with a line saying where from)
+async function handPick(tab, sess, enter) {
+  const from = tab.sessions.find((x) => x.pane.id === lastPick?.from);
+  if (!lastPick?.text || !from || from === sess) return toast("다른 셸에서 먼저 글을 끌어 선택하세요");
+  await pasteTo(sess, `[${sessLabel(tab, from)}에서 가져온 내용]\n${lastPick.text}`, enter);
+  toast(`${sessLabel(tab, from)} → ${sessLabel(tab, sess)}: ${lastPick.text.length}자 ${enter ? "보냄" : "붙임"}`);
+}
+
+$("#views").addEventListener("contextmenu", (e) => {
+  const b = e.target.closest(".rail .sess");
+  if (!b || !active) return;
+  e.preventDefault();
+  e.stopPropagation();
+  const tab = active, sess = tab.sessions.find((x) => x.id === b.dataset.sid);
+  if (!sess) return;
+  const from = tab.sessions.find((x) => x.pane.id === lastPick?.from && x !== sess);
+  const items = [];
+  if (from) {
+    const n = lastPick.text.length;
+    items.push(["📋", `선택한 글 붙여넣기 (${sessLabel(tab, from)}, ${n}자)`, () => handPick(tab, sess, false)]);
+    items.push(["📨", `선택한 글 보내기 (${sessLabel(tab, from)}, ${n}자)`, () => handPick(tab, sess, true)]);
+  }
+  items.push(["✍", "작성 창으로 이 셸에 쓰기", () => { switchSession(tab, sess.id); composerToggle(tab); }]);
+  items.push(["↪", "이 셸로 이동", () => switchSession(tab, sess.id)]);
+  if (sess.id !== tab.id) items.push(["✕", "셸 닫기", () => closeSession(tab, sess.id)]);
+  showMenu(items, e.clientX, e.clientY);
+}, true);
+
+// sessions survive a restore (their agents start fresh): main saves them; nothing to do here
+function saveRail() {}
+
+$("#views").addEventListener("click", (e) => {
+  if (e.target.closest(".sess-add, .sess-new")) return newSession(active);
+  const b = e.target.closest(".rail .sess");
+  if (!b) return;
+  if (e.target.closest(".x")) return closeSession(active, b.dataset.sid);
+  switchSession(active, b.dataset.sid);
+});
+
+// ── an agent started in the shell pane → swap it into the big slot (P0+) ─────
+// tab.swapped: the shell pane sits where the agent pane was (and the other way round)
+function swapPanes(tab, on) {
+  if (!!tab.swapped === on) return;
+  const a = tab.panes.agent.section, b = tab.panes.shell.section;
+  const mark = document.createComment("");
+  a.replaceWith(mark);
+  b.replaceWith(a);
+  mark.replaceWith(b);
+  tab.swapped = on;
+  for (const p of Object.values(tab.panes)) resize(p);
+  invoke("pane_swap", { ws: tab.id, on });
+  const shown = shownOf(tab);
+  if (shown) renderState(tab, shown);
+}
+
+// which state the tab shows: the agent in the big slot (the shell's while it's swapped in)
+const shownOf = (tab) => (tab.swapped && tab.shellAgent ? tab.shellState : tab.shellOnly && !tab.hostAgent ? SHELL_STATE : tab.agentState);
+
+function onShellAgent(tab, agent, where = null) {
+  tab.shellAgent = agent;
+  tab.shellWhere = agent ? where : null;
+  whereNotice(tab.shellWhere);
+  tab.shellState = null;
+  if (!agent && tab.shellOnly && !tab.hostAgent && tab.autoSwapped) renderState(tab, SHELL_STATE); // the agent run in the shell pane ended
+  else if (!agent && tab.agentState && !tab.autoSwapped) renderState(tab, tab.agentState); // back to the agent pane's state
+  const title = $(".pane-shell .title", tab.view);
+  title.innerHTML = titleHTML(agent ? `🐚 Shell · ${agent.label}` : "🐚 Shell", tab.shellWhere);
+  if (agent && !tab.swapped) {
+    swapPanes(tab, true);
+    tab.autoSwapped = true;
+    if (tab === active) { tab.panes.shell.term.focus(); toast(`셸에서 ${agent.name} 실행 → 큰 칸으로 (⌘⌥↵ 되돌리기)`); }
+  } else if (!agent && tab.autoSwapped) {
+    tab.autoSwapped = false;
+    swapPanes(tab, false);
+  }
+}
+
+// ── agent state → tab, top bar, avatar, activity ────────────────────────────
+function untilReset(epoch) {
+  if (typeof epoch !== "number") return "";
+  const s = epoch - Date.now() / 1000;
+  if (s <= 0) return "";
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  if (h >= 24) return ` ↻${Math.floor(h / 24)}d${h % 24}h`;
+  return h > 0 ? ` ↻${h}h${String(m).padStart(2, "0")}m` : ` ↻${m}m`;
+}
+
+const bar = (p, n = 8) => { const fill = Math.round(((p || 0) / 100) * n); return "█".repeat(fill) + "░".repeat(n - fill); };
+
+function renderBar(tab) {
+  const st = tab.state;
+  const doing = $("#doing");
+  const what = DOING[st.state] || "";
+  const detail = DETAIL_STATES.includes(st.state) ? ` ${short(st.detail).slice(0, 32)}` : "";
+  doing.className = st.state === "waiting" || st.state === "error" ? "bad" : "dim";
+  doing.textContent = st.state === "waiting" ? `❗ ${what}` : `${ICON[st.state] || ""} ${what}${detail}`;
+  document.title = `${ICON[st.state] || ""} ${base(tab.cwd)} — Tamer`;
+  const u = withLast(st, tab), parts = [];
+  const old = (k) => (u.stale?.includes(k) ? ' title="지난번 값 — 첫 응답 뒤에 새로 고쳐져요" style="opacity:.55"' : "");
+  if (u?.model) parts.push(`<span class="dim"${old("model")}>${esc(u.model)}</span>`);
+  if (u?.ctx != null) parts.push(`<span class="${level(u.ctx)}">ctx ${bar(u.ctx)} ${Math.round(u.ctx)}%</span>`);
+  else if (u?.ctx_tokens != null) parts.push(`<span class="dim">ctx ${Math.round(u.ctx_tokens / 1000)}k</span>`);
+  if (u?.five_hour) parts.push(`<span class="${level(u.five_hour.pct)}"${old("five_hour")}>5h ${bar(u.five_hour.pct)} ${Math.round(u.five_hour.pct)}%${untilReset(u.five_hour.resets_at)}</span>`);
+  if (u?.seven_day) parts.push(`<span class="${level(u.seven_day.pct)}"${old("seven_day")}>7d ${bar(u.seven_day.pct)} ${Math.round(u.seven_day.pct)}%</span>`);
+  if (u?.cost != null) parts.push(`<span class="dim">$${u.cost.toFixed(2)}</span>`);
+  $("#usage").innerHTML = parts.length ? parts.join('<span class="dim"> │ </span>') : `<span class="dim">${esc(st.agent?.short)}</span>`;
+}
+
+// ── usage before the first reply (and for a Claude started in the shell, which has no statusLine)
+// The 5h / 7d limits are the account's, the model is the last one used: shown from the last
+// values seen for that agent (dimmed) until the agent reports its own. A context size in tokens
+// (conversation log) becomes % with the window last seen for that model. Kept in localStorage.
+const lastKey = (k) => `cvim.usage.${k}`;
+function lastUsage(key) {
+  try { return JSON.parse(localStorage.getItem(lastKey(key)) || "null") || {}; } catch { return {}; }
+}
+function rememberUsage(key, u) {
+  if (!key || !u) return;
+  const l = lastUsage(key), windows = { ...(l.windows || {}) };
+  if (u.model_id && u.ctx_window) windows[u.model_id] = u.ctx_window;
+  const next = { model: u.model || l.model, five_hour: u.five_hour || l.five_hour, seven_day: u.seven_day || l.seven_day, windows };
+  try { localStorage.setItem(lastKey(key), JSON.stringify(next)); } catch {}
+}
+const live = (w) => w && (w.resets_at == null || w.resets_at * 1000 > Date.now());
+function withLast(st, tab) {
+  const key = st.shellKey || st.agent?.key || tab.agent?.key;
+  if (!key || st.state === "shell") return st.usage || {};
+  const u = { ...(st.usage || {}) }, l = lastUsage(key), stale = [];
+  if (u.ctx == null && u.ctx_tokens != null && l.windows?.[u.model_id]) u.ctx = (u.ctx_tokens / l.windows[u.model_id]) * 100;
+  if (!u.model && l.model) { u.model = l.model; stale.push("model"); }
+  for (const k of ["five_hour", "seven_day"]) if (!u[k] && live(l[k])) { u[k] = l[k]; stale.push(k); }
+  u.stale = stale;
+  return u;
+}
+
+// quiet: showing another session's state (M1 switch) — not a change that happened just now
+function renderState(tab, st, { quiet = false } = {}) {
+  const prev = quiet ? null : tab.state?.state;
+  tab.state = st;
+  if (st.agent && st.agent.key !== tab.agent?.key) showAgent(tab, st.agent);
+  renderTab(tab);
+  if (tab === active) renderBar(tab);
+  const what = DOING[st.state] || "";
+  pokeClass(tab);
+  // how the turn ended: finished = type attack, interrupted (Esc) = flinch, failed = hurt
+  if (prev && prev !== st.state && ["done", "interrupted", "error"].includes(st.state)) refreshChanges(tab); // the agent may have changed files
+  if (prev && prev !== st.state) {
+    if (st.state === "done") react(tab, "attack");
+    else if (st.state === "interrupted") react(tab, "flinch");
+    else if (st.state === "error") react(tab, "hurt");
+  }
+  renderSummary();
+  $(".state-line", tab.view).textContent = `${ICON[st.state] || ""} ${what}`;
+  $(".activity", tab.view).innerHTML = (st.log || []).slice().reverse().map((ev) => {
+    const t = new Date(ev.ts > 1e12 ? ev.ts : ev.ts * 1000).toTimeString().slice(0, 8);
+    const icon = ev.event === "PreToolUse" ? TOOL_ICON[TOOL_STATE[ev.tool] || "tool"] : EVENT_ICON[ev.event] || "·";
+    const label = ev.event === "PreToolUse" ? ev.tool : ev.event;
+    return `<li><span class="dim">${t}</span> ${icon} ${esc(label)} <span class="dim">${esc(short(ev.detail).slice(0, 60))}</span></li>`;
+  }).join("");
+}
+
+// ── partner Pokémon ─────────────────────────────────────────────────────────
+// state motion (st-*) + a short one-off action (act-*) on top of it
+function pokeClass(tab) {
+  const img = $(".poke", tab.view);
+  img.className = `poke st-${tab.state?.state || "idle"}${tab.act ? ` act-${tab.act}` : ""}${tab.evolving ? " evolving" : ""}`;
+}
+
+async function loadImg(img, gif) {
+  img.src = `data:image/gif;base64,${await invoke("sprite_b64", { path: gif })}`;
+  await img.decode().catch(() => {});
+  const box = img.closest(".avatar-box").getBoundingClientRect();
+  const k = Math.max(1, Math.min(3, Math.floor(Math.min(box.width / img.naturalWidth, (box.height - 90) / img.naturalHeight)) || 1));
+  img.style.width = `${img.naturalWidth * k}px`; // integer scale only: crisp pixels
+}
+
+async function showPartner(tab, pk) {
+  tab.partner = pk;
+  $(".empty-ball", tab.view).hidden = true;
+  const label = $(".poke-label", tab.view);
+  if (!pk?.gif) { label.textContent = "(파트너를 불러오지 못했어요)"; return; }
+  const img = $(".poke", tab.view);
+  await loadImg(img, pk.gif);
+  img.hidden = false;
+  $(".pokeball", tab.view).hidden = true;
+  label.textContent = `${pk.shiny ? "✨" : ""}${pk.name ?? ""}`;
+  showProgress(tab, pk);
+}
+
+function showProgress(tab, p) {
+  if (p.pinned != null) tab.pinned = p.pinned;
+  $(".poke-exp", tab.view).textContent = `EXP ${p.xp ?? 0}${p.toEvolve != null ? ` · 진화까지 ${p.toEvolve}` : " · 최종 진화"}`;
+}
+
+function loading(tab) {
+  $(".poke", tab.view).hidden = true;
+  $(".pokeball", tab.view).hidden = false;
+}
+
+// click: attack (type effect) or cute (hearts)
+function react(tab, kind) {
+  if (!tab.partner) return;
+  tab.act = kind;
+  pokeClass(tab);
+  const glyph = { cute: "💕", flinch: "💦", hurt: "💢" }[kind] || TYPE_FX[tab.partner.types?.[0]] || "💥";
+  burst(tab, glyph, kind === "attack" ? 8 : kind === "hurt" ? 4 : 5);
+  clearTimeout(tab.actTimer);
+  tab.actTimer = setTimeout(() => { tab.act = null; pokeClass(tab); }, 1000);
+}
+
+function burst(tab, glyph, n) {
+  const fx = $(".fx", tab.view);
+  for (let i = 0; i < n; i++) {
+    const s = document.createElement("span");
+    const a = (Math.PI * 2 * i) / n + Math.random() * 0.4;
+    const r = 45 + Math.random() * 25;
+    s.textContent = glyph;
+    s.style.setProperty("--dx", `${Math.cos(a) * r}px`);
+    s.style.setProperty("--dy", `${Math.sin(a) * r}px`);
+    fx.appendChild(s);
+    setTimeout(() => s.remove(), 800);
+  }
+}
+
+// evolution: white silhouette flicker between the old and new sprite, then the new one
+async function evolve(tab, from, to) {
+  const img = $(".poke", tab.view);
+  tab.evolving = true;
+  pokeClass(tab);
+  toast(`어라…!? ${from?.name ?? tab.partner?.name ?? ""}의 모습이…!`);
+  const frames = [from?.gif || tab.partner?.gif, to.gif].filter(Boolean);
+  for (let i = 0; i < 8; i++) { await loadImg(img, frames[i % frames.length]); await new Promise((r) => setTimeout(r, 120 + i * 40)); }
+  tab.evolving = false;
+  await showPartner(tab, to);
+  pokeClass(tab);
+  burst(tab, "✨", 10);
+  toast(`축하합니다! ${from?.name ?? ""}는 ${to.name}(으)로 진화했다!`);
+}
+
+// ── choosing a partner (center dialog, box rules in electron/core/partner.cjs) ─────
+// the first partner's starters (once, empty box) · a resting one from the box · another folder's partner
+let chooseFor = null; // the tab the dialog is for
+let chooseSlow = null;
+
+// auto: opened by the app (new folder / tab selected), not by the user — skipped if the user has
+// closed it for this tab meanwhile, the tab isn't on screen, or there is nothing to choose
+async function openChoose(tab = active, auto = false) {
+  if (!tab) return;
+  closeMenu();
+  const o = await invoke("partner_options", { ws: tab.id });
+  if (auto && (tab.askedOnce || tab !== active || chooseOpen() || tab.partner?.uid || !(o.starter || o.resting.length || o.others.length))) return;
+  chooseFor = tab;
+  renderChoose(tab, o);
+  $("#choose").hidden = false;
+  $("#choose").focus();
+  clearTimeout(chooseSlow);
+  if (o.starterLoading) chooseSlow = setTimeout(() => { if (chooseOpen()) $("#choose-starter-note").textContent = "PokéAPI 응답이 느려요 — 박스의 포켓몬을 고르거나, 나중에 다시 열어도 돼요"; }, 30000);
+}
+
+const chooseOpen = () => !$("#choose").hidden;
+// byUser: the user closed it (Esc / ✕ / took one) — don't ask that tab again on its own
+function closeChoose(byUser = true) {
+  $("#choose").hidden = true;
+  clearTimeout(chooseSlow);
+  const tab = chooseFor;
+  if (tab && byUser) tab.askedOnce = true;
+  chooseFor = null;
+  focusBig(tab);
+}
+
+function monCard(m, i, extra = "") {
+  return `<button class="mon" data-i="${i}">${m.gif ? `<img data-gif="${esc(m.gif)}" alt="" />` : '<span class="noimg">?</span>'}`
+    + `<b>${m.shiny ? "✨" : ""}${esc(m.name)}</b><span class="dim">${m.xp != null ? `EXP ${m.xp}` : (m.types || []).map((t) => TYPE_ICON[t] || "").join("")}</span>${extra}</button>`;
+}
+
+function renderChoose(tab, o) {
+  const box = $("#choose");
+  box.opts = o;
+  $("#choose-title").innerHTML = `${esc(base(tab.cwd))}의 파트너${o.current ? ` <span class="dim">— 지금: ${o.current.shiny ? "✨" : ""}${esc(o.current.name)} EXP ${o.current.xp}</span>`
+    : ""}`;
+  // the first partner (only while the box is empty)
+  const t = o.starter;
+  $("#choose-starter-sec").hidden = !t;
+  if (t) {
+    const cards = t.set.map((c, i) => monCard({ ...c, xp: null }, `s${i}`, `<span class="k">${i + 1}</span>`));
+    for (let i = t.set.length; i < t.total; i++) cards.push('<div class="mon loading"><div class="pokeball"></div><span class="dim">찾는 중…</span></div>');
+    $("#choose-starter").innerHTML = cards.join("");
+    $("#choose-starter-note").textContent = !t.ready ? `첫 파트너 후보를 받는 중… ${t.set.length}/${t.total} (PokéAPI)` : "";
+  }
+  $("#choose-rest").innerHTML = o.resting.length ? o.resting.map((m, i) => monCard(m, `r${i}`)).join("")
+    : '<p class="dim">쉬는 포켓몬이 없어요 — 작업을 끝내면 야생 포켓몬이 나타날 수 있어요(파트너 없는 폴더는 더 자주)</p>';
+  $("#choose-others").innerHTML = o.others.length ? o.others.map((m, i) => monCard(m, `o${i}`, `<span class="from">📁 ${esc(m.folderName)}</span>`)).join("") : '<p class="dim">없어요</p>';
+  $("#choose-others-sec").hidden = !o.others.length;
+  box.querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
+}
+
+// sprite data URLs, kept (the dialog redraws while today's candidates arrive)
+const sprites = new Map();
+function spriteUrl(gif) {
+  if (!sprites.has(gif)) sprites.set(gif, invoke("sprite_b64", { path: gif }).then((b) => `data:image/gif;base64,${b}`).catch(() => null));
+  return sprites.get(gif);
+}
+
+async function chooseTake(key) {
+  const tab = chooseFor, o = $("#choose").opts;
+  if (!tab || !o) return;
+  const kind = key[0], i = Number(key.slice(1));
+  let args;
+  if (kind === "s") args = { starter: o.starter?.set[i]?.id };
+  else if (kind === "r") args = { uid: o.resting[i]?.uid };
+  else {
+    const m = o.others[i];
+    const btn = $(`#choose .mon[data-i="${key}"]`);
+    // another folder's partner: that folder is left without one — ask once
+    if (!btn.classList.contains("confirm")) { btn.classList.add("confirm"); toast(`한 번 더 누르면 ${m.folderName} 폴더의 ${m.name}를 데려와요 (그 폴더는 파트너가 비어요)`); return; }
+    args = { uid: m.uid };
+  }
+  const pk = await invoke("partner_take", { ws: tab.id, ...args }).catch((e) => { toast(String(e.message || e).replace(/^.*Error: /, "")); return null; });
+  if (!pk) return;
+  closeChoose();
+  const shown = pk.pending ? await invoke("partner_state", { ws: tab.id }) : pk;
+  if (shown && !shown.choose) { await showPartner(tab, shown); react(tab, "cute"); toast(`${josa(shown.name, "과", "와")} 함께해요!`); }
+}
+
+$("#choose").addEventListener("click", (e) => {
+  const b = e.target.closest(".mon[data-i]");
+  if (b) chooseTake(b.dataset.i);
+  else if (e.target.closest("#choose-close") || e.target === $("#choose")) closeChoose();
+});
+
+function chooseKey(e) {
+  if (!chooseOpen()) return false;
+  const n = Number(e.key);
+  const t = $("#choose").opts?.starter;
+  if (n >= 1 && n <= 3 && t?.set[n - 1]) chooseTake(`s${n - 1}`);
+  else if (e.key === "Escape") closeChoose();
+  else return false;
+  return true;
+}
+
+// a tab without a partner: the avatar pane says so (the dialog opens on its own for the tab on screen)
+function needPartner(tab, freed) {
+  tab.partner = null;
+  tab.partnerChecked = true;
+  showEmpty(tab, freed);
+  openChoose(tab, true);
+}
+
+// no partner: an empty Poké Ball (drawn here, nothing to download) and how to get one
+function showEmpty(tab, freed) {
+  $(".poke", tab.view).hidden = true;
+  $(".pokeball", tab.view).hidden = true;
+  $(".empty-ball", tab.view).hidden = false;
+  $(".poke-label", tab.view).innerHTML = `파트너가 없어요 <button class="need-partner">파트너 고르기</button>`;
+  $(".poke-exp", tab.view).textContent = freed ? "파트너가 다른 폴더로 갔어요 · 작업을 끝내면 야생 포켓몬이 더 자주 나타나요"
+    : "작업을 끝내면 야생 포켓몬이 더 자주 나타나요 — 잡아서 파트너로";
+}
+$("#views").addEventListener("click", (e) => { if (e.target.closest(".need-partner")) openChoose(active); });
+
+// a Pokédex entry → this tab's partner: a resting one of that species, else another folder's
+async function takeSpecies(tab, id) {
+  const o = await invoke("partner_options", { ws: tab.id });
+  const rest = o.resting.findLast((m) => m.id === id); // the newest (e.g. just caught)
+  const other = o.others.find((m) => m.id === id);
+  if (rest) { chooseFor = tab; $("#choose").opts = o; return chooseTake(`r${o.resting.lastIndexOf(rest)}`); }
+  if (other) { toast(`쉬는 ${other.name}가 없어요 — ${other.folderName} 폴더의 파트너예요 (도감에서 데려올 수 있어요)`); return; }
+  toast("박스에 없는 포켓몬이에요 (만나기만 했어요)");
+}
+
+// ── right-click menu ────────────────────────────────────────────────────────
+function openMenu(tab, x, y) {
+  const items = [
+    ["🔄", "파트너 바꾸기 (첫 파트너 · 박스)", () => openChoose(tab)],
+    ["⚔️", "공격", () => react(tab, "attack")],
+    ["💕", "애교", () => react(tab, "cute")],
+    ["📕", "도감", () => openDex()],
+    ["🌿", wildOn ? "야생 포켓몬 끄기" : "야생 포켓몬 켜기", async () => {
+      wildOn = await invoke("wild_toggle");
+      toast(wildOn ? "🌿 작업이 끝나면 가끔 야생 포켓몬이 나타나요" : "🌿 야생 포켓몬이 나타나지 않아요");
+    }],
+  ];
+  showMenu(items, x, y);
+}
+
+// a small menu at (x, y): [icon, label, fn] — number keys pick
+function showMenu(items, x, y, { def = -1, title = "" } = {}) {
+  const m = $("#menu");
+  m.innerHTML = title ? `<div class="menu-title">${esc(title)}</div>` : "";
+  items.forEach(([icon, label, fn], i) => {
+    const b = document.createElement("button");
+    if (i === def) b.classList.add("sel");
+    b.innerHTML = `<span class="k">${i + 1}</span><span>${icon}</span><span>${esc(label)}</span>`;
+    b.addEventListener("click", () => { closeMenu(); fn(); });
+    m.appendChild(b);
+  });
+  m.hidden = false;
+  m.style.left = `${Math.min(x, innerWidth - m.offsetWidth - 8)}px`;
+  m.style.top = `${Math.min(y, innerHeight - m.offsetHeight - 8)}px`;
+  m.items = items;
+  m.def = def;
+  // keys go to the menu, not the focused terminal (IME too); focus comes back on close
+  m.prevFocus = document.activeElement;
+  m.prevFocus?.blur();
+}
+// ↑↓: the highlighted item (Enter runs it)
+function menuSel(i) {
+  const m = $("#menu");
+  m.def = i;
+  m.querySelectorAll("button").forEach((b, j) => b.classList.toggle("sel", j === i));
+}
+function closeMenu() {
+  const m = $("#menu");
+  if (m.hidden) return;
+  m.hidden = true;
+  if (document.activeElement === document.body || !document.activeElement) m.prevFocus?.focus();
+}
+window.addEventListener("mousedown", (e) => { if (!$("#menu").hidden && !e.target.closest("#menu")) closeMenu(); }, true);
+
+$("#views").addEventListener("click", (e) => {
+  const img = e.target.closest(".poke");
+  if (img) react(active, Math.random() < 0.5 ? "attack" : "cute");
+});
+$("#views").addEventListener("contextmenu", (e) => {
+  if (!e.target.closest(".pane-avatar") || !active) return;
+  e.preventDefault();
+  openMenu(active, e.clientX, e.clientY);
+});
+
+// ── wild Pokémon (a finished task sometimes brings one; ⌘B / click throws a Poké Ball) ──
+let wildOn = true;
+const wild = createWild($("#wild"), {
+  invoke,
+  log: (line) => invoke("log_line", { line }),
+  // caught (it rests in the box): make it this tab's partner right away
+  partnerButton: (e) => active && takeSpecies(active, e.id),
+});
+
+// ── 📝 changes panel (E1b): the folder's changed files (git), refreshed when a turn ends, the tab
+// is selected, every 10 s while on screen, or ↻. A file → side-by-side diff, "revert this file". ──
+const STATUS = { modified: ["M", "mod"], added: ["A", "add"], new: ["N", "add"], deleted: ["D", "del"], renamed: ["R", "mod"] };
+
+async function refreshChanges(tab) {
+  if (!tab || tab.changesBusy) return;
+  tab.changesBusy = true;
+  try {
+    const r = await invoke("changes_list", { ws: tab.id });
+    tab.changes = r;
+    renderChanges(tab);
+  } catch {} finally { tab.changesBusy = false; }
+}
+setInterval(() => { if (active && document.hasFocus()) refreshChanges(active); }, 10000);
+
+function renderChanges(tab) {
+  const ul = $(".changes", tab.view), r = tab.changes;
+  // a redraw (every 10 s) must not take the keyboard away from the list
+  const had = document.activeElement?.closest?.(".changes li[data-i]") && ul.contains(document.activeElement)
+    ? document.activeElement.title : null;
+  $(".changes-count", tab.view).textContent = r?.repo && r.items.length ? `(${r.items.length})` : "";
+  if (!r) return;
+  if (!r.repo) { ul.innerHTML = '<li class="dim">git 저장소가 아니에요</li>'; return; }
+  if (!r.items.length) { ul.innerHTML = '<li class="dim">바뀐 파일이 없어요</li>'; return; }
+  ul.innerHTML = r.items.map((x, i) => {
+    const [mark, cls] = STATUS[x.status] || ["?", ""];
+    const nums = x.binary ? '<span class="dim">바이너리</span>'
+      : `${x.add ? `<span class="add">+${x.add}</span>` : ""} ${x.del ? `<span class="del">−${x.del}</span>` : ""}`;
+    const slash = x.path.lastIndexOf("/");
+    return `<li data-i="${i}" tabindex="0" title="${esc(x.path)}"><b class="st ${cls}">${mark}</b>`
+      + `<span class="file">${esc(x.path.slice(slash + 1))}</span><span class="dir dim">${esc(slash > 0 ? x.path.slice(0, slash) : "")}</span><span class="nums">${nums}</span></li>`;
+  }).join("");
+  if (had != null) [...ul.querySelectorAll("li[data-i]")].find((li) => li.title === had)?.focus();
+}
+
+// after the diff closes: back to the file's line in the list; if that file was reverted (gone),
+// the line now at its place (or the one above); an empty list → the agent pane
+function focusAfterDiff(tab, path, index) {
+  if (tab !== active) return;
+  const items = tab.changes?.items || [];
+  let i = items.findIndex((x) => x.path === path);
+  if (i < 0) i = Math.min(index, items.length - 1);
+  const li = i >= 0 && $(`.changes li[data-i="${i}"]`, tab.view);
+  if (li) li.focus();
+  else focusBig(tab);
+}
+
+$("#views").addEventListener("click", (e) => {
+  if (e.target.closest(".changes-refresh")) { refreshChanges(active); toast("변경 사항을 새로 읽었어요"); return; }
+  const li = e.target.closest(".changes li[data-i]");
+  if (li) openDiff(active, active.changes.items[Number(li.dataset.i)], Number(li.dataset.i));
+});
+$("#views").addEventListener("keydown", (e) => {
+  const li = e.target.closest?.(".changes li[data-i]");
+  if (!li) return;
+  if (e.key === "Enter") { e.preventDefault(); openDiff(active, active.changes.items[Number(li.dataset.i)], Number(li.dataset.i)); }
+  else if (e.key === "ArrowDown" || e.key === "j") { e.preventDefault(); li.nextElementSibling?.focus(); }
+  else if (e.key === "ArrowUp" || e.key === "k") { e.preventDefault(); li.previousElementSibling?.focus(); }
+  else if (e.key === "Escape") { e.preventDefault(); focusBig(active); }
+});
+
+// unified diff → rows for a side-by-side table (removed lines pair up with the added ones after them)
+function sideBySide(diff) {
+  const rows = [];
+  let a = 0, b = 0, dels = [], adds = [];
+  const flush = () => {
+    for (let i = 0; i < Math.max(dels.length, adds.length); i++) rows.push({ l: dels[i], r: adds[i] });
+    dels = []; adds = [];
+  };
+  for (const line of diff.split("\n")) {
+    const h = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@(.*)/);
+    if (h) { flush(); a = Number(h[1]); b = Number(h[2]); rows.push({ hunk: line }); continue; }
+    if (!rows.length || line === "" || line.startsWith("\\")) continue; // header lines, the text's last newline, "\ No newline"
+    if (line.startsWith("-")) dels.push({ n: a++, t: line.slice(1), k: "del" });
+    else if (line.startsWith("+")) adds.push({ n: b++, t: line.slice(1), k: "add" });
+    else { flush(); const t = line.slice(1); rows.push({ l: { n: a++, t, k: "" }, r: { n: b++, t, k: "" } }); }
+  }
+  flush();
+  return rows;
+}
+
+let diffFor = null;
+async function openDiff(tab, item, index = 0) {
+  if (!tab || !item) return;
+  diffFor = { tab, item, index };
+  const [mark] = STATUS[item.status] || ["?"];
+  $("#diff-title").innerHTML = `<b class="st">${mark}</b> ${esc(item.path)} <span class="add">${item.add ? `+${item.add}` : ""}</span> <span class="del">${item.del ? `−${item.del}` : ""}</span>`;
+  const btn = $("#diff-revert");
+  btn.className = "";
+  btn.textContent = item.status === "new" || item.status === "added" ? "이 파일 지우기(휴지통)" : "이 파일 되돌리기";
+  const body = $("#diff-body");
+  body.innerHTML = '<p class="dim">불러오는 중…</p>';
+  $("#diffview").hidden = false;
+  $("#diffview").focus();
+  let r;
+  try { r = await invoke("changes_diff", { ws: tab.id, path: item.path }); } catch (e) { body.innerHTML = `<p class="bad">${esc(e.message)}</p>`; return; }
+  if (r.binary) { body.innerHTML = '<p class="dim">바이너리 파일이라 비교할 수 없어요</p>'; return; }
+  const rows = sideBySide(r.diff);
+  const cell = (c) => (c ? `<td class="ln">${c.n}</td><td class="tx ${c.k}">${esc(c.t)}</td>` : '<td class="ln"></td><td class="tx none"></td>');
+  body.innerHTML = rows.length ? `<table class="sbs"><colgroup><col class="c-ln"><col><col class="c-ln"><col></colgroup>${rows.map((x) => x.hunk
+    ? `<tr class="hunk"><td colspan="4">${esc(x.hunk)}</td></tr>` : `<tr>${cell(x.l)}${cell(x.r)}</tr>`).join("")}</table>${r.truncated ? '<p class="dim">(너무 길어서 일부만)</p>' : ""}`
+    : '<p class="dim">내용 변경 없음(권한·이름만 바뀜)</p>';
+}
+
+function closeDiff() {
+  $("#diffview").hidden = true;
+  const d = diffFor;
+  diffFor = null;
+  if (d) focusAfterDiff(d.tab, d.item.path, d.index);
+  else focusBig(active);
+}
+const diffOpen = () => !$("#diffview").hidden;
+
+// revert: press twice (new files go to the Trash, never deleted)
+$("#diff-revert").addEventListener("click", async () => {
+  const btn = $("#diff-revert"), d = diffFor;
+  if (!d) return;
+  if (!btn.classList.contains("confirm")) {
+    btn.classList.add("confirm");
+    btn.textContent = d.item.status === "new" || d.item.status === "added" ? "한 번 더 누르면 휴지통으로" : "한 번 더 누르면 되돌려요 (바뀐 내용 사라짐)";
+    return;
+  }
+  const r = await invoke("changes_revert", { ws: d.tab.id, path: d.item.path }).catch((e) => { toast(String(e.message || e)); return null; });
+  if (!r) return;
+  // the list without it first, then close (focus goes to the line now at its place)
+  d.tab.changes = await invoke("changes_list", { ws: d.tab.id }).catch(() => d.tab.changes);
+  renderChanges(d.tab);
+  closeDiff();
+  toast(r.status === "new" || r.status === "added" ? `${d.item.path}를 휴지통으로 옮겼어요` : `${d.item.path}를 되돌렸어요`);
+});
+$("#diff-close").addEventListener("click", () => closeDiff());
+$("#diffview").addEventListener("click", (e) => { if (e.target === $("#diffview")) closeDiff(); });
+
+// ── Pokédex (⌘D): every Pokémon of Gen I–V as a grid by region — caught in colour, seen as a
+// silhouette, never met as "?" (no downloads for those). Like a "name them all" quiz board. ──
+const REGIONS = [["관동", 1, 151], ["성도", 152, 251], ["호연", 252, 386], ["신오", 387, 493], ["하나", 494, 649]];
+let dexState = null;
+
+async function openDex() {
+  closeMenu();
+  const d = await invoke("dex_list");
+  const byNo = new Map(d.entries.map((e) => [e.id, e]));
+  // where this tab could take each species from: resting / other folders / already its partner
+  const opts = active ? await invoke("partner_options", { ws: active.id }) : null;
+  dexState = { ...d, byNo, opts, sel: active?.partner?.id || d.entries[0]?.id || 1 };
+  const owned = d.entries.reduce((n, e) => n + (e.owned || 0), 0);
+  $("#dex-title").innerHTML = `📕 도감 <span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
+    + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`;
+  $("#dex-regions").innerHTML = REGIONS.map(([name, a, b]) => {
+    const got = d.entries.filter((e) => e.caught && e.id >= a && e.id <= b).length;
+    return `<button data-a="${a}">${name} <span class="dim">${got}/${b - a + 1}</span></button>`;
+  }).join("");
+  const grid = $("#dex-grid");
+  grid.innerHTML = REGIONS.map(([name, a, b]) => {
+    const cells = [];
+    for (let n = a; n <= b; n++) {
+      const e = byNo.get(n);
+      const cls = !e ? "unknown" : e.caught ? "caught" : "seen";
+      const mark = e?.owned > 1 ? `<i class="cnt">×${e.owned}</i>` : "";
+      const star = e?.caught && e.shiny ? '<i class="shiny">✨</i>' : "";
+      const me = active?.partner?.id === n ? " partner" : "";
+      cells.push(`<div class="cell ${cls}${me}" data-n="${n}" title="#${String(n).padStart(3, "0")}${e ? " " + esc(e.name) : ""}">`
+        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q">${e ? "" : "?"}</span>`) + `${mark}${star}</div>`);
+    }
+    return `<h4 id="region-${a}">${name}</h4><div class="cells">${cells.join("")}</div>`;
+  }).join("");
+  grid.querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
+  $("#dex").hidden = false;
+  dexSelect(dexState.sel);
+}
+
+function dexSelect(n) {
+  const d = dexState;
+  if (!d) return;
+  d.sel = Math.max(1, Math.min(d.total, n));
+  $("#dex-grid .cell.sel")?.classList.remove("sel");
+  const cell = $(`#dex-grid .cell[data-n="${d.sel}"]`);
+  cell?.classList.add("sel");
+  cell?.scrollIntoView({ block: "nearest" });
+  const e = d.byNo.get(d.sel);
+  const no = `#${String(d.sel).padStart(3, "0")}`;
+  const img = $("#dex-img");
+  img.className = e && !e.caught ? "seen" : "";
+  if (e?.gif) spriteUrl(e.gif).then(async (u) => {
+    if (!u || dexState?.sel !== d.sel) return;
+    img.src = u;
+    await img.decode().catch(() => {});
+    img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`;
+  });
+  else img.removeAttribute("src");
+  $("#dex-name").textContent = e ? `${no} ${e.caught && e.shiny ? "✨" : ""}${e.name}` : `${no} ???`;
+  $("#dex-meta").innerHTML = !e ? "아직 만나지 못했어요"
+    : `${(e.types || []).map((t) => `${TYPE_ICON[t] || ""} ${t}`).join(" · ")}<br>만난 횟수 ${e.count} · ${e.caught ? `● 잡음 · 📦 ${e.owned || 0}마리` : "○ 만나기만 함"}`;
+  // owned: where the individuals are, and what "take" will do (resting → now; another folder's → ask)
+  const take = $("#dex-take");
+  take.className = "";
+  const o = d.opts, rest = o?.resting.filter((m) => m.id === d.sel) || [], others = o?.others.filter((m) => m.id === d.sel) || [];
+  const mine = o?.current?.id === d.sel;
+  if (e?.owned > 0) {
+    const where = [mine ? "이 탭의 파트너" : "", rest.length ? `쉬는 ${rest.length}` : "", ...others.map((m) => `📁 ${esc(m.folderName)}`)].filter(Boolean).join(" · ");
+    $("#dex-meta").innerHTML += `<br>${where}`;
+  }
+  take.hidden = !rest.length;
+  take.textContent = "이 탭의 파트너로";
+  // none resting: one button per folder that has one (EXP shown) — click twice to take it
+  d.fromOthers = rest.length ? [] : others;
+  renderFrom(e, -1);
+  $("#dex-pos").textContent = `${d.sel} / ${d.total}`;
+}
+
+async function dexChoose() {
+  const d = dexState, e = d?.byNo.get(d.sel);
+  if (!e || !active) return;
+  if (!e.owned) { toast(e.caught ? `박스에 ${e.name}가 없어요` : `${josa(e.name, "은", "는")} 아직 잡지 못했어요`); return; }
+  const o = d.opts;
+  const rest = o?.resting.findLast((m) => m.id === e.id);
+  const other = o?.others.find((m) => m.id === e.id);
+  if (!rest && !other) { toast(o?.current?.id === e.id ? "이미 이 탭의 파트너예요" : `박스에 ${e.name}가 없어요`); return; }
+  if (!rest) return dexFrom(0); // Enter: the first folder's (asks once)
+  return dexTake(rest, null);
+}
+
+// take another folder's individual (i in dexState.fromOthers): first press asks, second takes
+function dexFrom(i) {
+  const m = dexState?.fromOthers?.[i];
+  const b = $(`#dex-from button[data-i="${i}"]`);
+  if (!m || !b) return;
+  if (!b.classList.contains("confirm")) return renderFrom(dexState.byNo.get(dexState.sel), i);
+  return dexTake(m, m);
+}
+
+// the folders this species can be taken from; `ask` = the one waiting for the second press
+function renderFrom(e, ask) {
+  const list = dexState?.fromOthers || [];
+  $("#dex-from").innerHTML = list.length
+    ? `<div class="dim">쉬는 ${esc(e.name)}가 없어요 — 다른 폴더에서 데려오기 (그 폴더는 비어요)</div>`
+      + list.map((m, i) => i === ask
+        ? `<button data-i="${i}" class="confirm">한 번 더 누르면 ${esc(m.folderName)}의 ${esc(m.name)} 데려오기</button>`
+        : `<button data-i="${i}">📁 ${esc(m.folderName)} · EXP ${m.xp}</button>`).join("")
+    : "";
+}
+
+async function dexTake(m, other) {
+  const tab = active;
+  closeDex();
+  const pk = await invoke("partner_take", { ws: tab.id, uid: m.uid }).catch((err) => { toast(String(err.message || err)); return null; });
+  if (!pk) return;
+  const shown = pk.pending ? await invoke("partner_state", { ws: tab.id }) : pk;
+  if (shown && !shown.choose) { await showPartner(tab, shown); react(tab, "cute"); toast(`${josa(shown.name, "과", "와")} 함께해요!${other ? ` (${other.folderName}에서 데려옴)` : ""}`); }
+}
+
+function closeDex() { $("#dex").hidden = true; dexState = null; focusBig(active); }
+const dexOpen = () => !$("#dex").hidden;
+
+// grid columns right now (for ↑↓)
+const dexCols = () => getComputedStyle($("#dex-grid .cells")).gridTemplateColumns.split(" ").length || 10;
+
+function dexKey(e) {
+  const d = dexState;
+  if (!d) return false;
+  const k = e.key, cols = dexCols();
+  if (k === "Escape" || k === "q") closeDex();
+  else if (k === "ArrowRight" || k === "l") dexSelect(d.sel % d.total + 1);
+  else if (k === "ArrowLeft" || k === "h") dexSelect((d.sel - 2 + d.total) % d.total + 1);
+  else if (k === "ArrowDown" || k === "j") dexSelect(d.sel + cols);
+  else if (k === "ArrowUp" || k === "k") dexSelect(d.sel - cols);
+  else if (k === "PageDown") dexSelect(d.sel + cols * 5);
+  else if (k === "PageUp") dexSelect(d.sel - cols * 5);
+  else if (k === "Home") dexSelect(1);
+  else if (k === "End") dexSelect(d.total);
+  else if (k === "Enter") dexChoose();
+  else if (k === "Tab") { // next / previous Pokémon you've met
+    const met = d.entries.map((x) => x.id);
+    const next = e.shiftKey ? [...met].reverse().find((n) => n < d.sel) : met.find((n) => n > d.sel);
+    dexSelect(next ?? (e.shiftKey ? met.at(-1) : met[0]) ?? d.sel);
+  } else return false;
+  return true;
+}
+
+$("#dex-grid").addEventListener("click", (e) => { const c = e.target.closest(".cell"); if (c) dexSelect(Number(c.dataset.n)); });
+$("#dex-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".cell")) dexChoose(); });
+$("#dex-regions").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { dexSelect(Number(b.dataset.a)); $(`#region-${b.dataset.a}`).scrollIntoView({ block: "start" }); } });
+$("#dex-take").addEventListener("click", () => dexChoose());
+$("#dex-from").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) dexFrom(Number(b.dataset.i)); });
+
+// ── start screen ────────────────────────────────────────────────────────────
+let startItems = [];
+let startSel = 0;
+let recentCount = 0;
+
+async function showStart(required) {
+  const recent = await invoke("recent_dirs");
+  recentCount = recent.length;
+  const ol = $("#recent");
+  ol.innerHTML = recent.length ? "" : '<li class="dim">아직 최근 폴더가 없어요</li>';
+  startItems = recent.map((d, i) => {
+    const li = document.createElement("li");
+    li.innerHTML = `<span class="k">${i < 9 ? i + 1 : ""}</span><span>${esc(base(d))}</span><span class="parent">${esc(d.replace(info.home, "~"))}</span>`;
+    li.addEventListener("click", () => openFolder(d));
+    ol.appendChild(li);
+    return { el: li, run: () => openFolder(d) };
+  });
+  for (const b of document.querySelectorAll(".start-actions button")) {
+    startItems.push({ el: b, run: () => startAction(b.dataset.action) });
+  }
+  $("#start").dataset.required = required ? "1" : "";
+  $("#start-esc").hidden = !!required;
+  $("#start").hidden = false;
+  startSel = 0;
+  markStart();
+}
+
+function hideStart() { $("#start").hidden = true; }
+const startOpen = () => !$("#start").hidden;
+
+function markStart() {
+  startItems.forEach((it, i) => it.el.classList.toggle("sel", i === startSel));
+}
+
+async function startAction(action) {
+  if (action === "home") return openFolder(info.home);
+  if (action === "choose") {
+    const dir = await invoke("choose_folder");
+    if (dir) openFolder(dir);
+  }
+}
+document.querySelectorAll(".start-actions button").forEach((b) => b.addEventListener("click", () => startAction(b.dataset.action)));
+
+function startKey(e) {
+  const n = Number(e.key);
+  if (n >= 1 && n <= 9 && n <= recentCount) { startItems[n - 1].run(); return true; }
+  if (e.key === "ArrowDown" || e.key === "j") { startSel = (startSel + 1) % startItems.length; markStart(); return true; }
+  if (e.key === "ArrowUp" || e.key === "k") { startSel = (startSel - 1 + startItems.length) % startItems.length; markStart(); return true; }
+  if (e.key === "Enter") { startItems[startSel]?.run(); return true; }
+  if (e.key === "o") { startAction("choose"); return true; }
+  if (e.key === "h") { startAction("home"); return true; }
+  if (e.key === "Escape" && !$("#start").dataset.required) { hideStart(); focusBig(active); return true; }
+  return false;
+}
+
+// ── keys (physical key codes: work with any input source, e.g. Korean) ───────
+window.addEventListener("keydown", (e) => {
+  if (dexOpen() && !(e.metaKey && e.code !== "KeyD")) {
+    if (e.metaKey || dexKey(e)) { e.preventDefault(); e.stopPropagation(); if (e.metaKey) closeDex(); }
+    return;
+  }
+  if (!$("#menu").hidden && !e.metaKey) {
+    // the menu has the keyboard: nothing reaches the terminal behind it (arrows were shell history)
+    e.preventDefault(); e.stopPropagation();
+    const m = $("#menu"), len = m.items?.length || 0, n = Number(e.key);
+    const run = (i) => { const fn = m.items[i][2]; closeMenu(); fn(); };
+    if (n >= 1 && n <= len) run(n - 1);
+    else if (e.key === "ArrowDown" || e.key === "ArrowUp") menuSel(((m.def ?? -1) + (e.key === "ArrowDown" ? 1 : len - 1 + (m.def < 0 ? 1 : 0))) % len);
+    else if (e.key === "Enter" && m.def >= 0) run(m.def);
+    else if (e.key === "Escape") closeMenu();
+    return;
+  }
+  if (agentsOpen() && !e.metaKey) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAgents(); } return; }
+  if (chooseOpen() && !e.metaKey) { if (chooseKey(e)) { e.preventDefault(); e.stopPropagation(); } return; }
+  if (diffOpen() && !e.metaKey) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeDiff(); } return; }
+  if (startOpen() && !e.metaKey) {
+    if (startKey(e)) { e.preventDefault(); e.stopPropagation(); }
+    return;
+  }
+  if (!e.metaKey) return;
+  const hit = (fn) => { e.preventDefault(); e.stopPropagation(); fn(); };
+  if (e.altKey && e.code === "Digit1") return hit(() => focusBig(active)); // the agent (the shell while there's none)
+  if (e.altKey && e.code === "Digit2") return hit(() => $(".changes li[data-i]", active?.view)?.focus());
+  if (e.altKey && e.code === "Digit3") return hit(() => active?.panes.shell.term.focus());
+  if (e.altKey && e.code === "Enter") return hit(() => { if (active) { active.autoSwapped = false; swapPanes(active, !active.swapped); } });
+  if (e.code === "KeyG" || (e.code === "KeyA" && e.shiftKey)) return hit(() => switchAgent());
+  if (e.code === "KeyT" && e.shiftKey) return hit(() => newSession(active)); // S2: a new session is a shell
+  if (e.code === "KeyT") return hit(() => showStart(false));
+  // ⌃⌘1~9: this tab's sessions (⌘1~9 = tabs; ⇧⌘3/4/5 are macOS screenshots, ⌘⌥arrows window tools)
+  const sm = e.ctrlKey && e.code.match(/^Digit([1-9])$/);
+  if (sm) return hit(() => { const t = active; const x = t?.sessions[Number(sm[1]) - 1]; if (x) switchSession(t, x.id); });
+  if (e.code === "KeyD") return hit(() => (dexOpen() ? closeDex() : openDex()));
+  if (e.code === "KeyO") return hit(() => startAction("choose"));
+  if (e.code === "KeyE") return hit(() => composerToggle());
+  if (e.code === "KeyR") return hit(() => relayout());
+  if (e.code === "Equal") return hit(() => setFont(fontSize + 1));
+  if (e.code === "Minus") return hit(() => setFont(fontSize - 1));
+  if (e.code === "Digit0") return hit(() => setFont(FONT_DEFAULT));
+  if (e.code === "KeyB") return hit(() => { if (!wild.throwBall()) toast("🌿 지금은 야생 포켓몬이 없어요"); });
+  if (e.code === "KeyW") return hit(() => closeTab());
+  const m = !e.ctrlKey && e.code.match(/^Digit([1-9])$/);
+  if (m) return hit(() => selectTab(m[1] === "9" ? tabs[tabs.length - 1] : tabs[Number(m[1]) - 1]));
+  if (e.code === "BracketLeft" || e.code === "BracketRight") {
+    return hit(() => {
+      if (!tabs.length) return;
+      const d = e.code === "BracketRight" ? 1 : -1;
+      selectTab(tabs[(tabs.indexOf(active) + d + tabs.length) % tabs.length]);
+    });
+  }
+}, true);
+
+// ── Finder drops onto a pane: paths typed into it (agent: Claude attaches images as [Image #N];
+// shell: the path; Neovim: opens the file). Onto the tab bar / start screen: folders → new tabs ──
+let dragDepth = 0;
+window.addEventListener("dragenter", (e) => { e.preventDefault(); dragDepth++; document.body.classList.add("drop-target"); });
+window.addEventListener("dragleave", () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove("drop-target"); } });
+window.addEventListener("dragover", (e) => e.preventDefault());
+window.addEventListener("drop", async (e) => {
+  e.preventDefault();
+  dragDepth = 0;
+  document.body.classList.remove("drop-target");
+  const paths = [...e.dataTransfer.files].map((f) => window.cvimHost.pathForFile(f)).filter(Boolean);
+  if (!paths.length) return;
+  const section = e.target.closest?.(".pane");
+  const kind = section && ["agent", "shell"].find((k) => section.classList.contains(`pane-${k}`));
+  // the tab bar / start screen / no tab yet: folders open as tabs
+  if (!active || !kind || e.target.closest?.("#tabs, #start")) {
+    for (const p of paths) await openFolder(p).catch(() => toast(`폴더만 새 탭으로 열 수 있어요: ${base(p)}`));
+    return;
+  }
+  const pane = kind;
+  const r = await invoke("drop_paths", { ws: active.id, pane, paths });
+  if (r.files) { active.panes[pane].term.focus(); toast(`${r.files}개 경로를 입력했어요`); }
+});
+
+// the pane in the big slot: the agent pane, or the shell while an agent run there is swapped in
+const focusBig = (tab) => tab && bigPane(tab).term.focus();
+const bigPane = (tab) => (tab.swapped && tab.shellAgent ? tab.panes.shell : tab.panes.agent);
+
+// ⌘V with an image (e.g. a screenshot) and no text: Ctrl+V to the agent, which attaches it from
+// the clipboard itself (like the Neovim CVIM)
+window.addEventListener("paste", (e) => {
+  const p = [...panes.values()].find((x) => x.term.textarea === e.target);
+  if (!p || e.clipboardData.getData("text")) return;
+  const image = [...e.clipboardData.items].some((i) => i.type.startsWith("image/"));
+  const agentHere = p.kind === "agent" || (p.kind === "shell" && p.tab.shellAgent);
+  if (!image || !agentHere) return;
+  e.preventDefault();
+  e.stopImmediatePropagation();
+  invoke("pty_write", { id: p.id, data: "\x16" });
+  toast("이미지를 붙였어요");
+}, true);
+
+// ── prompt composer (⌘E): write long / Korean prompts in a real text field, then send to the
+// agent in the big slot (bracketed paste + Enter). One draft per tab, kept when closed. ──
+function composer(tab) {
+  if (tab.composer) return tab.composer;
+  const box = document.createElement("div");
+  box.className = "composer";
+  box.hidden = true;
+  box.innerHTML = '<div class="composer-title">✍ 프롬프트 <span class="composer-to"></span></div><textarea spellcheck="false" placeholder="여기에 길게 쓰고 ⌘⏎로 보내요"></textarea>'
+    + '<div class="composer-hint dim">⌘⏎ 보내기 · ⌘⇧⏎ 붙여넣기만 · Esc 닫기(초안 유지)</div>';
+  // M2: where to send (2 or more sessions) — this session / one other / all
+  $(".composer-to", box).addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-to]");
+    if (b) { tab.composeTo = b.dataset.to; renderComposeTo(tab); tab.composer.ta.focus(); }
+  });
+  tab.view.appendChild(box);
+  const ta = $("textarea", box);
+  const grow = () => { ta.style.height = "auto"; ta.style.height = `${Math.min(ta.scrollHeight, tab.view.clientHeight * 0.5)}px`; };
+  ta.addEventListener("input", grow);
+  ta.addEventListener("keydown", (e) => {
+    if (e.isComposing) return;
+    if (e.key === "Enter" && e.metaKey) { e.preventDefault(); e.stopPropagation(); composerSend(tab, !e.shiftKey); }
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); composerClose(tab); }
+  });
+  tab.composer = { box, ta, grow };
+  return tab.composer;
+}
+
+// the "보낼 곳" chips: hidden with one session
+function renderComposeTo(tab) {
+  const el = $(".composer-to", tab.view);
+  if (!el) return;
+  const list = tab.sessions || [];
+  if (list.length < 2) { el.innerHTML = ""; return; }
+  const to = tab.composeTo || "cur";
+  const chip = (key, label) => `<button data-to="${esc(key)}" class="${to === key ? "on" : ""}" tabindex="-1">${esc(label)}</button>`;
+  el.innerHTML = "→ " + chip("cur", "지금 셸") + list.filter((x) => x.id !== tab.sid).map((x) => chip(x.id, `셸 ${sessNo(tab, x)}`)).join("") + chip("all", "모든 셸");
+}
+
+function composerToggle(tab = active) {
+  if (!tab) return;
+  const c = composer(tab);
+  if (tab.composeTo && tab.composeTo !== "cur" && tab.composeTo !== "all" && !tab.sessions.some((x) => x.id === tab.composeTo)) tab.composeTo = "cur";
+  renderComposeTo(tab);
+  if (!c.box.hidden && document.activeElement === c.ta) return composerClose(tab);
+  c.box.hidden = false;
+  c.grow();
+  c.ta.focus();
+  c.ta.setSelectionRange(c.ta.value.length, c.ta.value.length);
+}
+
+function composerClose(tab) {
+  const c = tab.composer;
+  if (!c) return;
+  c.box.hidden = true;
+  bigPane(tab).term.focus();
+}
+
+async function composerSend(tab, enter) {
+  const c = tab.composer;
+  const text = c.ta.value.replace(/\s+$/, "");
+  if (!text) return;
+  // where: the big slot (this session) / another session / every session (M2)
+  const to = tab.sessions?.length > 1 ? tab.composeTo || "cur" : "cur";
+  const targets = to === "cur" ? [bigPane(tab)] : to === "all" ? tab.sessions.map((x) => x.pane) : [tab.sessions.find((x) => x.id === to)?.pane].filter(Boolean);
+  for (const p of targets) {
+    await invoke("pty_write", { id: p.id, data: `\x1b[200~${text}\x1b[201~` });
+    // a separate Enter after the paste (an Enter inside the paste would be a newline)
+    if (enter) setTimeout(() => invoke("pty_write", { id: p.id, data: "\r" }), 120);
+  }
+  c.ta.value = "";
+  composerClose(tab);
+  const where = to === "cur" ? "" : to === "all" ? ` (모든 셸 ${targets.length}개)` : ` (셸 ${sessNo(tab, tab.sessions.find((x) => x.id === to))})`;
+  toast(`${enter ? "보냈어요" : "붙여넣었어요 (Enter로 보내기)"}${where}`);
+}
+
+// ⌘= ⌘- ⌘0: every terminal's font size
+function setFont(n) {
+  fontSize = Math.max(9, Math.min(28, n));
+  try { localStorage.setItem("cvim.fontSize", String(fontSize)); } catch {}
+  for (const p of panes.values()) { p.term.options.fontSize = fontSize; resize(p); }
+  toast(`글자 크기 ${fontSize}`);
+}
+
+// ⌘R: measure everything again (after moving to another monitor, etc.)
+function relayout() {
+  for (const t of tabs) for (const p of Object.values(t.panes)) resize(p);
+  if (active) for (const p of Object.values(active.panes)) { try { p.fit.fit(); } catch {} resize(p); }
+  toast("화면을 다시 맞췄어요");
+}
+
+// ── events from the main process ────────────────────────────────────────────
+listen("pty", (e) => {
+  const p = panes.get(e.payload.id);
+  if (!p) return;
+  const data = b64bytes(e.payload.data);
+  p.bytes += data.length;
+  p.term.write(data);
+});
+listen("pty-exit", (e) => {
+  const p = panes.get(e.payload.id);
+  if (!p) return;
+  // the agent pane goes back to a shell (a toast says why): no "[종료됨]" left above its prompt
+  if (p.kind !== "agent") p.term.write("\r\n\x1b[2m[종료됨]\x1b[0m\r\n");
+  if (p.onExit) p.onExit();
+  if (p.kind === "agent") agentExited(p);
+});
+
+// an agent pane's process ended (S2): an agent (/exit, crash) → that session's shell again, in
+// place; the shell itself (`exit`) → a later session closes, the first one gets a new shell
+function agentExited(p) {
+  const tab = p.tab, sess = tab?.sessions?.find((x) => x.pane === p);
+  if (!sess || !byId.has(tab.id)) return;
+  const wasShell = !!sess.host, no = sessNo(tab, sess);
+  sess.running = false;
+  sess.hostAgent = null;
+  if (wasShell && sess.id !== tab.id) {
+    closeSession(tab, sess.id).then(() => toast(`셸 ${no} 종료 — 닫았어요`));
+    return;
+  }
+  // a shell that ends right after starting (broken shell config): no restart loop
+  if (wasShell && sess.hostAt && Date.now() - sess.hostAt < 2000) {
+    sess.host = false;
+    p.term.write("\x1b[2m셸이 바로 끝났어요 — ⌘G로 에이전트 시작\x1b[0m\r\n");
+    return;
+  }
+  startHost(tab, sess).then(() => { renderRail(tab); renderTab(tab); });
+  toast(tab.sessions.length > 1 ? `셸 ${no}: ${wasShell ? "셸을 다시 열었어요" : "에이전트 종료 — 셸로"}` : wasShell ? "셸을 다시 열었어요" : "에이전트 종료 — 셸로 돌아왔어요 (⌘G 에이전트)");
+}
+// two sources per tab: the agent pane and an agent run by hand in the shell; the one in the big
+// slot (the shell's, while it runs) is what the tab, top bar and partner show
+listen("agent-state", (e) => {
+  const t = byId.get(e.payload.ws);
+  if (!t) return;
+  rememberUsage(e.payload.shellKey || e.payload.agent?.key, e.payload.usage);
+  if (e.payload.source === "shell") t.shellState = e.payload;
+  else {
+    const sess = t.sessions?.find((x) => x.id === (e.payload.session || t.id));
+    if (!sess) return;
+    const prev = sess.state?.state;
+    sess.state = e.payload;
+    if (e.payload.agent) sess.agent = e.payload.agent;
+    if (sess.id !== t.sid) {
+      // a session in the background: its dot, the tab icon, the summary — and the partner reacts
+      if (prev && prev !== e.payload.state && ["done", "waiting", "error"].includes(e.payload.state)) {
+        if (e.payload.state === "done") react(t, "attack");
+        if (t === active) toast(`셸 ${sessNo(t, sess)}: ${e.payload.state === "done" ? "🎉 완료" : e.payload.state === "waiting" ? "❗ 입력 필요" : "💥 실패"}`);
+      }
+      renderRail(t); renderTab(t); renderSummary();
+      return;
+    }
+    t.agentState = e.payload;
+  }
+  if (shownOf(t) === e.payload) renderState(t, e.payload);
+  renderRail(t);
+});
+listen("partner", (e) => {
+  const t = byId.get(e.payload.ws);
+  if (!t) return;
+  showPartner(t, e.payload);
+});
+listen("partner-choose", (e) => { const t = byId.get(e.payload.ws); if (t) needPartner(t, e.payload.freed); });
+// starters arriving while the dialog is open
+listen("partner-today", async () => { if (chooseOpen() && chooseFor) renderChoose(chooseFor, await invoke("partner_options", { ws: chooseFor.id })); });
+listen("partner-progress", (e) => {
+  const t = byId.get(e.payload.ws);
+  if (!t) return;
+  if (e.payload.evolved) evolve(t, e.payload.from, { ...e.payload.evolved, xp: e.payload.xp, toEvolve: e.payload.toEvolve, pinned: e.payload.pinned });
+  else showProgress(t, e.payload);
+});
+listen("open-folder", (e) => openFolder(e.payload.cwd));
+listen("select-tab", (e) => selectTab(byId.get(e.payload.ws))); // overlay click
+// a resumed agent that had nothing to continue: started fresh
+listen("agent-restarted", (e) => {
+  const t = byId.get(e.payload.ws);
+  const sess = t?.sessions.find((x) => x.id === (e.payload.session || t.id));
+  if (sess) { sess.pane.term.reset(); toast("이어 할 대화가 없어 새로 시작했어요"); }
+});
+// S2: an agent typed into the agent pane's shell (or it ended)
+listen("host-agent", (e) => {
+  const t = byId.get(e.payload.ws);
+  const sess = t?.sessions.find((x) => x.id === e.payload.session);
+  if (!sess?.host) return;
+  const a = e.payload.agent;
+  sess.hostAgent = a;
+  sess.hostWhere = a ? e.payload.where : null;
+  sess.running = !!a;
+  if (t.sid === sess.id) whereNotice(sess.hostWhere);
+  if (a) sess.agent = a;
+  if (t.sid === sess.id) {
+    if (a) showAgent(t, a);
+    else { showAgent(t, t.agent); if (!(t.swapped && t.shellAgent)) renderState(t, SHELL_STATE); }
+  }
+  renderRail(t);
+  renderTab(t);
+});
+listen("shell-agent", (e) => { const t = byId.get(e.payload.ws); if (t) onShellAgent(t, e.payload.agent, e.payload.where); });
+// in another app the desktop overlay shows the wild card; the window's own copy would be a second one
+window.addEventListener("blur", () => document.body.classList.add("away"));
+window.addEventListener("focus", () => document.body.classList.remove("away"));
+listen("wild", (e) => wild.show(e.payload));
+listen("wild-throw", (e) => wild.play(e.payload));
+listen("wild-end", (e) => wild.end(e.payload));
+
+// ── diagnostics & tests (CVIM_DESKTOP_TEST=1) ───────────────────────────────
+const T0 = performance.now();
+function imeLog(src, what, detail) {
+  if (!info?.log) return;
+  invoke("log_line", { line: `${String(Math.round(performance.now() - T0)).padStart(7)} ${src.padEnd(6)} ${what.padEnd(17)} ${detail}` }).catch(() => {});
+}
+function watchIme(src, el) {
+  el.addEventListener("keydown", (e) => imeLog(src, "keydown", `key=${JSON.stringify(e.key)} code=${e.code} keyCode=${e.keyCode} isComposing=${e.isComposing}`), true);
+  for (const t of ["compositionstart", "compositionupdate", "compositionend"]) {
+    el.addEventListener(t, (e) => imeLog(src, t, `data=${JSON.stringify(e.data)}`), true);
+  }
+}
+
+// time a large burst of output through PTY -> event -> xterm.js (main runs `seq 1 300000`)
+function perfTest(tab) {
+  const p = tab.panes.shell;
+  const t0 = performance.now();
+  p.onExit = () => {
+    const msg = `PERF seq 1 300000: ${(p.bytes / 1048576).toFixed(1)}MB, ${Math.round(performance.now() - t0)}ms`;
+    $("#doing").textContent = msg;
+    invoke("log_line", { line: msg });
+  };
+  startPane(p);
+}
+
+// type a string into the shell pane one character at a time ("\b" = Backspace)
+function autoType(tab, text) {
+  const chars = [...text.replace(/\\b/g, "\x7f")];
+  const id = tab.panes.shell.id;
+  let i = 0;
+  setTimeout(function next() {
+    if (i >= chars.length) {
+      if (!info.test.ime_text) return invoke("log_line", { line: "autotype done" });
+      tab.panes.shell.term.focus();
+      return setTimeout(() => invoke("ime_compose", { text: info.test.ime_text })
+        .then(() => setTimeout(() => invoke("log_line", { line: "autotype done" }), 300)), 300);
+    }
+    invoke("pty_write_test", { id, data: chars[i++] });
+    setTimeout(next, 30);
+  }, 4000);
+}
+
+// compose "하" in the agent pane, switch agent mid-composition, report what the new agent got
+function switchTest(tab) {
+  const p = tab.panes.agent;
+  setTimeout(() => {
+    p.term.focus();
+    invoke("ime_compose", { text: "하" }).then(() => setTimeout(() => {
+      nextAgent(tab);
+      setTimeout(() => { if (p.term.element.classList.contains("composing")) invoke("ime_commit", { text: "하" }); }, 200);
+      setTimeout(() => invoke("log_line", { line: `switch-test agent bytes after switch=${p.bytes} screen=${JSON.stringify(screenText(p.term))}` })
+        .then(() => invoke("log_line", { line: "autotype done" })), 3500);
+    }, 300));
+  }, 2500);
+}
+function screenText(term) {
+  const b = term.buffer.active, out = [];
+  for (let i = 0; i < term.rows; i++) out.push(b.getLine(b.viewportY + i)?.translateToString(true) ?? "");
+  return out.join("\n").trim();
+}
+
+// what a hostile page would try — every call must fail
+async function secTest() {
+  const tries = {
+    pty_spawn: () => invoke("pty_spawn", { id: "x", cmd: "touch /tmp/cvim-pwned", cwd: "/tmp", cols: 80, rows: 24, env: {} }),
+    pane_start_other: () => invoke("pane_start", { ws: active?.id, kind: "pwn", cols: 80, rows: 24 }),
+    read_file: () => invoke("read_file_b64", { path: "/etc/hosts" }),
+    sprite_outside: () => invoke("sprite_b64", { path: "/etc/hosts" }),
+    sprite_traversal: () => invoke("sprite_b64", { path: (info.home || "") + "/.cache/cvim/pokemon/../folders.json" }),
+    open_not_folder: () => invoke("workspace_open", { cwd: "/etc/hosts" }),
+    proto: () => invoke("__proto__", {}),
+    overlay_only: () => invoke("overlay_drag", { phase: "move", x: 0, y: 0 }),
+    node_require: () => Promise.resolve(typeof require !== "undefined" ? "require exists" : Promise.reject(new Error("no require"))),
+  };
+  const out = [];
+  for (const [name, fn] of Object.entries(tries)) {
+    try { await fn(); out.push(`${name}=ALLOWED`); } catch { out.push(`${name}=blocked`); }
+  }
+  const before = location.href;
+  try { location.href = "https://example.com"; } catch {}
+  const w = window.open("https://example.com");
+  setTimeout(() => invoke("log_line", { line: `sectest ${out.join(" ")} navigate=${location.href === before ? "blocked" : "ALLOWED"} window_open=${w ? "ALLOWED" : "blocked"}` }), 800);
+}
+
+// tabs: re-open an open folder (must switch, not duplicate), switching, close the first
+async function tabsTest() {
+  const log = (line) => invoke("log_line", { line: `tabs-test ${line}` });
+  await new Promise((r) => setTimeout(r, 2500));
+  await log(`open=${tabs.map((t) => base(t.cwd)).join(",")} active=${base(active.cwd)}`);
+  const again = await openFolder(tabs[0].cwd);
+  await log(`reopen-first tabs=${tabs.length} active=${base(active.cwd)} same=${again === tabs[0]}`);
+  selectTab(tabs[tabs.length - 1]);
+  await log(`select-last active=${base(active.cwd)} visible=${tabs.filter((t) => !t.view.hidden).length}`);
+  const closing = tabs[0].id;
+  await closeTab(tabs[0]);
+  const left = await invoke("workspaces_test");
+  await log(`closed-first tabs=${tabs.length} main_has_closed=${left.includes(closing)} panes=${panes.size}`);
+  await log("autotype done");
+}
+
+// partner: click reactions, menu actions, Pokédex, evolution (8 finished tasks)
+async function pokemonTest() {
+  const log = (line) => invoke("log_line", { line: `poke-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const tab = active;
+  await wait(2500);
+  await log(`partner=${tab.partner?.name} types=${tab.partner?.types} pinned=${tab.pinned}`);
+  react(tab, "attack"); await wait(150);
+  await log(`attack class=${$(".poke", tab.view).className} fx=${$(".fx", tab.view).children.length} glyph=${$(".fx span", tab.view)?.textContent}`);
+  await invoke("shot_test", { name: "attack" });
+  await wait(1200);
+  openMenu(tab, 900, 200); await wait(100);
+  await log(`menu items=${[...$("#menu").children].map((b) => b.textContent.trim()).join("|")}`);
+  await invoke("shot_test", { name: "menu" });
+  closeMenu();
+  tab.pinned = await invoke("partner_pin", { ws: tab.id });
+  await log(`pin-toggle pinned=${tab.pinned}`);
+  tab.pinned = await invoke("partner_pin", { ws: tab.id });
+  await openDex(); await wait(400);
+  await log(`dex title=${$("#dex-title").textContent} rows=${$("#dex-list").children.length} pos=${$("#dex-pos").textContent}`);
+  dexKey({ key: "ArrowUp" }); await wait(200);
+  await log(`dex wrap-up pos=${$("#dex-pos").textContent}`);
+  await invoke("shot_test", { name: "dex" });
+  dexSelect(0); await wait(200);
+  const pick = dexState.entries[0];
+  await dexChoose(); await wait(500);
+  await log(`dex-choose partner=${tab.partner?.name} id=${tab.partner?.id} want=${pick.id} xp=${tab.partner?.xp}`);
+  const before = tab.partner?.id;
+  for (let i = 0; i < 7; i++) { await invoke("partner_done_test", { ws: tab.id }); await wait(150); }
+  await wait(12000); // tasks take minutes in real use: the next stage is prefetched by now
+  await invoke("partner_done_test", { ws: tab.id });
+  // the 8th fetches the next stage from PokéAPI (network): wait for the swap, then the flicker
+  for (let i = 0; i < 60 && tab.partner?.id === before; i++) await wait(500);
+  await invoke("shot_test", { name: "evolving" });
+  await wait(4000);
+  await log(`after-8-done partner=${tab.partner?.name} id=${tab.partner?.id} exp=${$(".poke-exp", tab.view).textContent}`);
+  await invoke("shot_test", { name: "evolved" });
+  await log("autotype done");
+}
+
+// wild: encounter → broke free → caught (+ partner) → fled → left; overlay with a wild one
+// (main runs with CVIM_WILD_CHANCE=1, CVIM_WILD_COOLDOWN=0, a short CVIM_WILD_STAY)
+async function wildTest() {
+  const log = (line) => invoke("log_line", { line: `wild-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const tab = active;
+  const text = () => $(".wild-text").textContent;
+  // finished tasks until one brings a wild Pokémon (the first is downloaded in the background)
+  async function encounter(label) {
+    for (let i = 0; i < 40 && !wild.active(); i++) { await invoke("partner_done_test", { ws: tab.id }); await wait(1500); }
+    await wait(1500);
+    await log(`${label} active=${wild.active()} text=${text()} timer=${$(".wild-timer").textContent}`);
+  }
+  async function throwAs(result, label) {
+    await invoke("wild_rig_test", { result });
+    const ok = wild.throwBall();
+    await wait(4200);
+    await log(`${label} thrown=${ok} text=${text()} active=${wild.active()} adopt=${!$(".wild-partner").hidden}`);
+  }
+  await wait(2500);
+  await log(`partner=${tab.partner?.name}`);
+  await log(`no-wild throw=${wild.throwBall()}`);
+  await encounter("appear-1");
+  await invoke("shot_test", { name: "wild-appear" });
+  await throwAs("broke", "broke");
+  await invoke("shot_test", { name: "wild-broke" });
+  // throw again right after the first ball's animation (the reported stuck button), and a
+  // direct call while a ball is still shaking → "busy", the button comes back
+  await invoke("wild_rig_test", { result: "broke" });
+  wild.throwBall(); await wait(200);
+  const busy = await invoke("wild_throw", { token: wild.token?.() });
+  await wait(4200);
+  await log(`rethrow busy-result=${busy?.result} text=${text()} button-disabled=${$(".wild-throw").disabled}`);
+  await throwAs("caught", "caught");
+  await invoke("shot_test", { name: "wild-caught" });
+  const caughtName = $(".wild-text b")?.textContent;
+  let d = await invoke("dex_list");
+  await log(`dex caught=${d.caught} entries=${d.entries.length} seen-only=${d.entries.filter((e) => !e.caught).map((e) => e.name).join(",")}`);
+  $(".wild-partner").click();
+  await wait(1500);
+  await log(`adopt partner=${tab.partner?.name} want=${caughtName} xp=${tab.partner?.xp}`);
+  await encounter("appear-2");
+  await throwAs("fled", "fled");
+  d = await invoke("dex_list");
+  const seen = d.entries.find((e) => !e.caught);
+  if (seen) {
+    await openDex();
+    dexSelect(seen.id);
+    const before = tab.partner?.id;
+    await dexChoose();
+    await log(`dex-choose-seen ${seen.name} partner-unchanged=${tab.partner?.id === before} toast=${$("#toast").textContent}`);
+    closeDex();
+  }
+  // the overlay (as if another app were in front), with a wild one waiting
+  await invoke("wild_rig_test", { result: null });
+  await encounter("appear-3");
+  await invoke("overlay_show_test", { on: true });
+  await wait(1500);
+  await invoke("overlay_shot_test", { name: "overlay-wild" });
+  await log(`overlay bounds=${JSON.stringify(await invoke("overlay_bounds_test"))}`);
+  await invoke("overlay_show_test", { on: false }); // it sits on top of the screen: as short as possible
+  await wait(14000); // CVIM_WILD_STAY: it goes back to the grass
+  await log(`left text=${text()}`);
+  await log("autotype done");
+}
+
+// P0+: how a turn ended → reaction, tab, summary; an agent started in the shell → big slot
+// (hook lines are written as Claude's hooks would; the shell runs "sleep" = a stand-in agent, and
+// the runner writes a Codex session log for it when the log says "shell-agent swapped")
+async function resultTest() {
+  const log = (line) => invoke("log_line", { line: `p0-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const tab = active;
+  const hook = (event) => invoke("hook_event_test", { ws: tab.id, event });
+  await wait(3000);
+  // Claude has no interrupt hook: Esc typed into the agent pane, then silence (core: 1.5 s)
+  for (const [end, act] of [["Stop", "act-attack"], ["Esc", "act-flinch"], ["StopFailure", "act-hurt"]]) {
+    await hook("UserPromptSubmit"); await wait(700);
+    if (end === "Esc") { await invoke("pty_write", { id: tab.panes.agent.id, data: "\x1b" }); await wait(2000); }
+    else { await hook(end); await wait(700); }
+    const cls = $(".poke", tab.view).className;
+    const tb = $(`#tabs .tab[data-ws="${tab.id}"]`);
+    await log(`${end} state=${tab.state?.state} reacted=${cls.includes(act)} tab=${tb.textContent.replace(/\s+/g, " ")} attention=${tb.classList.contains("attention")} summary=${$("#summary").textContent} fx=${$(".fx span", tab.view)?.textContent}`);
+    if (end === "StopFailure") await invoke("shot_test", { name: "p0-error" });
+    await wait(1200);
+  }
+  await wait(5000);
+  await log(`settled state=${tab.state?.state}`);
+  // the shell pane runs the stand-in agent (typed here, after the hook cases)
+  await invoke("pty_write_test", { id: tab.panes.shell.id, data: "sleep 20\r" });
+  for (let i = 0; i < 20 && !tab.swapped; i++) await wait(500);
+  const main = tab.view.firstElementChild?.className;
+  await log(`shell-agent swapped=${tab.swapped} main-slot=${main} title=${$(".pane-shell .title", tab.view).textContent}`);
+  await invoke("shot_test", { name: "p0-swapped" });
+  // its own state: the stand-in is a "codex_log" agent; the runner writes a Codex session log
+  const seen = [];
+  for (let i = 0; i < 30; i++) { const st = tab.state?.state; if (seen.at(-1) !== st) seen.push(st); if (st === "done") break; await wait(500); }
+  await log(`shell-agent states=${seen.join(">")} top=${$("#doing").textContent} tab=${$(`#tabs .tab[data-ws="${tab.id}"]`).textContent}`);
+  // ⌘G while the shell agent is in the big slot: the agent pane comes back to it and switches
+  await nextAgent(tab);
+  await wait(1000);
+  await log(`cmd-g main-slot=${tab.view.firstElementChild?.className} agent-title=${$(".agent-title", tab.view).textContent} shell-title=${$(".pane-shell .title", tab.view).textContent} shown=${tab.state?.state} shell-still=${!!tab.shellAgent}`);
+  for (let i = 0; i < 50 && tab.shellAgent; i++) await wait(500);
+  await log(`agent-exited swapped=${tab.swapped} main-slot=${tab.view.firstElementChild?.className}`);
+  await log("autotype done");
+}
+
+// X1e: a new folder offers 3 partners (key 2), 🎲 offers again (click), compact overlay with many
+// tabs (the runner pre-sets partners for the other folders; the first folder is new)
+async function x1eTest() {
+  try { await x1eSteps(); } catch (e) { await invoke("log_line", { line: `x1e-test ERROR ${e?.stack || e}` }); }
+  await invoke("log_line", { line: "x1e-test autotype done" });
+}
+async function x1eSteps() {
+  const log = (line) => invoke("log_line", { line: `x1e-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const tab = tabs[0];
+  selectTab(tab);
+  // a new folder (the box isn't empty: no starters): the dialog opens with the box
+  for (let i = 0; i < 60 && !chooseOpen(); i++) await wait(500);
+  let o = $("#choose").opts;
+  await wait(1500);
+  await log(`dialog open=${chooseOpen()} starter=${!!o?.starter} starter-shown=${!$("#choose-starter-sec").hidden} resting=${o?.resting.length} others=${o?.others.length} focus=${document.activeElement?.id}`);
+  await invoke("shot_test", { name: "x1e-dialog" });
+  $('#choose .mon[data-i="r1"]').click(); await wait(1500);
+  await log(`rest1 partner=${tab.partner?.name}#${tab.partner?.uid} want=${o.resting[1]?.name}#${o.resting[1]?.uid} open=${chooseOpen()}`);
+  await openChoose(tab); await wait(500);
+  o = $("#choose").opts;
+  await log(`reopen current=${o.current?.name} resting0=${o.resting[0]?.name}`);
+  const prev = tab.partner?.uid;
+  $('#choose .mon[data-i="r0"]').click(); await wait(1500);
+  o = await invoke("partner_options", { ws: tab.id });
+  await log(`rest-take partner=${tab.partner?.name} prev-now-resting=${o.resting.some((m) => m.uid === prev)}`);
+  // another folder's partner: twice (confirm), that tab is left without one
+  await openChoose(tab); await wait(500);
+  o = $("#choose").opts;
+  const target = o.others[0];
+  $('#choose .mon[data-i="o0"]').click(); await wait(300);
+  const asked = $('#choose .mon[data-i="o0"]').classList.contains("confirm");
+  $('#choose .mon[data-i="o0"]').click(); await wait(1500);
+  const from = tabs.find((t) => base(t.cwd) === target?.folderName);
+  await log(`other-take asked=${asked} partner=${tab.partner?.name}#${tab.partner?.uid} want=${target?.name}#${target?.uid} from=${target?.folderName} from-tab-partner=${from?.partner?.name ?? "none"} from-label=${from && $(".poke-label", from.view).textContent}`);
+  await invoke("shot_test", { name: "x1e-freed" });
+  if (chooseOpen()) closeChoose();
+  // the Pokédex board: cells by state, Enter on an owned species takes a resting one
+  await openDex(); await wait(1500);
+  const cells = (c) => $("#dex-grid").querySelectorAll(`.cell.${c}`).length;
+  const ownedOne = dexState.entries.find((x) => x.owned > 0 && x.id !== tab.partner?.id);
+  await log(`dex caught=${cells("caught")} seen=${cells("seen")} unknown=${cells("unknown")} regions=${$("#dex-regions").textContent.replace(/\s+/g, " ")}`);
+  await invoke("shot_test", { name: "x1e-dex" });
+  dexSelect(ownedOne.id);
+  dexKey({ key: "ArrowRight" }); dexKey({ key: "ArrowLeft" });
+  await log(`dex sel=${dexState.sel} want=${ownedOne.id} take-visible=${!$("#dex-take").hidden}`);
+  dexKey({ key: "Enter" }); await wait(1500);
+  await log(`dex-enter partner=${tab.partner?.id} want=${ownedOne.id} dex-open=${dexOpen()}`);
+  // a species that's only another folder's partner: confirm inside the Pokédex, no other screen
+  await openDex(); await wait(800);
+  const otherOnly = dexState.opts.others.find((m) => !dexState.opts.resting.some((r) => r.id === m.id) && dexState.opts.current?.id !== m.id);
+  if (otherOnly) {
+    dexSelect(otherOnly.id);
+    const label1 = $("#dex-from").textContent;
+    dexKey({ key: "Enter" }); await wait(300);
+    const label2 = $("#dex-from button.confirm")?.textContent;
+    await log(`dex-other first=${label1} second=${label2} dex-open=${dexOpen()} choose-open=${chooseOpen()}`);
+    dexKey({ key: "Enter" }); await wait(1500);
+    await log(`dex-other-taken partner=${tab.partner?.name}#${tab.partner?.uid} want=${otherOnly.name}#${otherOnly.uid} dex-open=${dexOpen()} choose-open=${chooseOpen()}`);
+  } else await log("dex-other none");
+  // other tabs: needs input / working / done / failed, then the overlay
+  const ev = { 1: "Notification", 2: "UserPromptSubmit", 3: "Stop", 4: "StopFailure" };
+  for (const [i, e] of Object.entries(ev)) {
+    if (e !== "Notification" && e !== "UserPromptSubmit") await invoke("hook_event_test", { ws: tabs[i].id, event: "UserPromptSubmit" });
+    await invoke("hook_event_test", { ws: tabs[i].id, event: e });
+  }
+  await wait(1500);
+  const p = await invoke("overlay_payload_test");
+  await log(`overlay current=${p.current?.name} urgent=${p.urgent?.name}:${p.urgent?.state} minis=${p.minis.map((t) => t.name + ":" + t.state).join(",")} more=${p.more} counts=${JSON.stringify(p.counts)}`);
+  await invoke("overlay_show_test", { on: true });
+  await wait(1500);
+  await invoke("overlay_shot_test", { name: "x1e-overlay" });
+  await invoke("overlay_collapse_test"); await wait(1200);
+  await invoke("overlay_shot_test", { name: "x1e-collapsed" });
+  const q = await invoke("overlay_payload_test");
+  await log(`collapsed=${q.collapsed} urgent=${q.urgent} minis=${q.minis.length} bounds=${JSON.stringify(await invoke("overlay_bounds_test"))}`);
+  await invoke("overlay_collapse_test");
+  await invoke("overlay_show_test", { on: false });
+}
+
+// a first-time user opens several folders: the first partner from 3 starters, the others start
+// empty; a wild one (more likely in an empty folder) becomes that folder's partner
+async function newUserTest() {
+  const log = (line) => invoke("log_line", { line: `newuser-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const first = tabs[0];
+    selectTab(first);
+    for (let k = 0; k < 120 && !(chooseOpen() && $("#choose").opts?.starter?.ready); k++) { await wait(500); if (chooseOpen()) renderChoose(first, await invoke("partner_options", { ws: first.id })); }
+    let o = $("#choose").opts;
+    await log(`first starter=${o.starter?.set.map((x) => x.name + ":" + x.types?.[0]).join(",")} note=${$("#choose-starter-note").textContent}`);
+    await wait(800);
+    await invoke("shot_test", { name: "newuser-starter" });
+    $("#choose").dispatchEvent(new KeyboardEvent("keydown", { key: "2", bubbles: true }));
+    await wait(1500);
+    await log(`first partner=${first.partner?.name}#${first.partner?.uid}`);
+    const empty = tabs[1];
+    selectTab(empty);
+    await wait(1500);
+    o = $("#choose").opts;
+    await log(`second dialog=${chooseOpen()} starter=${!!o?.starter} resting=${o?.resting.length} others=${o?.others.length}`);
+    if (chooseOpen()) closeChoose();
+    await log(`second empty-icon=${!$(".empty-ball", empty.view).hidden} label=${$(".poke-label", empty.view).textContent} hint=${$(".poke-exp", empty.view).textContent}`);
+    await wait(600);
+    await log(`overlays choose=${chooseOpen()} dex=${dexOpen()} start=${startOpen()} menu=${!$("#menu").hidden} wild=${wild.active()}`);
+    await invoke("shot_test", { name: "newuser-empty" });
+    // a task in the folder with a partner: no wild (normal chance is 0 here); in the empty one: wild
+    await invoke("partner_done_test", { ws: first.id }); await wait(1000);
+    await log(`done-with-partner wild=${wild.active()}`);
+    for (let k = 0; k < 30 && !wild.active(); k++) { await invoke("partner_done_test", { ws: empty.id }); await wait(1500); }
+    await log(`done-in-empty wild=${wild.active()} text=${$(".wild-text").textContent}`);
+    await invoke("wild_rig_test", { result: "caught" });
+    wild.throwBall(); await wait(4200);
+    $(".wild-partner").click(); await wait(1500);
+    await log(`caught-partner empty=${empty.partner?.name}#${empty.partner?.uid} icon-hidden=${$(".empty-ball", empty.view).hidden}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// E1: composer → agent (bracketed paste + Enter), image paste → Ctrl+V, dropped files → paths,
+// font size, relayout, the app menu (the stand-in agent records its input: CVIM_DESKTOP_AGENT_CMD)
+async function e1Test() {
+  const log = (line) => invoke("log_line", { line: `e1-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const tab = active;
+    await wait(2500);
+    composerToggle(tab);
+    await log(`composer open=${!tab.composer.box.hidden} focus=${document.activeElement === tab.composer.ta}`);
+    tab.composer.ta.value = "안녕하세요 CVIM\n둘째 줄";
+    tab.composer.ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", metaKey: true, bubbles: true }));
+    await wait(600);
+    await log(`composer sent closed=${tab.composer.box.hidden} draft="${tab.composer.ta.value}"`);
+    // a draft survives closing
+    composerToggle(tab); tab.composer.ta.value = "초안"; tab.composer.ta.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    composerToggle(tab); await log(`draft kept="${tab.composer.ta.value}"`); composerClose(tab);
+    // image on the clipboard (no text) pasted into the agent pane
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array([137, 80, 78, 71])], "shot.png", { type: "image/png" }));
+    tab.panes.agent.term.textarea.dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+    await wait(400);
+    // dropped files
+    const r = await invoke("drop_paths", { ws: tab.id, pane: "agent", paths: info.test.drop_files || [] });
+    await log(`drop agent files=${r.files} folders=${r.folders}`);
+    await wait(400);
+    setFont(17);
+    await log(`font=${tab.panes.agent.term.options.fontSize} saved=${localStorage.getItem("cvim.fontSize")}`);
+    setFont(FONT_DEFAULT);
+    relayout();
+    await log(`menu=${(await invoke("menu_test")).join(",")}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// E1b: the changes panel on a scratch git repo — list, side-by-side diff, revert a modified file,
+// a new file to the (scratch) Trash
+async function e1bTest() {
+  const log = (line) => invoke("log_line", { line: `e1b-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const tab = active;
+    await wait(2500);
+    await refreshChanges(tab);
+    const items = tab.changes.items;
+    await log(`list repo=${tab.changes.repo} ${items.map((x) => `${x.status}:${x.path}:+${x.add}-${x.del}${x.binary ? ":bin" : ""}`).join(" ")} panel="${$(".changes", tab.view).textContent.slice(0, 120)}"`);
+    // Esc → back to the file's line (opened from the 2nd line)
+    await openDiff(tab, items[1], 1); await wait(400);
+    closeDiff(); await wait(200);
+    await log(`esc-focus=${document.activeElement?.title} want=${items[1].path}`);
+    const mi = items.findIndex((x) => x.status === "modified");
+    const mod = items[mi];
+    await openDiff(tab, mod, mi); await wait(600);
+    await log(`diff rows=${$("#diff-body").querySelectorAll("tr").length} del=${$("#diff-body").querySelectorAll(".tx.del").length} add=${$("#diff-body").querySelectorAll(".tx.add").length} title=${$("#diff-title").textContent}`);
+    await invoke("shot_test", { name: "e1b-diff" });
+    $("#diff-revert").click(); await wait(200);
+    await log(`revert-ask=${$("#diff-revert").textContent}`);
+    $("#diff-revert").click(); await wait(1500);
+    await log(`revert-focus=${document.activeElement?.title} (line now at index ${mi}: ${tab.changes.items[Math.min(mi, tab.changes.items.length - 1)]?.path})`);
+    const nw = tab.changes.items.find((x) => x.status === "new" && !x.binary);
+    await log(`after-revert open=${diffOpen()} items=${tab.changes.items.map((x) => x.status + ":" + x.path).join(" ")}`);
+    await openDiff(tab, nw, tab.changes.items.indexOf(nw)); await wait(400);
+    await log(`new-diff rows=${$("#diff-body").querySelectorAll("tr").length} button=${$("#diff-revert").textContent}`);
+    $("#diff-revert").click(); $("#diff-revert").click(); await wait(1500);
+    await log(`after-trash items=${tab.changes.items.map((x) => x.status + ":" + x.path).join(" ")}`);
+    await invoke("shot_test", { name: "e1b-panel" });
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// M1: a second session in the same folder — rail, switching, per-session state (hook lines
+// written as Claude's hooks would, per session id), tab icon = most urgent, close; overlay count
+async function m1Test() {
+  const log = (line) => invoke("log_line", { line: `m1-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const tab = active;
+    await wait(2500);
+    await log(`one session: rail-hidden=${$(".rail", tab.view).hidden} add-button=${!!$(".sess-add", tab.view)}`);
+    const s2 = await newSession(tab);
+    await wait(800);
+    await log(`two: rail-hidden=${$(".rail", tab.view).hidden} items=${$(".rail", tab.view).querySelectorAll(".sess").length} cur=${tab.sid === s2.id} shown-terms=${[...tab.view.querySelectorAll(".sterm")].filter((x) => x.style.display !== "none").length} title=${$(".agent-name", tab.view).textContent} tabbar=${$(`#tabs .tab[data-ws="${tab.id}"]`).textContent}`);
+    await invoke("shot_test", { name: "m1-two" });
+    // session 2 works, session 1 waits for input
+    await invoke("hook_event_test", { ws: s2.id, event: "UserPromptSubmit" });
+    await invoke("hook_event_test", { ws: tab.id, event: "Notification" });
+    await wait(900);
+    await log(`states s1=${tab.sessions[0].state?.state} s2=${tab.sessions[1].state?.state} shown=${tab.state?.state} tab-icon-urgent=${urgentOf(tab)} attention=${$(`#tabs .tab[data-ws="${tab.id}"]`).classList.contains("attention")} summary=${$("#summary").textContent} dots=${[...$(".rail", tab.view).querySelectorAll(".dot")].map((d) => d.className.split(" ")[1]).join(",")}`);
+    const ov = await invoke("overlay_payload_test");
+    await log(`overlay sessions=${ov.current?.sessions} state=${ov.current?.state}`);
+    stepSession(-1); await wait(300);
+    await log(`switched cur=${tab.sid} shown=${tab.state?.state} bar=${$("#doing").textContent}`);
+    // the background session finishes: the partner reacts, a toast
+    await invoke("hook_event_test", { ws: s2.id, event: "Stop" }); await wait(900);
+    await log(`bg-done s2=${tab.sessions[1].state?.state} toast=${$("#toast").textContent}`);
+    // numbers follow the rail: 3 sessions, close the 2nd, open one → numbers 1·2·3 again
+    const s3 = await newSession(tab); await wait(500);
+    await closeSession(tab, s2.id); await wait(300);
+    const s4 = await newSession(tab); await wait(500);
+    await log(`renumber rail=${[...$(".rail", tab.view).querySelectorAll(".sess .n")].map((n) => n.textContent).join(",")} title=${$(".agent-name", tab.view).textContent}`);
+    // ⌃⌘1 → session 1, ⌃⌘2 → the second in the rail
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit1", key: "1", ctrlKey: true, metaKey: true, bubbles: true }));
+    await wait(200);
+    const at1 = tab.sid === tab.id;
+    window.dispatchEvent(new KeyboardEvent("keydown", { code: "Digit2", key: "2", ctrlKey: true, metaKey: true, bubbles: true }));
+    await wait(200);
+    await log(`ctrl-cmd-1=${at1} ctrl-cmd-2=${tab.sid === s3.id} active-tab-unchanged=${active === tab}`);
+    await closeSession(tab, s3.id); await wait(200);
+    await closeSession(tab, s4.id); await wait(500);
+    await log(`closed sessions=${tab.sessions.length} rail-hidden=${$(".rail", tab.view).hidden} core-has=${(await invoke("workspaces_test")).join(",")}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// M2 step 1: composer → all sessions / one session, a selection handed from session 1 to 2, the
+// rail menu (each stand-in agent records its input to <session id>.bin)
+async function m2Test() {
+  const log = (line) => invoke("log_line", { line: `m2-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const tab = active;
+    await wait(2500);
+    const s2 = await newSession(tab); await wait(1500);
+    switchSession(tab, tab.id, { quiet: true });
+    composerToggle(tab);
+    await log(`chips=${$(".composer-to", tab.view).textContent}`);
+    tab.composeTo = "all"; renderComposeTo(tab);
+    tab.composer.ta.value = "모두에게";
+    await composerSend(tab, true); await wait(500);
+    composerToggle(tab); tab.composeTo = s2.id; renderComposeTo(tab);
+    tab.composer.ta.value = "세션2에게만";
+    await composerSend(tab, false); await wait(500);
+    // a selection made in session 1, handed to session 2 (set directly: no system clipboard in tests)
+    lastPick = { text: "선택한 답 일부", from: tab.sessions[0].pane.id, tab };
+    $(`.rail .sess[data-sid="${s2.id}"]`, tab.view).dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 30, clientY: 120 }));
+    await wait(200);
+    await log(`rail-menu=${[...$("#menu").children].map((b) => b.textContent.trim()).join(" | ")}`);
+    closeMenu();
+    await handPick(tab, tab.sessions[1], true); await wait(500);
+    await log(`toast=${$("#toast").textContent}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// S2 shell first: a new folder is a shell; an agent typed there is followed and ends back in the
+// shell; ⌘G picks one (Enter = the folder's last) and the agent pane takes the big slot
+async function s2Test() {
+  const log = (line) => invoke("log_line", { line: `s2-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const key = (k) => window.dispatchEvent(new KeyboardEvent("keydown", { key: k, code: k, bubbles: true }));
+  const menu = () => [...$("#menu").querySelectorAll("button")].map((b) => b.textContent.trim()).join(" | ") + ` sel=${$("#menu .sel")?.textContent}`;
+  const look = (tab) => `shellOnly=${tab.shellOnly} host=${tab.hostAgent?.key || "-"} big=${bigPane(tab).kind} pane-title=${$(".agent-name", tab.view).textContent} tag=${$("#agent").textContent} agentOn=${agentOn(tab)} state=${tab.state?.state} doing=${$("#doing").textContent} shell-pane=${!!tab.panes.shell.el.offsetParent} focus-big=${document.activeElement === bigPane(tab).term.textarea}`;
+  const typeIn = (p, text) => invoke("pty_write_test", { id: p.id, data: `${text}\r` });
+  try {
+    const tab = active;
+    await wait(2500);
+    if (chooseOpen()) closeChoose(false); // the new folder's partner dialog (not what's tested here)
+    await log(`open ${look(tab)}`);
+    await invoke("shot_test", { name: "s2-shell" });
+    // an agent typed into the big shell: tracked as the session's agent, bottom-right shell stays (5)
+    await typeIn(tab.panes.agent, info.test.fake_claude);
+    for (let i = 0; i < 20 && !tab.hostAgent; i++) await wait(300);
+    await log(`typed ${look(tab)}`);
+    await invoke("shot_test", { name: "s2-typed" });
+    // ⌘G now: the typed one is "running" (6: picking it again doesn't start a second one)
+    await switchAgent(tab);
+    await wait(300);
+    await log(`menu-typed ${menu()}`);
+    key("Enter");
+    await wait(500);
+    await log(`same-as-typed toast=${$("#toast").textContent} host=${tab.hostAgent?.key}`);
+    // it ends: the shell is back; ⌘G offers it first (1)
+    for (let i = 0; i < 30 && tab.hostAgent; i++) await wait(300);
+    await log(`typed-exit ${look(tab)}`);
+    await switchAgent(tab);
+    await wait(300);
+    await log(`menu-after ${menu()}`);
+    key("Escape");
+    // typed again, then ⌘G → another agent replaces it (confirm), and when that one ends the shell
+    // is back — not the typed one (4)
+    await typeIn(tab.panes.agent, info.test.fake_claude);
+    for (let i = 0; i < 20 && !tab.hostAgent; i++) await wait(300);
+    window.confirm = () => true; // the replace question
+    const { list } = await invoke("agents_list", { ws: tab.id, session: tab.id });
+    await pickAgent(tab, list.find((a) => a.key === "gemini"), true);
+    await wait(1500);
+    await log(`replaced ${look(tab)}`);
+    await invoke("pty_write_test", { id: tab.panes.agent.id, data: "\x03" }); // the stand-in agent: Ctrl-C ends it
+    for (let i = 0; i < 20 && !tab.shellOnly; i++) await wait(300);
+    await wait(1500);
+    await log(`replaced-exit ${look(tab)} screen=${JSON.stringify(screenText(tab.panes.agent.term).slice(0, 80))} host-agent-after=${tab.hostAgent?.key || "-"}`);
+    await invoke("shot_test", { name: "s2-back" });
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// S2: agents ending in sessions (the stand-in runs 6 s in the first session, 2 s in later ones)
+async function s2xTest() {
+  const log = (line) => invoke("log_line", { line: `s2x-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const rail = (tab) => [...$(".rail", tab.view).querySelectorAll(".sess")].map((b) => b.querySelector(".ic").textContent + b.querySelector(".n").textContent).join(",");
+  const look = (tab) => `sessions=${tab.sessions.length} cur=${sessNo(tab, curSession(tab))} hosts=${tab.sessions.map((x) => (x.host ? "shell" : x.running ? "agent" : "-")).join(",")} rail=${rail(tab)} title=${$(".agent-name", tab.view).textContent} toast=${$("#toast").textContent}`;
+  try {
+    const tab = active;
+    await wait(2500);
+    await log(`start tab=${!!tab}`);
+    const claude = (await invoke("agents_list", { ws: tab.id, session: tab.id })).list.find((a) => a.key === "claude");
+    await log(`claude=${!!claude}`);
+    if (chooseOpen()) closeChoose(false);
+    await pickAgent(tab, claude, false); // session 1: an agent (the stand-in runs 6 s)
+    await wait(300);
+    await newSession(tab); // ⌘⇧T: a shell
+    await wait(800);
+    await log(`new-session ${look(tab)}`);
+    await pickAgent(tab, claude, false); // session 2: an agent (2 s)
+    await wait(3000);
+    await log(`s2-agent-ended ${look(tab)}`);
+    await wait(3500);
+    await log(`s1-agent-ended ${look(tab)}`);
+    await wait(3000); // its new shell is up (rc files)
+    await invoke("pty_write_test", { id: tab.sessions[1].pane.id, data: "exit\r" }); // session 2's shell itself
+    await wait(1500);
+    await log(`s2-shell-exit ${look(tab)} screen2=${JSON.stringify(screenText(tab.sessions.at(-1).pane.term).slice(-200))}`);
+    await invoke("pty_write_test", { id: tab.sessions[0].pane.id, data: "exit\r" }); // session 1's shell: a new one
+    await wait(2000);
+    await log(`s1-shell-exit ${look(tab)}`);
+    // only a bare shell, no other: ⌘⇧T makes another shell (no agent, no picker)
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "T", code: "KeyT", metaKey: true, shiftKey: true, bubbles: true }));
+    await wait(1500);
+    await log(`cmd-shift-t ${look(tab)} menu-open=${!$("#menu").hidden}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// usage: a Claude in the shell (conversation log: model + ctx tokens → %), then the agent pane
+// before its first reply (last values, dimmed). The runner's stand-in writes the log.
+async function u1Test() {
+  const log = (line) => invoke("log_line", { line: `u1-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const bar = () => `usage=${$("#usage").textContent} stale=${$("#usage").querySelectorAll("[title]").length}`;
+  try {
+    localStorage.setItem("cvim.usage.claude", JSON.stringify({ model: "Opus 5.5", five_hour: { pct: 6, resets_at: Math.floor(Date.now() / 1000) + 3600 }, seven_day: { pct: 13 }, windows: { "claude-opus-5-5": 1000000 } }));
+    const tab = active;
+    await wait(2500);
+    if (chooseOpen()) closeChoose(false);
+    await log(`shell ${bar()}`);
+    await invoke("pty_write_test", { id: tab.panes.shell.id, data: `${info.test.fake_claude}\r` });
+    for (let i = 0; i < 30 && !/ctx/.test($("#usage").textContent); i++) await wait(300);
+    await log(`shell-claude state=${tab.state?.state} ${bar()}`);
+    for (let i = 0; i < 30 && tab.shellAgent; i++) await wait(300);
+    await pickAgent(tab, { key: "claude", name: "Claude Code" }, false);
+    await wait(1500);
+    await log(`agent-pane-before-reply state=${tab.state?.state} ${bar()}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// other agents typed by hand (stand-ins in CVIM_DESKTOP_FAKE_BIN report like Gemini's extension /
+// OpenCode's plugin): in the big shell, then in the shell pane
+async function s3Test() {
+  const log = (line) => invoke("log_line", { line: `s3-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const tab = active;
+    await wait(2500);
+    if (chooseOpen()) closeChoose(false);
+    for (const [where, name] of [["big", "gemini"], ["big", "opencode"], ["pane", "gemini"], ["pane", "opencode"]]) {
+      const p = where === "big" ? tab.panes.agent : tab.panes.shell;
+      await invoke("pty_write_test", { id: p.id, data: `${info.test.fake_bin}/${name}\r` });
+      const seen = [];
+      for (let i = 0; i < 40; i++) {
+        const st = tab.state?.state;
+        if (seen.at(-1) !== st) seen.push(st);
+        if (seen.includes("done") || seen.length > 8) break;
+        await wait(250);
+      }
+      await log(`${where} ${name} title=${$(".agent-name", tab.view).textContent}|${$(".pane-shell .title", tab.view).textContent} states=${seen.join(">")} usage=${$("#usage").textContent}`);
+      for (let i = 0; i < 30 && (tab.hostAgent || tab.shellAgent); i++) await wait(300);
+      await wait(500);
+    }
+    await log(`end shellOnly=${tab.shellOnly} state=${tab.state?.state}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// ⌘G while the big shell is still starting (its rc files: pyenv rehash …): the shell is replaced
+// at these delays after it started; the runner watches ~/.pyenv/shims/.pyenv-shim meanwhile
+async function raceTest() {
+  const log = (line) => invoke("log_line", { line: `race-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const tab = active;
+    await wait(3000);
+    if (chooseOpen()) closeChoose(false);
+    const claude = (await invoke("agents_list", { ws: tab.id, session: tab.id })).list.find((a) => a.key === "claude");
+    for (const d of [50, 150, 300, 500, 800, 1200, 50, 150, 300, 500, 800, 1200]) {
+      await startHost(tab);
+      await wait(d);
+      await log(`replace after ${d}ms t=${Date.now()}`);
+      await pickAgent(tab, claude, false);
+      await wait(2500);
+    }
+    // the agent ends: the shell is back (what's left on screen)
+    await invoke("pty_write_test", { id: tab.panes.agent.id, data: "\x03" });
+    await wait(2500);
+    await log(`after-exit screen=${JSON.stringify(screenText(tab.panes.agent.term).slice(0, 120))}`);
+    await invoke("shot_test", { name: "after-exit" });
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// ⌘G: how long until the picker shows, and what it says (the runner can make the shell config hang)
+async function pickTest() {
+  const log = (line) => invoke("log_line", { line: `pick-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const tab = active;
+    await wait(2500);
+    if (chooseOpen()) closeChoose(false);
+    const t0 = performance.now();
+    await switchAgent(tab);
+    await log(`picker after ${Math.round(performance.now() - t0)}ms items=${[...$("#menu").querySelectorAll("button")].map((b) => b.textContent.trim()).join(" | ")}`);
+    await invoke("shot_test", { name: "picker" });
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// two shells in a folder: shell 1 resting (Claude's idle reminder must not make it "입력 필요"),
+// shell 2 finishes in the background → the overlay says so; with shell 1 really waiting, both show
+async function multiTest() {
+  const log = (line) => invoke("log_line", { line: `multi-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const ov = async () => { const p = await invoke("overlay_payload_test"); const c = p.current; return `state=${c?.state} ended=${c?.ended} endedN=${c?.endedN}`; };
+  const hook = (ws, event, detail = "") => invoke("hook_event_test", { ws, event, detail });
+  try {
+    const tab = active;
+    await wait(2500);
+    if (chooseOpen()) closeChoose(false);
+    const s2 = await newSession(tab); // shell 2 (autostart: an agent)
+    switchSession(tab, tab.id); // looking at shell 1; shell 2 in the background
+    await hook(tab.id, "Stop"); await wait(800);
+    await hook(tab.id, "Notification", "idle_prompt"); await wait(800);
+    await hook(tab.id, "Notification", "Claude is waiting for your input"); await wait(800);
+    await log(`s1 after idle reminders: s1=${tab.sessions[0].state?.state}`);
+    await hook(s2.id, "UserPromptSubmit"); await wait(800);
+    await hook(s2.id, "Stop"); await wait(1200);
+    await log(`s2 done in background: ${await ov()} rail=${$(".rail .sess:nth-child(2) .dot")?.className}`);
+    await hook(tab.id, "UserPromptSubmit"); await wait(500);
+    await hook(tab.id, "Notification", "permission_prompt"); await wait(800);
+    await hook(s2.id, "UserPromptSubmit"); await wait(800);
+    await hook(s2.id, "Stop"); await wait(1200);
+    await log(`s1 waiting + s2 done: ${await ov()}`);
+    const d = await invoke("diag_test");
+    await log(`diag lines=${d.split("\n").length} hasHome=${d.includes(info.home)} hasCwd=${d.includes(tab.cwd)} hasBase=${d.includes(base(tab.cwd))}`);
+    await log(`diag-head ${JSON.stringify(d.split("\n").slice(0, 14))}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// README screenshots: the ⌘G picker, the agent list, two shells with an agent typed in a subfolder
+async function tourTest() {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const key = (k) => window.dispatchEvent(new KeyboardEvent("keydown", { key: k, code: k, bubbles: true }));
+  try {
+    const tab = active;
+    await wait(3500);
+    if (chooseOpen()) closeChoose(false);
+    await switchAgent(tab);
+    await wait(500);
+    await invoke("shot_test", { name: "tour-picker" });
+    key("Escape");
+    await openAgents();
+    await wait(800);
+    await invoke("shot_test", { name: "tour-agents" });
+    closeAgents();
+    await newSession(tab);
+    await wait(3500);
+    await invoke("pty_write_test", { id: tab.panes.agent.id, data: `export PATH=${info.test.fake_bin}:$PATH; clear\r` });
+    await wait(800);
+    await invoke("pty_write_test", { id: tab.panes.agent.id, data: "cd src && claude\r" });
+    for (let i = 0; i < 40 && tab.state?.state !== "done"; i++) await wait(300);
+    await wait(400);
+    await invoke("shot_test", { name: "tour-shells" });
+  } catch (e) { invoke("log_line", { line: `tour ERROR ${e?.stack || e}` }); }
+  invoke("log_line", { line: "autotype done" });
+}
+
+// #3: agents typed after a `cd` — a subfolder (Claude) and another folder (Codex): their own logs
+// are followed (state, usage), the title says where, "새 탭으로" opens the other folder
+async function cdTest() {
+  const log = (line) => invoke("log_line", { line: `cd-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const type = (p, text) => invoke("pty_write_test", { id: p.id, data: `${text}\r` });
+  const run = async (tab, p, cmd, isHost) => {
+    await type(p, cmd);
+    const on = () => (isHost ? tab.hostAgent : tab.shellAgent);
+    for (let i = 0; i < 30 && !on(); i++) await wait(300);
+    const seen = [];
+    for (let i = 0; i < 40; i++) { const st = tab.state?.state; if (seen.at(-1) !== st) seen.push(st); if (st === "done") break; await wait(250); }
+    const title = isHost ? $(".agent-name", tab.view) : $(".pane-shell .title", tab.view);
+    await log(`${cmd.split("&&")[0].trim()} → title=${title.textContent} states=${seen.join(">")} usage=${$("#usage").textContent} toast=${$("#toast").textContent}`);
+    for (let i = 0; i < 40 && on(); i++) await wait(300);
+  };
+  try {
+    const tab = active;
+    await wait(3000);
+    if (chooseOpen()) closeChoose(false);
+    const bin = info.test.fake_bin;
+    await run(tab, tab.panes.agent, `cd sub && ${bin}/claude`, true);
+    await run(tab, tab.panes.agent, `cd ../../other && ${bin}/codex`, true);
+    await type(tab.panes.agent, `${bin}/codex`); // still in "other": the ⚠ button while it runs
+    for (let i = 0; i < 30 && !tab.hostAgent; i++) await wait(300);
+    await wait(500);
+    const b = $(".agent-name .where.out", tab.view);
+    await invoke("shot_test", { name: "cd-outside" });
+    await log(`outside-button=${b?.textContent} cwd=${b?.dataset.cwd}`);
+    b?.click();
+    await wait(2500);
+    await log(`tabs=${tabs.length} new=${tabs.at(-1)?.cwd === b?.dataset.cwd}`);
+    await run(tabs[0], tabs[0].panes.shell, `cd sub && ${bin}/claude`, false);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// the agent connection list (no real agent runs: only where they are)
+async function agentsTest() {
+  const log = (line) => invoke("log_line", { line: `agents-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    await wait(2500);
+    if (chooseOpen()) closeChoose(false);
+    await switchAgent(active);
+    await wait(300);
+    await log(`menu-last=${[...$("#menu").querySelectorAll("button")].at(-1)?.textContent}`);
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "5", code: "Digit5", bubbles: true }));
+    await wait(1500);
+    await log(`open=${agentsOpen()} rows=${[...$("#agents-list").children].map((li) => li.textContent.replace(/\s+/g, " ").trim()).join(" | ")}`);
+    await invoke("shot_test", { name: "agents" });
+    window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", code: "Escape", bubbles: true }));
+    await wait(300);
+    await log(`closed=${!agentsOpen()}`);
+    await log(`menu=${JSON.stringify(await invoke("appmenu_test"))}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// A2: a Claude started by hand in the shell (a stand-in named "claude") followed through its
+// conversation log (the runner writes it under a scratch CLAUDE_CONFIG_DIR)
+async function a2Test() {
+  const log = (line) => invoke("log_line", { line: `a2-test ${line}` });
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  try {
+    const tab = active;
+    await wait(2500);
+    await invoke("pty_write_test", { id: tab.panes.shell.id, data: `${info.test.fake_claude}\r` });
+    for (let i = 0; i < 20 && !tab.swapped; i++) await wait(500);
+    await log(`shell-claude swapped=${tab.swapped} title=${$(".pane-shell .title", tab.view).textContent}`);
+    const seen = [];
+    for (let i = 0; i < 40; i++) { const st = tab.state?.state; if (seen.at(-1) !== st) seen.push(st); if (seen.includes("interrupted")) break; await wait(300); }
+    await log(`states=${seen.join(">")} exp=${$(".poke-exp", tab.view).textContent}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("autotype done");
+}
+
+// ── start ───────────────────────────────────────────────────────────────────
+async function main() {
+  info = await invoke("app_info");
+  invoke("wild_state").then((w) => { wildOn = w.enabled; if (w.current) wild.show(w.current); });
+  if (info.test.sec_test) secTest();
+  // session restore: last time's tabs (agents resume their conversations), then the last active one
+  for (const dir of info.open) {
+    const tab = await openFolder(dir, { resume: !!info.restored?.tabs.includes(dir) && !info.restored.shell?.includes(dir) });
+    // more sessions in that folder last time (M1): started fresh
+    for (const key of info.restored?.sessions?.[dir] || []) await newSession(tab, key); // null: was a shell
+    if (tab?.sessions?.length > 1) switchSession(tab, tab.id, { quiet: true });
+  }
+  if (info.restored?.active) { const t = tabs.find((x) => x.cwd === info.restored.active); if (t) selectTab(t); }
+  if (info.restored) toast(`지난번 탭 ${info.restored.tabs.length}개를 다시 열었어요 (대화 이어서)`);
+  if (!tabs.length) showStart(true);
+  // first launch: which agents CVIM sees (once)
+  invoke("agents_status").then((st) => { if (!st.seen && !Object.keys(info.test).length) openAgents(); }); // not in tests
+  if (info.test.switch_test && active) switchTest(active);
+  if (info.test.tabs_test) tabsTest();
+  if (info.test.poke_test) pokemonTest();
+  if (info.test.wild_test) wildTest();
+  if (info.test.p0_test) resultTest();
+  if (info.test.x1e_test) x1eTest();
+  if (info.test.newuser_test) newUserTest();
+  if (info.test.e1_test) e1Test();
+  if (info.test.e1b_test) e1bTest();
+  if (info.test.m1_test) m1Test();
+  if (info.test.m2_test) m2Test();
+  if (info.test.a2_test) a2Test();
+  if (info.test.s2_test) s2Test();
+  if (info.test.s2x_test) s2xTest();
+  if (info.test.u1_test) u1Test();
+  if (info.test.agents_test) agentsTest();
+  if (info.test.multi_test) multiTest();
+  if (info.test.cd_test) cdTest();
+  if (info.test.tour_test) tourTest();
+  if (info.test.s3_test) s3Test();
+  if (info.test.race_test) raceTest();
+  if (info.test.pick_test) pickTest();
+}
+
+main();

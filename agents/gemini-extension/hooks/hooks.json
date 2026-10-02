@@ -1,0 +1,108 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "cvim-SessionStart",
+            "type": "command",
+            "command": "bash \"${extensionPath}/cvim-event.sh\" SessionStart",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "cvim-SessionEnd",
+            "type": "command",
+            "command": "bash \"${extensionPath}/cvim-event.sh\" SessionEnd",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "BeforeAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "cvim-UserPromptSubmit",
+            "type": "command",
+            "command": "bash \"${extensionPath}/cvim-event.sh\" UserPromptSubmit",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "BeforeTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "cvim-PreToolUse",
+            "type": "command",
+            "command": "bash \"${extensionPath}/cvim-event.sh\" PreToolUse",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "AfterTool": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "cvim-PostToolUse",
+            "type": "command",
+            "command": "bash \"${extensionPath}/cvim-event.sh\" PostToolUse",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "AfterAgent": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "cvim-Stop",
+            "type": "command",
+            "command": "bash \"${extensionPath}/cvim-event.sh\" Stop",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "Notification": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "cvim-Notification",
+            "type": "command",
+            "command": "bash \"${extensionPath}/cvim-event.sh\" Notification",
+            "timeout": 3000
+          }
+        ]
+      }
+    ],
+    "PreCompress": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "name": "cvim-PreCompact",
+            "type": "command",
+            "command": "bash \"${extensionPath}/cvim-event.sh\" PreCompact",
+            "timeout": 3000
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,149 @@
+// Wild encounter card (main window and desktop overlay): "야생의 ○○이(가) 나타났다!", throw a
+// Poké Ball (click / ⌘B), shakes, caught / broke free / fled. The main process decides the
+// outcome (electron/core/wild.cjs) and tells both windows; this only plays it.
+
+// Korean particles after a name: 이/가, 을/를, 은/는, (으)로
+export function josa(name, withFinal, without) {
+  const c = String(name ?? "").charCodeAt(String(name ?? "").length - 1);
+  if (c < 0xac00 || c > 0xd7a3) return `${name}${withFinal}(${without})`;
+  return name + ((c - 0xac00) % 28 ? withFinal : without);
+}
+
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+
+export function createWild(root, { invoke, partnerButton, log = () => {} }) {
+  root.innerHTML = `
+    <div class="wild-card" hidden>
+      <div class="wild-stage"><div class="grass"><span>🌿</span><span>🌿</span><span>🌿</span></div>
+        <img class="wild-poke" alt="" /><div class="wild-ball pokeball-static"></div><div class="fx"></div></div>
+      <div class="wild-text"></div>
+      <div class="wild-actions"><button class="wild-throw" tabindex="-1">⚾ 몬스터볼 <span class="k">⌘B</span></button>
+        <button class="wild-partner" tabindex="-1" hidden>이 탭의 파트너로</button><span class="wild-timer dim"></span></div>
+    </div>`;
+  const $ = (s) => root.querySelector(s);
+  const card = $(".wild-card"), img = $(".wild-poke"), ball = $(".wild-ball"), text = $(".wild-text");
+  const btn = $(".wild-throw"), adopt = $(".wild-partner"), timer = $(".wild-timer");
+  let enc = null, busy = false, hideTimer = null, tick = null;
+
+  // buttons must not take the keyboard away from the terminal
+  for (const b of [btn, adopt]) b.addEventListener("mousedown", (e) => e.preventDefault());
+  btn.addEventListener("click", () => throwBall());
+  adopt.addEventListener("click", () => { const e = adopt.enc; hide(); if (e && partnerButton) partnerButton(e); });
+
+  function say(html) { text.innerHTML = html; }
+  const name = (e) => `${e.shiny ? "✨" : ""}<b>${String(e.name).replace(/[&<>"]/g, "")}</b>`;
+  const nm = (e, a, b) => name(e) + josa(e.name, a, b).slice(String(e.name ?? "").length);
+
+  function hide() {
+    clearTimeout(hideTimer); clearInterval(tick);
+    card.hidden = true; enc = null; busy = false; adopt.hidden = true;
+  }
+  function hideLater(ms) { clearTimeout(hideTimer); hideTimer = setTimeout(hide, ms); }
+
+  function countdown() {
+    clearInterval(tick);
+    const draw = () => { if (enc?.until) timer.textContent = `${Math.max(0, Math.ceil((enc.until - Date.now()) / 1000))}초`; };
+    draw();
+    tick = setInterval(draw, 500);
+  }
+
+  async function show(e) {
+    clearTimeout(hideTimer);
+    enc = e; busy = false;
+    card.hidden = false;
+    card.className = "wild-card appearing";
+    img.className = "wild-poke";
+    ball.className = "wild-ball pokeball-static";
+    btn.hidden = false; btn.disabled = false; adopt.hidden = true;
+    try {
+      img.src = `data:image/gif;base64,${await invoke("sprite_b64", { path: e.gif })}`;
+      await img.decode().catch(() => {});
+      img.style.width = `${img.naturalWidth * (img.naturalWidth < 60 ? 2 : 1)}px`;
+    } catch { img.removeAttribute("src"); }
+    say(`앗! 야생의 ${nm(e, "이", "가")} 나타났다!`);
+    countdown();
+    setTimeout(() => card.classList.remove("appearing"), 1200);
+  }
+
+  // false = nothing to throw at (a ball already in the air counts as handled)
+  function throwBall() {
+    if (!enc) return false;
+    if (busy) return true;
+    busy = true;
+    btn.disabled = true;
+    // not thrown (previous ball still shaking / error): the button comes back
+    const back = () => { if (enc && !btn.hidden) { busy = false; btn.disabled = false; } };
+    invoke("wild_throw", { token: enc.token }).then((r) => { if (r.result === "busy") back(); }).catch(back);
+    return true;
+  }
+
+  // the outcome (to every window): ball flies, Pokémon goes in, shakes, then the result
+  async function play(r) {
+    if (!enc || r.token !== enc.token) return;
+    busy = true; btn.disabled = true;
+    if (r.until) enc.until = r.until;
+    say(`가랏! 몬스터볼!`);
+    ball.className = "wild-ball pokeball-static fly";
+    await wait(500);
+    img.classList.add("absorbed");
+    ball.className = "wild-ball pokeball-static landed";
+    await wait(300);
+    for (let i = 0; i < r.shakes; i++) {
+      ball.classList.add("shake");
+      await wait(500);
+      ball.classList.remove("shake");
+      await wait(100);
+    }
+    await wait(300);
+    if (r.result === "caught") {
+      ball.classList.add("caught");
+      burst("✨", 8);
+      say(`신난다! ${nm(enc, "을", "를")} 잡았다!`);
+      btn.hidden = true;
+      clearInterval(tick); timer.textContent = "";
+      if (partnerButton) { adopt.hidden = false; adopt.enc = { ...enc }; }
+      log(`wild caught ${enc.id}`);
+      hideLater(partnerButton ? 10000 : 4000);
+    } else {
+      ball.className = "wild-ball pokeball-static";
+      img.classList.remove("absorbed");
+      if (r.result === "fled") {
+        say(`앗! 볼에서 나와버렸다!<br>${nm(enc, "은", "는")} 도망쳐 버렸다…`);
+        img.classList.add("flee");
+        btn.hidden = true;
+        clearInterval(tick); timer.textContent = "";
+        hideLater(3000);
+      } else {
+        say(r.shakes >= 2 ? "아깝다! 조금만 더 하면 잡을 수 있었는데!" : "앗! 볼에서 나와버렸다!");
+        busy = false; btn.disabled = false;
+      }
+    }
+  }
+
+  function burst(glyph, n) {
+    const fx = root.querySelector(".fx");
+    for (let i = 0; i < n; i++) {
+      const s = document.createElement("span");
+      const a = (Math.PI * 2 * i) / n;
+      s.textContent = glyph;
+      s.style.setProperty("--dx", `${Math.cos(a) * 50}px`);
+      s.style.setProperty("--dy", `${Math.sin(a) * 50}px`);
+      fx.appendChild(s);
+      setTimeout(() => s.remove(), 800);
+    }
+  }
+
+  // it went away (no throw in time / switched off); caught / fled endings already played
+  function end(e) {
+    if (!enc || e.token !== enc.token) return;
+    if (e.reason === "left" || e.reason === "off") {
+      say(`${nm(enc, "은", "는")} 풀숲으로 돌아갔다…`);
+      img.classList.add("flee");
+      btn.hidden = true;
+      clearInterval(tick); timer.textContent = "";
+      hideLater(2500);
+    }
+  }
+
+  return { show, play, end, throwBall, hide, active: () => !!enc && !card.hidden, token: () => enc?.token };
+}

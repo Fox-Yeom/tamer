@@ -1,0 +1,269 @@
+//! Codex adapter (port of nvim/lua/cvim/adapters/codex.lua): tails the session log Codex writes,
+//!   $CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl   (CODEX_HOME = ~/.codex)
+//! A workspace claims the newest log whose session_meta.cwd is its folder and that was written after
+//! its Codex process started; a later conversation (/new) in the same folder takes over.
+//! Codex's own config (notify, hooks) is never touched.
+
+use crate::state::{Event, Usage, Window};
+use crate::tail;
+use chrono::{Duration as CDuration, Local};
+use serde_json::Value;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime};
+
+pub struct Codex {
+    pub cwd: PathBuf,
+    pub started: SystemTime,
+    pub file: Option<PathBuf>,
+    pub offset: u64,
+    pub scanned: Option<Instant>,
+    pub window: Option<f64>,
+}
+
+impl Codex {
+    pub fn new(cwd: &Path) -> Self {
+        Codex {
+            cwd: real(cwd),
+            started: SystemTime::now() - Duration::from_secs(2),
+            file: None,
+            offset: 0,
+            scanned: None,
+            window: None,
+        }
+    }
+}
+
+fn real(p: &Path) -> PathBuf {
+    std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+pub fn home() -> PathBuf {
+    std::env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".codex"))
+}
+
+fn first_line(p: &Path) -> Option<String> {
+    use std::io::{BufRead, BufReader};
+    let f = std::fs::File::open(p).ok()?;
+    let mut line = String::new();
+    BufReader::new(f).read_line(&mut line).ok()?;
+    Some(line)
+}
+
+/// Newest unclaimed log for this folder written since the agent started.
+pub fn find_log(c: &Codex, claimed: &HashMap<PathBuf, String>, home: &Path) -> Option<PathBuf> {
+    let mut best: Option<(PathBuf, SystemTime)> = None;
+    for back in [0, 1] {
+        // today and yesterday: a session can cross midnight
+        let day = Local::now() - CDuration::days(back);
+        let dir = home.join("sessions").join(day.format("%Y/%m/%d").to_string());
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let name = e.file_name().to_string_lossy().into_owned();
+            if !(name.starts_with("rollout-") && name.ends_with(".jsonl")) {
+                continue;
+            }
+            let path = e.path();
+            let Ok(meta) = e.metadata() else { continue };
+            let modified = meta.modified().unwrap_or(SystemTime::UNIX_EPOCH);
+            let born = meta.created().unwrap_or(modified);
+            if modified < c.started || (claimed.contains_key(&path) && c.file.as_ref() != Some(&path)) {
+                continue;
+            }
+            if best.as_ref().is_some_and(|(_, t)| born <= *t) {
+                continue;
+            }
+            let Some(meta) = first_line(&path).and_then(|l| serde_json::from_str::<Value>(&l).ok()) else { continue };
+            if meta["type"] == "session_meta" && meta["payload"]["cwd"].as_str().map(|d| real(Path::new(d))) == Some(c.cwd.clone()) {
+                best = Some((path, born));
+            }
+        }
+    }
+    best.map(|(p, _)| p)
+}
+
+fn short(s: &str) -> String {
+    let flat: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    flat.chars().take(200).collect()
+}
+
+fn read_cmd_tool(cmd: &str) -> &'static str {
+    match cmd.split_whitespace().next().unwrap_or("") {
+        "rg" | "grep" => "Grep",
+        "cat" | "sed" | "head" | "tail" | "nl" | "wc" => "Read",
+        "ls" => "LS",
+        "find" | "fd" => "Glob",
+        _ => "Bash",
+    }
+}
+
+/// One log record -> normalized event (or None); updates `usage` in place (`changed` = usage moved).
+pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, rec: &Value) -> Option<Event> {
+    let p = &rec["payload"];
+    let ev = |e: &str, tool: Option<&str>, detail: Option<String>| Some(Event::new(e, tool, detail));
+    if rec["type"] == "turn_context" {
+        if let Some(m) = p["model"].as_str() {
+            let u = usage.get_or_insert_with(Usage::default);
+            u.model = Some(match p["effort"].as_str() {
+                Some(e) => format!("{m} {e}"),
+                None => m.to_string(),
+            });
+            *changed = true;
+        }
+        return None;
+    }
+    if rec["type"] == "compacted" {
+        return ev("PreCompact", None, Some("compact".into()));
+    }
+    match p["type"].as_str().unwrap_or("") {
+        "task_started" => {
+            if let Some(w) = p["model_context_window"].as_f64() {
+                c.window = Some(w);
+            }
+            ev("UserPromptSubmit", None, None)
+        }
+        "task_complete" => ev("Stop", None, Some(short(p["last_agent_message"].as_str().unwrap_or("")).chars().take(120).collect())),
+        "turn_aborted" => ev("Interrupted", None, p["reason"].as_str().map(Into::into)),
+        "reasoning" => ev("PostToolUse", None, None),
+        "web_search_call" => {
+            let a = &p["action"];
+            ev("PreToolUse", Some("WebSearch"), Some(short(a["query"].as_str().or(a["url"].as_str()).unwrap_or(""))))
+        }
+        "function_call" | "custom_tool_call" => {
+            let name = p["name"].as_str().unwrap_or("?");
+            let args = p["arguments"].as_str().or(p["input"].as_str()).unwrap_or("");
+            match name {
+                "request_user_input" => ev("Notification", None, Some("입력 요청".into())),
+                "apply_patch" => {
+                    let file = args.lines().find_map(|l| {
+                        let l = l.strip_prefix("*** ")?;
+                        let (_, path) = l.split_once(" File: ")?;
+                        Some(path.trim().to_string())
+                    });
+                    ev("PreToolUse", Some("Edit"), Some(file.unwrap_or_else(|| "patch".into())))
+                }
+                "exec_command" | "write_stdin" => {
+                    let a: Value = serde_json::from_str(args).unwrap_or(Value::Null);
+                    let cmd = a["cmd"].as_str().or(a["chars"].as_str()).unwrap_or("");
+                    ev("PreToolUse", Some(read_cmd_tool(cmd)), Some(short(cmd)))
+                }
+                other => ev("PreToolUse", Some(other), Some(short(args))),
+            }
+        }
+        "token_count" => {
+            let u = usage.get_or_insert_with(Usage::default);
+            let window = p["info"]["model_context_window"].as_f64().or(c.window);
+            if let (Some(last), Some(w)) = (p["info"]["last_token_usage"]["total_tokens"].as_f64(), window) {
+                if w > 0.0 {
+                    u.ctx = Some((last / w * 100.0).round());
+                }
+            }
+            for (key, src) in [("five_hour", &p["rate_limits"]["primary"]), ("seven_day", &p["rate_limits"]["secondary"])] {
+                if let Some(pct) = src["used_percent"].as_f64() {
+                    let w = Some(Window { pct, resets_at: src["resets_at"].as_i64() });
+                    if key == "five_hour" { u.five_hour = w } else { u.seven_day = w }
+                }
+            }
+            *changed = true;
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Events since the last poll (scans for the log every 1 s until found, then every 3 s for /new).
+pub fn poll(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, claimed: &mut HashMap<PathBuf, String>, ws: &str, now: Instant) -> Vec<Event> {
+    let every = if c.file.is_some() { Duration::from_secs(3) } else { Duration::from_secs(1) };
+    if c.scanned.is_none_or(|t| now.saturating_duration_since(t) >= every) {
+        c.scanned = Some(now);
+        if let Some(found) = find_log(c, claimed, &home()) {
+            if c.file.as_ref() != Some(&found) {
+                if let Some(old) = c.file.take() {
+                    claimed.remove(&old);
+                }
+                claimed.insert(found.clone(), ws.to_string());
+                c.file = Some(found);
+                c.offset = 0;
+            }
+        }
+    }
+    let Some(file) = c.file.clone() else { return vec![] };
+    tail::new_lines(&file, &mut c.offset)
+        .iter()
+        .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+        .filter_map(|rec| translate(c, usage, changed, &rec))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn run(recs: &[Value]) -> (Vec<Event>, Option<Usage>) {
+        let mut c = Codex::new(Path::new("/tmp"));
+        let (mut usage, mut changed) = (None, false);
+        let evs = recs.iter().filter_map(|r| translate(&mut c, &mut usage, &mut changed, r)).collect();
+        (evs, usage)
+    }
+
+    #[test]
+    fn maps_codex_records() {
+        let (evs, usage) = run(&[
+            json!({"type":"turn_context","payload":{"model":"gpt-5.5","effort":"high"}}),
+            json!({"type":"event_msg","payload":{"type":"task_started","model_context_window":258400}}),
+            json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"rg foo src\"}"}}),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"apply_patch","input":"*** Begin Patch\n*** Update File: src/app.lua\n@@\n"}}),
+            json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"npm test\"}"}}),
+            json!({"type":"response_item","payload":{"type":"web_search_call","action":{"type":"search","query":"lua json"}}}),
+            json!({"type":"response_item","payload":{"type":"function_call","name":"request_user_input","arguments":"{}"}}),
+            json!({"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":64600},"model_context_window":258400},"rate_limits":{"primary":{"used_percent":12.0,"resets_at":100},"secondary":{"used_percent":30.0}}}}),
+            json!({"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done!"}}),
+            json!({"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}),
+            json!({"type":"compacted","payload":{}}),
+        ]);
+        let got: Vec<(String, Option<String>, Option<String>)> = evs.into_iter().map(|e| (e.event, e.tool, e.detail)).collect();
+        let s = |x: &str| Some(x.to_string());
+        assert_eq!(got, vec![
+            ("UserPromptSubmit".into(), None, None),
+            ("PreToolUse".into(), s("Grep"), s("rg foo src")),
+            ("PreToolUse".into(), s("Edit"), s("src/app.lua")),
+            ("PreToolUse".into(), s("Bash"), s("npm test")),
+            ("PreToolUse".into(), s("WebSearch"), s("lua json")),
+            ("Notification".into(), None, s("입력 요청")),
+            ("Stop".into(), None, s("done!")),
+            ("Interrupted".into(), None, s("interrupted")),
+            ("PreCompact".into(), None, s("compact")),
+        ]);
+        let u = usage.unwrap();
+        assert_eq!(u.model.as_deref(), Some("gpt-5.5 high"));
+        assert_eq!(u.ctx, Some(25.0));
+        assert_eq!(u.five_hour, Some(Window { pct: 12.0, resets_at: Some(100) }));
+        assert_eq!(u.seven_day, Some(Window { pct: 30.0, resets_at: None }));
+    }
+
+    #[test]
+    fn claims_newest_log_for_folder_only() {
+        let home = tempfile::tempdir().unwrap();
+        let proj = tempfile::tempdir().unwrap();
+        let other = tempfile::tempdir().unwrap();
+        let dir = home.path().join("sessions").join(Local::now().format("%Y/%m/%d").to_string());
+        std::fs::create_dir_all(&dir).unwrap();
+        let meta = |cwd: &Path| format!("{}\n", json!({"type":"session_meta","payload":{"cwd": cwd}}));
+        std::fs::write(dir.join("rollout-a.jsonl"), meta(other.path())).unwrap();
+        std::thread::sleep(Duration::from_millis(20));
+        std::fs::write(dir.join("rollout-b.jsonl"), meta(proj.path())).unwrap();
+        let mut c = Codex::new(proj.path());
+        let mut claimed = HashMap::new();
+        assert_eq!(find_log(&c, &claimed, home.path()), Some(dir.join("rollout-b.jsonl")));
+        // claimed by another workspace: not ours to take
+        claimed.insert(dir.join("rollout-b.jsonl"), "other".to_string());
+        assert_eq!(find_log(&c, &claimed, home.path()), None);
+        // a log written before the agent started is ignored
+        claimed.clear();
+        c.started = SystemTime::now() + Duration::from_secs(60);
+        assert_eq!(find_log(&c, &claimed, home.path()), None);
+    }
+}

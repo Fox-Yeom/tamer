@@ -1,0 +1,54 @@
+# build output / dependencies
+node_modules/
+desktop/out/
+desktop/dist/
+desktop/core-rs/target/
+desktop/src-tauri/target/
+desktop/src-tauri/gen/
+# generated at build time (desktop/build/make_icon.py, desktop/scripts/notices.cjs)
+desktop/build/icon.icns
+desktop/build/icon.png
+desktop/build/THIRD_PARTY_NOTICES.txt
+# macOS / editors
+.DS_Store
+*.swp
+.vscode/
+.idea/
+# local logs
+*.log
+
+# security: never commit these
+# - secrets / credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+.npmrc
+.netrc
+**/credentials*.json
+# - local tool settings (may hold tokens, personal paths)
+.claude/settings.local.json
+.claude/*.local.*
+# - compiled / runtime artifacts (embed local paths)
+__pycache__/
+*.pyc
+# - release files (built locally, handed out separately)
+*.dmg
+*.zip
+# - scratch output of tests / diagnostics (may contain personal data)
+scratch/
+*.diag.txt
+
+# internal documents and AI instructions: kept on this Mac, never in the repository
+docs/
+CLAUDE.md
+AGENTS.md
+FEATURES.md
+desktop/README.md
+.claude/

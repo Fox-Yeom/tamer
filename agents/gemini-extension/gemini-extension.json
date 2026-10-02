@@ -1,0 +1,5 @@
+{
+  "name": "cvim",
+  "version": "1.0.0",
+  "description": "CVIM: reports Gemini CLI's lifecycle (prompt, tools, permission, done) to the CVIM app. Does nothing outside CVIM."
+}

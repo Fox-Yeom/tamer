@@ -1,0 +1,18 @@
+{
+  "statusLine": {
+    "type": "command",
+    "command": "bash \"$CVIM_ROOT/claude/statusline.sh\""
+  },
+  "hooks": {
+    "SessionStart":     [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" SessionStart", "timeout": 3 }] }],
+    "SessionEnd":       [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" SessionEnd", "timeout": 3 }] }],
+    "UserPromptSubmit": [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" UserPromptSubmit", "timeout": 3 }] }],
+    "PreToolUse":       [{ "matcher": "*", "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" PreToolUse", "timeout": 3 }] }],
+    "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" PostToolUse", "timeout": 3 }] }],
+    "Notification":     [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" Notification", "timeout": 3 }] }],
+    "Stop":             [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" Stop", "timeout": 3 }] }],
+    "StopFailure":      [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" StopFailure", "timeout": 3 }] }],
+    "SubagentStop":     [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" SubagentStop", "timeout": 3 }] }],
+    "PreCompact":       [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" PreCompact", "timeout": 3 }] }]
+  }
+}

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <!-- only our own files run here; agent output is text in xterm (POLICY.md 11) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+    <title>Tamer</title>
+    <link rel="stylesheet" href="/src/style.css" />
+  </head>
+  <body>
+    <header id="bar">
+      <span class="brand">◓ Tamer</span>
+      <span id="agent" class="agent"></span>
+      <span id="cwd" class="dim"></span>
+      <span class="grow"></span>
+      <span id="summary" title="모든 탭: 입력 필요 · 작업 중 · 완료 · 실패"></span>
+      <span id="doing" class="dim"></span>
+      <span id="usage"></span>
+    </header>
+    <nav id="tabs"><button id="new-tab" title="새 탭 (⌘T)">＋</button></nav>
+    <div id="views"></div>
+    <footer id="hint" class="dim">⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭</footer>
+
+    <!-- start screen: recent folders (shared with the Neovim CVIM) -->
+    <section id="start" hidden>
+      <div class="start-box">
+        <h1>◓ Tamer — 폴더 열기</h1>
+        <ol id="recent"></ol>
+        <div class="start-actions">
+          <button data-action="choose"><b>o</b> 다른 폴더 선택…</button>
+          <button data-action="home"><b>h</b> 홈 폴더</button>
+        </div>
+        <p class="dim">↑↓ 이동 · Enter 열기 · 숫자 바로 열기<span id="start-esc"> · Esc 닫기</span> · Finder에서 폴더를 끌어다 놓아도 열려요</p>
+      </div>
+    </section>
+
+    <template id="ws-template">
+      <main class="grid">
+        <section class="pane pane-agent"><div class="title agent-title"><span class="agent-name">Agent</span><span class="grow"></span><button class="sess-add" title="이 폴더에 셸 하나 더 (⌘⇧T) · 셸 이동 ⌃⌘1~9">＋ 셸</button></div><div class="term"></div></section>
+        <!-- M1: this folder's agent sessions (shown when there are 2 or more) -->
+        <nav class="rail" hidden></nav>
+        <aside class="side">
+          <section class="pane pane-avatar"><div class="title">🐾 Avatar</div><div class="avatar-box"><div class="stage"><div class="pokeball" title="불러오는 중…"></div><div class="empty-ball" title="파트너가 없어요" hidden></div><img class="poke" alt="" hidden /><div class="fx"></div></div><div class="caption"><span class="poke-label"></span> <span class="state-line dim"></span></div><div class="poke-exp dim"></div></div><ul class="activity"></ul></section>
+          <section class="pane pane-changes"><div class="title">📝 변경 사항 <span class="changes-count"></span><span class="grow"></span><button class="changes-refresh" title="새로 고침">↻</button></div><ul class="changes"></ul></section>
+          <section class="pane pane-shell"><div class="title">🐚 Shell</div><div class="term"></div></section>
+        </aside>
+      </main>
+    </template>
+    <!-- right-click menu on the partner -->
+    <div id="menu" hidden></div>
+
+    <!-- Pokédex (⌘D) -->
+    <section id="dex" hidden>
+      <div class="dex-box">
+        <header id="dex-title"></header>
+        <nav id="dex-regions"></nav>
+        <div class="dex-body">
+          <div id="dex-grid"></div>
+          <div class="dex-preview"><img id="dex-img" alt="" /><div id="dex-name"></div><div id="dex-meta" class="dim"></div>
+            <button id="dex-take" hidden>이 탭의 파트너로</button><div id="dex-from"></div></div>
+        </div>
+        <footer class="dim"><span>←→↑↓ 이동 · Tab 다음 만난 포켓몬 · Enter 이 탭의 파트너로(박스에 있으면) · Esc 닫기</span><span id="dex-pos"></span></footer>
+      </div>
+    </section>
+
+    <!-- wild encounter (src/wild.js) -->
+    <div id="wild"></div>
+    <!-- choosing a partner (center dialog) -->
+    <!-- agent connections (⌘G → last item, first launch) -->
+    <section id="agents" tabindex="-1" hidden>
+      <div class="choose-box">
+        <header><span>에이전트 연결</span><button id="agents-close" title="닫기 (Esc)">✕</button></header>
+        <div class="choose-body"><ul id="agents-list"></ul>
+          <p class="dim agents-note">🟢 전체: 생각 중·도구·입력 필요·완료·중단까지, 파트너 EXP·야생 포켓몬 · 🟡 기본: 작업 중/대기 — 오래 일하다 조용해지면 완료로 보고 EXP(절반 속도, 야생 없음) · 목록에 없는 에이전트는 <code>~/.cvim/agents.json</code>에 이름·명령을 적으면 🟡 기본으로 따라가요(그 밖의 프로그램은 상태·EXP 대상이 아님)</p></div>
+        <footer class="dim">셸 환경(PATH 등)은 사용자 터미널과 같아요 · Esc 닫기</footer>
+      </div>
+    </section>
+    <section id="choose" tabindex="-1" hidden>
+      <div class="choose-box">
+        <header><span id="choose-title"></span><button id="choose-close" title="닫기 (Esc)">✕</button></header>
+        <div class="choose-body">
+          <div id="choose-starter-sec">
+            <h3>🌟 첫 파트너 <span class="dim">처음 한 번 · 1·2·3</span></h3>
+            <div id="choose-starter" class="choose-row"></div>
+            <p id="choose-starter-note" class="dim"></p>
+          </div>
+          <h3>📦 박스에서 쉬는 포켓몬</h3>
+          <div id="choose-rest" class="choose-grid"></div>
+          <div id="choose-others-sec">
+            <h3>🏠 다른 폴더의 파트너 데려오기 <span class="dim">그 폴더는 파트너가 비어요</span></h3>
+            <div id="choose-others" class="choose-grid"></div>
+          </div>
+        </div>
+        <footer class="dim">한 마리는 한 폴더에만 · 새 포켓몬은 작업 중 야생 포획으로(파트너 없는 폴더는 더 자주) · EXP는 포켓몬을 따라가요 · Esc 닫기</footer>
+      </div>
+    </section>
+    <!-- a changed file, side by side (E1b) -->
+    <section id="diffview" tabindex="-1" hidden>
+      <div class="diff-box">
+        <header><span id="diff-title"></span><span class="grow"></span><button id="diff-revert">이 파일 되돌리기</button><button id="diff-close" title="닫기 (Esc)">✕</button></header>
+        <div id="diff-body"></div>
+      </div>
+    </section>
+    <div id="toast"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>

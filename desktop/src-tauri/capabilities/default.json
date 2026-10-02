@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "X0 PoC: core only (events + invoke); everything else goes through our own commands",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

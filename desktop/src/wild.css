@@ -1,0 +1,40 @@
+/* wild encounter card (src/wild.js) — main window and desktop overlay */
+.wild-card { position: relative; width: 260px; padding: 10px 12px; border-radius: 10px; background: #24242c; color: #e6e6e6;
+  border: 1px solid #3a3a48; box-shadow: 0 8px 24px rgba(0,0,0,.45); font: 13px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+.wild-card[hidden] { display: none; }
+.wild-card.appearing { animation: wild-in .35s ease-out; }
+@keyframes wild-in { from { transform: translateY(16px); opacity: 0; } }
+.wild-stage { position: relative; height: 110px; display: flex; align-items: flex-end; justify-content: center; overflow: visible; }
+.wild-stage .grass { position: absolute; bottom: 0; left: 0; right: 0; display: flex; justify-content: center; gap: 2px; font-size: 22px; z-index: 2; pointer-events: none; }
+.wild-card.appearing .grass span { display: inline-block; animation: rustle .25s ease-in-out 4; }
+.wild-card.appearing .grass span:nth-child(2) { animation-delay: .08s; }
+@keyframes rustle { 50% { transform: rotate(-12deg) translateY(-3px); } }
+.wild-poke { image-rendering: pixelated; max-height: 96px; object-fit: contain; object-position: bottom; margin-bottom: 14px; transform-origin: 50% 80%; transition: transform .25s, opacity .25s, filter .25s; }
+.wild-card.appearing .wild-poke { animation: wild-pop .6s ease-out .3s both; }
+@keyframes wild-pop { from { transform: translateY(30px) scale(.6); opacity: 0; } }
+.wild-poke.absorbed { transform: scale(.05); opacity: 0; filter: brightness(0) invert(1); }
+.wild-poke.flee { transform: translateX(80px); opacity: 0; transition: transform .8s, opacity .8s; }
+
+/* Poké Ball: flies in from the left, lands where the Pokémon was, shakes, clicks shut */
+.pokeball-static { width: 26px; height: 26px; border-radius: 50%; border: 3px solid #111; position: absolute; z-index: 3;
+  background: linear-gradient(#e5484d 0 46%, #111 46% 54%, #f2f2f2 54%); left: -40px; bottom: 30px; opacity: 0; }
+.pokeball-static::after { content: ""; position: absolute; left: 50%; top: 50%; width: 7px; height: 7px; transform: translate(-50%, -50%);
+  border-radius: 50%; background: #f2f2f2; border: 2px solid #111; }
+.wild-ball.fly { animation: ball-fly .5s ease-out forwards; }
+@keyframes ball-fly { 0% { left: -10px; bottom: 0; opacity: 1; transform: rotate(0); } 60% { bottom: 80px; }
+  100% { left: calc(50% - 13px); bottom: 34px; opacity: 1; transform: rotate(720deg); } }
+.wild-ball.landed { left: calc(50% - 13px); bottom: 20px; opacity: 1; transition: bottom .25s ease-in; }
+.wild-ball.shake { animation: ball-shake .5s ease-in-out; transform-origin: 50% 100%; }
+@keyframes ball-shake { 25% { transform: rotate(-22deg); } 75% { transform: rotate(22deg); } }
+.wild-ball.caught { filter: brightness(.75); }
+.wild-stage .fx { position: absolute; inset: -10px; pointer-events: none; }
+
+.wild-text { margin-top: 6px; line-height: 1.45; min-height: 2.9em; }
+.wild-text b { color: #f5c542; }
+.wild-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+.wild-actions button { border: 0; border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; background: #d97757; color: #1b1b1f; font-weight: 700; }
+.wild-actions button:disabled { opacity: .45; cursor: default; }
+.wild-actions button[hidden] { display: none; }
+.wild-actions .k { font-weight: 400; opacity: .7; font-size: 11px; }
+.wild-partner { background: #3ddc84 !important; }
+.wild-timer { margin-left: auto; font-size: 12px; color: #8a8a8a; }

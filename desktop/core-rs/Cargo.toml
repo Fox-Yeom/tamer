@@ -1,0 +1,18 @@
+[package]
+name = "cvim-core"
+version = "0.1.0"
+edition = "2021"
+description = "CVIM v2 core: agent state machine, adapters (Claude hooks, Codex log, activity), path policy. Talks JSON lines on stdio with the Electron main process."
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

@@ -1,0 +1,60 @@
+@import "./wild.css";
+
+/* transparent window: only the cards are drawn */
+html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; user-select: none;
+  font: 12px -apple-system, "Apple SD Gothic Neo", sans-serif; color: #e6e6e6; }
+/* sized by its content and pinned to the bottom-right; overlay.js fits the window to it */
+#stack { position: absolute; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding: 16px 8px 8px;
+  width: max-content; } /* its own width, not the window's: the window follows it, never the other way */
+#stack > :empty, #wild:has(> .wild-card[hidden]) { display: none; }
+#cards { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+.card { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 6px 10px 6px 6px; border-radius: 10px; cursor: pointer;
+  background: rgba(27, 27, 34, .82); border: 1px solid rgba(255, 255, 255, .08); box-shadow: 0 4px 14px rgba(0, 0, 0, .35); max-width: 280px; }
+.card.current { padding: 8px 12px 8px 8px; }
+.card .sprite { display: flex; align-items: flex-end; justify-content: center; min-width: 40px; min-height: 40px; }
+.card .meta { min-width: 0; }
+.card .name { font-weight: 700; font-size: 13px; }
+.card .folder, .card .state { color: #9a9aa6; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 150px; }
+.bubble { position: absolute; top: -12px; right: 8px; padding: 2px 8px; border-radius: 10px; font-weight: 700; font-size: 11px;
+  background: #24242c; border: 1px solid #3a3a48; animation: pop .3s ease-out; }
+.bubble.second { right: auto; left: 8px; }
+.bubble.ok { color: #3ddc84; } .bubble.bad { color: #e5484d; } .bubble.dim { color: #9a9aa6; }
+@keyframes pop { from { transform: scale(.4); opacity: 0; } }
+
+.poke { image-rendering: pixelated; transform-origin: 50% 100%; }
+.poke.st-idle { animation: breathe 3s ease-in-out infinite; }
+.poke.st-sleep { animation: breathe 5s ease-in-out infinite; filter: brightness(.7) saturate(.6); }
+.poke.st-working { animation: hop .45s ease-in-out infinite; }
+.poke.st-waiting { animation: shake .5s ease-in-out infinite; }
+.poke.st-done { animation: jump .5s ease-out 3; }
+.poke.st-interrupted { animation: flinch .4s ease-out 2; }
+.poke.st-error { animation: shake .3s ease-in-out 4; filter: sepia(1) saturate(4) hue-rotate(-30deg); }
+@keyframes flinch { 30% { transform: translateX(-6px) scaleY(.9); } }
+@keyframes breathe { 50% { transform: scaleY(.97); } }
+@keyframes hop { 50% { transform: translateY(-5px); } }
+@keyframes shake { 25% { transform: translateX(-3px); } 75% { transform: translateX(3px); } }
+@keyframes jump { 40% { transform: translateY(-16px) scale(1.05); } }
+
+.pokeball { width: 28px; height: 28px; border-radius: 50%; border: 3px solid #111; position: relative;
+  background: linear-gradient(#e5484d 0 46%, #111 46% 54%, #f2f2f2 54%); }
+.fx span { position: absolute; left: 50%; top: 50%; font-size: 20px; animation: burst .7s ease-out forwards; }
+@keyframes burst { from { transform: translate(-50%, -50%) scale(.4); opacity: 1; }
+  to { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.2); opacity: 0; } }
+.dim { color: #8a8a8a; }
+
+.card .row { display: flex; align-items: flex-end; gap: 8px; }
+/* other tabs: small icons with a state dot, "+N", and the counts */
+.minis { display: flex; align-items: center; gap: 4px; border-top: 1px solid rgba(255,255,255,.08); padding-top: 5px; }
+.mini { position: relative; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 6px; background: rgba(255,255,255,.05); }
+.mini:hover { background: rgba(255,255,255,.14); }
+.mini img { max-width: 30px; max-height: 30px; image-rendering: pixelated; }
+.mini .dot { position: absolute; right: 1px; bottom: 1px; width: 8px; height: 8px; border-radius: 50%; border: 1px solid #1b1b22; }
+.dot.bad { background: #e5484d; } .dot.ok { background: #3ddc84; } .dot.work { background: #f5c542; } .dot.idle { background: #6a6a76; }
+.more { color: #9a9aa6; font-size: 11px; padding: 0 2px; }
+.counts { margin-left: auto; padding-left: 6px; white-space: nowrap; }
+.counts .bad { color: #e5484d; } .counts .ok { color: #3ddc84; }
+/* room for the bubble above the name */
+.card:has(> .bubble) { padding-top: 16px; }
+.empty-ball { width: 34px; height: 34px; border-radius: 50%; border: 3px dashed #5a5a68; position: relative; }
+.empty-ball::before { content: ""; position: absolute; left: -3px; right: -3px; top: 50%; border-top: 3px dashed #5a5a68; }
+.sess-badge { font-size: 10px; font-weight: 600; color: #d97757; border: 1px solid #5a3a30; border-radius: 6px; padding: 0 4px; margin-left: 4px; }

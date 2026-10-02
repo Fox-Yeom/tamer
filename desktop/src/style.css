@@ -1,0 +1,317 @@
+@import "@xterm/xterm/css/xterm.css";
+@import "./wild.css";
+
+/* Hangul fill: Fira Code has no Hangul, so it falls back to Apple SD Gothic Neo, whose syllables
+   are ~1em wide while the terminal gives them 2 cells (2 × 0.6em). Scale only the Hangul
+   ranges by 1.2 so each syllable fills its two cells instead of leaving a gap after it. */
+@font-face {
+  font-family: "CVIM Hangul";
+  src: local("Apple SD Gothic Neo"), local("AppleSDGothicNeo-Regular");
+  size-adjust: 120%;
+  unicode-range: U+1100-11FF, U+3130-318F, U+A960-A97F, U+AC00-D7AF, U+D7B0-D7FF;
+}
+
+:root {
+  --bg: #16161c;
+  --pane: #1b1b22;
+  --line: #2a2a34;
+  --fg: #e6e6e6;
+  --dim: #8a8a8a;
+  --accent: #d97757;
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
+  font: 13px -apple-system, "Apple SD Gothic Neo", sans-serif; overflow: hidden; }
+#bar { display: flex; gap: 10px; align-items: center; height: 28px; padding: 0 10px; border-bottom: 1px solid var(--line); }
+.brand { background: var(--accent); color: #1b1b1f; font-weight: 700; padding: 1px 8px; border-radius: 3px; }
+.agent { font-weight: 700; padding: 1px 8px; border-radius: 3px; color: #1b1b1f; }
+.dim { color: var(--dim); }
+.grow { flex: 1; }
+#tabs { display: flex; gap: 2px; align-items: stretch; height: 30px; padding: 0 6px; background: #121217; border-bottom: 1px solid var(--line); overflow-x: auto; }
+#tabs .tab { display: flex; align-items: center; gap: 6px; max-width: 260px; padding: 0 10px; color: var(--dim); background: transparent;
+  border: 0; border-bottom: 2px solid transparent; font: inherit; cursor: pointer; white-space: nowrap; }
+#tabs .tab .num { font-size: 11px; opacity: .6; }
+#tabs .tab .name { overflow: hidden; text-overflow: ellipsis; }
+#tabs .tab .doing { font-size: 11px; opacity: .8; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
+#tabs .tab.active { color: var(--fg); background: var(--pane); border-bottom-color: var(--accent); }
+#tabs .tab.attention { color: #e5484d; }
+#tabs .tab .close { opacity: 0; margin-left: 2px; }
+#tabs .tab:hover .close { opacity: .6; }
+#new-tab { border: 0; background: transparent; color: var(--dim); font-size: 16px; padding: 0 10px; cursor: pointer; }
+#views { position: relative; height: calc(100% - 28px - 30px - 22px); }
+.grid { position: absolute; inset: 0; display: grid; grid-template-columns: 60% 40%; }
+.grid[hidden] { display: none; }
+.side { display: grid; grid-template-rows: 300px 1fr 1fr; min-height: 0; border-left: 1px solid var(--line); }
+.pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-bottom: 1px solid var(--line); background: var(--pane); }
+.title { font-size: 12px; padding: 2px 8px; color: var(--dim); background: #24242c; }
+.pane.focus .title { color: var(--fg); background: #33333f; }
+.term { flex: 1; min-height: 0; padding: 4px 6px; }
+.avatar-box { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
+/* crisp pixels: integer scale set from JS, nearest-neighbour */
+.poke { image-rendering: pixelated; }
+#hint { height: 22px; padding: 3px 10px; border-top: 1px solid var(--line); font-size: 12px; }
+#toast { position: fixed; top: 40px; right: 16px; background: #33333f; padding: 8px 12px; border-radius: 6px; opacity: 0; transition: opacity .2s; }
+#toast.show { opacity: 1; }
+
+/* IME composition like a native text field (iTerm, macOS): inline on the pane background with an
+   underline, instead of xterm.js's default black box that reads as a separate/misplaced cell */
+.xterm .composition-view {
+  background: var(--pane);
+  color: var(--fg);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+/* caret after the composing syllable, like a native text field; the cell cursor hides meanwhile */
+.xterm.composing .xterm-cursor { visibility: hidden; }
+.xterm .composition-view.active::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1.1em;
+  margin-left: 1px;
+  vertical-align: text-bottom;
+  background: var(--fg);
+}
+
+/* top bar: what the agent is doing + usage */
+#doing, #usage { white-space: nowrap; font: 12px "Fira Code", "CVIM Hangul", monospace; }
+.ok { color: #3ddc84; } .warn { color: #f5c542; } .bad { color: #e5484d; font-weight: 700; }
+
+/* avatar pane: partner, caption, EXP, activity feed */
+.pane-avatar .avatar-box { flex: 0 0 auto; min-height: 190px; padding-top: 6px; }
+.caption { font-size: 13px; }
+.activity { flex: 1; min-height: 0; overflow: hidden; list-style: none; margin: 0; padding: 4px 8px;
+  border-top: 1px solid var(--line); font: 11px "Fira Code", "CVIM Hangul", monospace; }
+.activity li { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.5; }
+
+/* state motions (the GIF animates itself; these add the agent's mood on top) */
+.poke { transform-origin: 50% 100%; }
+.poke.st-idle { animation: breathe 3s ease-in-out infinite; }
+.poke.st-sleep { animation: breathe 5s ease-in-out infinite; filter: brightness(.7) saturate(.6); }
+.poke.st-thinking, .poke.st-compact { animation: sway 1.6s ease-in-out infinite; }
+.poke.st-coding, .poke.st-bash, .poke.st-tool, .poke.st-agent { animation: hop .45s ease-in-out infinite; }
+.poke.st-reading, .poke.st-searching { animation: look 1.2s ease-in-out infinite; }
+.poke.st-waiting { animation: shake .5s ease-in-out infinite; }
+.poke.st-done, .poke.st-cheer { animation: jump .5s ease-out 3; }
+.poke.st-error { animation: shake .3s ease-in-out infinite; filter: sepia(1) saturate(4) hue-rotate(-30deg); }
+@keyframes breathe { 50% { transform: scaleY(.97); } }
+@keyframes sway { 25% { transform: rotate(-4deg); } 75% { transform: rotate(4deg); } }
+@keyframes hop { 50% { transform: translateY(-6px); } }
+@keyframes look { 25% { transform: scaleX(-1); } 50% { transform: scaleX(-1); } }
+@keyframes shake { 25% { transform: translateX(-4px); } 75% { transform: translateX(4px); } }
+@keyframes jump { 40% { transform: translateY(-18px) scale(1.05); } }
+
+/* start screen */
+#start { position: fixed; inset: 28px 0 22px 0; display: flex; align-items: center; justify-content: center; background: rgba(16,16,22,.92); z-index: 10; }
+#start[hidden] { display: none; }
+.start-box { width: min(640px, 92vw); background: var(--pane); border: 1px solid var(--line); border-radius: 10px; padding: 18px 22px; }
+.start-box h1 { font-size: 16px; margin: 0 0 12px; color: var(--accent); }
+#recent { list-style: none; margin: 0 0 10px; padding: 0; }
+#recent li, .start-actions button { display: flex; gap: 10px; width: 100%; padding: 6px 8px; border-radius: 6px; cursor: pointer; color: var(--fg);
+  background: transparent; border: 0; font: inherit; text-align: left; }
+#recent li .k { color: var(--accent); font-weight: 700; width: 1.2em; }
+#recent li .parent { color: var(--dim); margin-left: auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#recent li.sel, .start-actions button.sel, #recent li:hover, .start-actions button:hover { background: #2e2e3a; }
+.start-actions b { color: var(--accent); }
+body.drop-target #views { outline: 2px dashed var(--accent); outline-offset: -6px; }
+
+/* partner stage: sprite, loading Poké Ball, effect layer */
+.stage { position: relative; display: flex; align-items: center; justify-content: center; min-height: 96px; }
+.stage .poke { cursor: pointer; }
+.fx { position: absolute; inset: -20px; pointer-events: none; }
+.fx span { position: absolute; left: 50%; top: 50%; font-size: 22px; animation: burst .7s ease-out forwards; }
+@keyframes burst { from { transform: translate(-50%, -50%) scale(.4); opacity: 1; }
+  to { transform: translate(calc(-50% + var(--dx)), calc(-50% + var(--dy))) scale(1.2); opacity: 0; } }
+.pokeball { width: 34px; height: 34px; border-radius: 50%; border: 3px solid #111; position: relative; animation: wobble 1s ease-in-out infinite;
+  background: linear-gradient(#e5484d 0 46%, #111 46% 54%, #f2f2f2 54%); }
+.pokeball::after { content: ""; position: absolute; left: 50%; top: 50%; width: 10px; height: 10px; transform: translate(-50%, -50%);
+  border-radius: 50%; background: #f2f2f2; border: 3px solid #111; }
+.pokeball[hidden] { display: none; }
+@keyframes wobble { 25% { transform: rotate(-18deg); } 75% { transform: rotate(18deg); } }
+.poke.act-attack { animation: lunge .45s ease-out 2 !important; }
+.poke.act-cute { animation: hop .35s ease-in-out 3 !important; }
+@keyframes lunge { 40% { transform: translateX(14px) scale(1.08); } }
+/* evolution: white silhouette flicker (old ↔ new), like the games */
+.poke.evolving { animation: evo .18s steps(1) infinite !important; }
+@keyframes evo { 0% { filter: brightness(0) invert(1); } 50% { filter: none; } }
+
+/* right-click menu */
+#menu { position: fixed; z-index: 30; min-width: 220px; background: #24242c; border: 1px solid var(--line); border-radius: 8px; padding: 4px; box-shadow: 0 8px 24px rgba(0,0,0,.4); }
+#menu[hidden] { display: none; }
+#menu button { display: flex; gap: 8px; width: 100%; padding: 6px 10px; border: 0; border-radius: 5px; background: transparent; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+#menu button:hover, #menu button.sel { background: #33333f; }
+#menu .k { color: var(--accent); width: 1em; }
+#menu .menu-title { padding: 4px 10px 6px; font-size: 12px; color: var(--dim); }
+
+
+/* Pokédex: a grid board by region (caught in colour, seen as a silhouette, unknown "?") */
+#dex { position: fixed; inset: 28px 0 22px 0; display: flex; align-items: center; justify-content: center; background: rgba(10,10,14,.7); backdrop-filter: blur(3px); z-index: 20; }
+#dex[hidden] { display: none; }
+.dex-box { width: min(1180px, 96vw); height: min(760px, 88vh); display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
+  background: linear-gradient(180deg, #23302a, #1a211d); border: 1px solid #3d5a45; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
+#dex-title { display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: #b9e28c; font-weight: 700; border-bottom: 1px solid #3d5a45; }
+#dex-title .chip, #dex-regions button { border: 1px solid #4f7a57; border-radius: 8px; padding: 2px 9px; font-size: 12px; font-weight: 600; color: #d9f3c0; background: rgba(120, 200, 110, .1); }
+#dex-regions { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid #2f4535; }
+#dex-regions button { cursor: pointer; font: inherit; font-size: 12px; }
+#dex-regions button:hover { background: rgba(120, 200, 110, .22); }
+.dex-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 260px; }
+#dex-grid { overflow-y: auto; padding: 4px 12px 12px; border-right: 1px solid #2f4535; }
+#dex-grid h4 { margin: 12px 0 6px; font-size: 12px; color: #b9e28c; }
+#dex-grid .cells { display: grid; grid-template-columns: repeat(auto-fill, 44px); gap: 3px; }
+.cell { position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 7px; cursor: pointer;
+  background: rgba(0,0,0,.18); }
+.cell img { max-width: 42px; max-height: 42px; image-rendering: pixelated; object-fit: contain; }
+.cell.seen img { filter: brightness(0) opacity(.55); }
+.cell.unknown .q { color: #3f5845; font-weight: 700; }
+.cell:hover { background: rgba(120, 200, 110, .14); }
+.cell.sel { outline: 2px solid #b9e28c; background: rgba(120, 200, 110, .2); }
+.cell.partner::after { content: ""; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.cell .cnt { position: absolute; right: 2px; bottom: 0; font-style: normal; font-size: 9px; color: #d9f3c0; }
+.cell .shiny { position: absolute; right: 1px; top: -1px; font-style: normal; font-size: 9px; }
+.dex-preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px; text-align: center; }
+#dex-img { image-rendering: pixelated; }
+#dex-img.seen { filter: brightness(0) opacity(.6); }
+#dex-name { font-weight: 700; }
+#dex-take { border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; font-weight: 700; cursor: pointer; background: #b9e28c; color: #1a211d; }
+#dex-take[hidden] { display: none; }
+#dex-take.confirm { background: #f5c542; }
+.dex-box footer { display: flex; justify-content: space-between; padding: 6px 14px; border-top: 1px solid #3d5a45; font-size: 12px; }
+
+/* wild encounter: bottom-right of the window, never takes the keyboard */
+#wild { position: fixed; right: 16px; bottom: 34px; z-index: 15; }
+body.away #wild { visibility: hidden; }
+
+/* how a turn ended: interrupted = flinch 💦, failed = hurt 💢 (st-error tints it red) */
+.poke.st-interrupted { animation: breathe 3s ease-in-out infinite; filter: saturate(.7); }
+.poke.act-flinch { animation: flinch .4s ease-out 2 !important; }
+.poke.act-hurt { animation: hurt .25s steps(2) 4 !important; }
+@keyframes flinch { 30% { transform: translateX(-8px) scaleY(.9); } }
+@keyframes hurt { 50% { opacity: .2; transform: translateX(-4px); } }
+#summary { font: 12px "Fira Code", "CVIM Hangul", monospace; white-space: nowrap; }
+#summary span + span { margin-left: 4px; }
+
+
+/* choosing a partner: center dialog */
+#choose { position: fixed; inset: 0; z-index: 25; display: flex; align-items: center; justify-content: center;
+  background: rgba(10, 10, 14, .62); backdrop-filter: blur(3px); outline: none; }
+#choose[hidden] { display: none; }
+#agents { position: fixed; inset: 0; z-index: 26; display: flex; align-items: center; justify-content: center; background: rgba(10, 10, 14, .62); backdrop-filter: blur(3px); outline: none; }
+#agents[hidden] { display: none; }
+#agents-close { border: 0; background: transparent; color: var(--dim); font-size: 15px; cursor: pointer; }
+#agents-list { list-style: none; margin: 10px 0; padding: 0; }
+#agents-list li { display: grid; grid-template-columns: 1.6em 9em 5.5em 1fr auto; gap: 10px; align-items: center; padding: 8px 6px; border-bottom: 1px solid #33333f; }
+#agents-list .lv { font-size: 12px; }
+#agents-list .where { font: 11px "Fira Code", monospace; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#agents-list button { border: 1px solid #4a4a5a; background: #2f2f3b; color: var(--fg); border-radius: 6px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; margin-left: 4px; }
+#agents-list button:hover { background: #3b3b49; }
+.agents-note { font-size: 12px; line-height: 1.5; }
+/* #3: where an agent typed after `cd` runs */
+.title .where { margin-left: 6px; font-size: 11px; color: var(--dim); }
+.title .where { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 45%; vertical-align: bottom; display: inline-block; }
+.title .where.out { border: 1px solid #a8663a; background: rgba(217, 119, 87, .14); color: #f0b48a; border-radius: 5px; padding: 0 6px; font: inherit; font-size: 11px; cursor: pointer; }
+.choose-box { width: min(760px, 94vw); max-height: 86vh; display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
+  background: linear-gradient(180deg, #2a2a35, #1d1d25); border: 1px solid #3a3a48; box-shadow: 0 18px 50px rgba(0,0,0,.55); animation: pop-in .18s ease-out; }
+@keyframes pop-in { from { transform: scale(.96); opacity: 0; } }
+.choose-box header { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; font-weight: 700; color: var(--accent);
+  background: rgba(217, 119, 87, .08); border-bottom: 1px solid #3a3a48; }
+#choose-close { border: 0; background: transparent; color: var(--dim); font-size: 15px; cursor: pointer; }
+.choose-body { overflow-y: auto; padding: 4px 16px 12px; }
+.choose-body h3 { font-size: 13px; margin: 14px 0 8px; }
+.choose-body h3 .dim { font-weight: 400; font-size: 11px; margin-left: 6px; }
+.choose-body p { margin: 4px 0; font-size: 12px; }
+.choose-row { display: flex; gap: 10px; }
+.choose-row .mon { flex: 1; min-height: 130px; }
+.choose-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); gap: 6px; }
+.mon { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: flex-end; gap: 2px; padding: 8px 4px 6px;
+  border: 1px solid #34343f; border-radius: 10px; background: #23232c; color: var(--fg); font: inherit; font-size: 12px; cursor: pointer; }
+.mon:hover { border-color: var(--accent); background: #2c2c38; transform: translateY(-1px); }
+.mon.confirm { border-color: #f5c542; box-shadow: 0 0 0 2px rgba(245, 197, 66, .3); }
+.mon img { max-height: 72px; max-width: 100%; image-rendering: pixelated; object-fit: contain; }
+.choose-grid .mon img { max-height: 48px; }
+.mon .noimg { font-size: 22px; color: var(--dim); }
+.mon .k { position: absolute; left: 8px; top: 6px; color: var(--accent); font-weight: 700; }
+.mon .from { font-size: 10px; color: #9a9aa6; }
+.mon.loading { cursor: default; justify-content: center; border-style: dashed; }
+.choose-box footer { padding: 8px 16px; border-top: 1px solid #3a3a48; font-size: 11px; }
+.need-partner { border: 1px dashed var(--accent); background: transparent; color: var(--accent); border-radius: 8px; padding: 4px 10px; font: inherit; cursor: pointer; }
+.mon.taken { cursor: default; opacity: .45; }
+.mon.taken .got { position: absolute; top: 6px; right: 8px; font-size: 11px; color: #3ddc84; }
+
+/* no partner: an empty Poké Ball outline (drawn here) */
+.empty-ball { width: 46px; height: 46px; border-radius: 50%; border: 3px dashed #4a4a58; position: relative; animation: breathe 3s ease-in-out infinite; }
+.empty-ball::before { content: ""; position: absolute; left: -3px; right: -3px; top: 50%; border-top: 3px dashed #4a4a58; }
+.empty-ball::after { content: "?"; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 16px; height: 16px; line-height: 16px;
+  text-align: center; border-radius: 50%; background: var(--pane); border: 3px solid #4a4a58; color: #6a6a78; font-weight: 700; font-size: 11px; }
+.empty-ball[hidden] { display: none; }
+.choose-grid > p { grid-column: 1 / -1; }
+#choose-starter-sec[hidden] { display: none; }
+#dex-from { display: flex; flex-direction: column; gap: 5px; width: 100%; font-size: 12px; }
+#dex-from button { border: 1px solid #4f7a57; border-radius: 8px; padding: 5px 8px; font: inherit; cursor: pointer; background: rgba(120,200,110,.1); color: #d9f3c0; }
+#dex-from button:hover { background: rgba(120,200,110,.22); }
+#dex-from button.confirm { background: #f5c542; color: #1a211d; border-color: #f5c542; }
+
+/* prompt composer (⌘E): over the bottom of the big slot */
+.composer { position: absolute; left: 8px; bottom: 8px; width: calc(60% - 16px); z-index: 12; display: flex; flex-direction: column; gap: 4px;
+  padding: 8px 10px; border-radius: 10px; background: #24242c; border: 1px solid var(--accent); box-shadow: 0 10px 30px rgba(0,0,0,.45); }
+.composer[hidden] { display: none; }
+.composer-title { font-size: 12px; color: var(--accent); font-weight: 700; }
+.composer textarea { resize: none; min-height: 80px; border: 0; outline: none; background: transparent; color: var(--fg);
+  font: 14px "Fira Code", "CVIM Hangul", "Apple SD Gothic Neo", monospace; line-height: 1.5; }
+.composer-hint { font-size: 11px; text-align: right; }
+
+/* 📝 changes panel */
+.pane-changes .title { display: flex; align-items: center; gap: 4px; }
+.changes-refresh { border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 13px; }
+.changes { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 4px; font: 12px "Fira Code", "CVIM Hangul", monospace; }
+.changes li { display: grid; grid-template-columns: 1.4em auto 1fr auto; gap: 6px; align-items: baseline; padding: 3px 6px; border-radius: 5px; white-space: nowrap; }
+.changes li[data-i] { cursor: pointer; }
+.changes li[data-i]:hover, .changes li:focus { background: #2e2e3a; outline: none; }
+.changes .file { overflow: hidden; text-overflow: ellipsis; }
+.changes .dir { overflow: hidden; text-overflow: ellipsis; font-size: 11px; }
+.st { font-weight: 700; } .st.mod { color: #f5c542; } .st.add { color: #3ddc84; } .st.del { color: #e5484d; }
+.add { color: #3ddc84; } .del { color: #e5484d; }
+
+/* side-by-side diff (center) */
+#diffview { position: fixed; inset: 0; z-index: 26; display: flex; align-items: center; justify-content: center; background: rgba(10,10,14,.62); backdrop-filter: blur(3px); outline: none; }
+#diffview[hidden] { display: none; }
+.diff-box { width: 94vw; height: 88vh; display: flex; flex-direction: column; border-radius: 12px; overflow: hidden; background: #1b1b22; border: 1px solid #3a3a48; box-shadow: 0 18px 50px rgba(0,0,0,.55); }
+.diff-box header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid #3a3a48; font: 13px "Fira Code", "CVIM Hangul", monospace; }
+#diff-revert { border: 1px solid #5a3a3a; border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 12px; cursor: pointer; background: transparent; color: #e5a0a0; }
+#diff-revert.confirm { background: #e5484d; color: #fff; border-color: #e5484d; }
+#diff-close { border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 15px; }
+#diff-body { flex: 1; min-height: 0; overflow: auto; }
+#diff-body p { padding: 12px 16px; }
+.sbs { width: 100%; border-collapse: collapse; table-layout: fixed; font: 12px/1.5 "Fira Code", "CVIM Hangul", monospace; }
+.sbs .c-ln { width: 4.5em; }
+.sbs td { padding: 0 8px; vertical-align: top; white-space: pre-wrap; word-break: break-all; }
+.sbs .ln { color: #5c5c66; text-align: right; user-select: none; border-right: 1px solid #2a2a34; }
+.sbs .tx.del { background: rgba(229, 72, 77, .16); }
+.sbs .tx.add { background: rgba(61, 220, 132, .14); }
+.sbs .tx.none { background: rgba(255,255,255,.02); }
+.sbs .hunk td { background: #24242c; color: #8a8a8a; padding: 3px 10px; }
+
+/* M1: agent sessions — one terminal shown inside the agent pane, the rail on the left (2 or more) */
+.pane-agent .term { position: relative; }
+.sterm { position: absolute; inset: 4px 6px; }
+.agent-title { display: flex; align-items: center; gap: 6px; }
+.sess-add { border: 0; background: transparent; color: var(--dim); font: inherit; font-size: 11px; cursor: pointer; padding: 0 4px; border-radius: 4px; }
+.sess-add:hover { color: var(--fg); background: #33333f; }
+.rail { order: -1; display: flex; flex-direction: column; gap: 4px; padding: 6px 4px; background: #121217; border-right: 1px solid var(--line); overflow-y: auto; }
+.rail[hidden] { display: none; }
+.grid.multi { grid-template-columns: 46px calc(60% - 46px) 40%; }
+.sess { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; width: 38px; padding: 5px 0 4px; border: 1px solid transparent; border-radius: 8px;
+  background: transparent; color: var(--dim); font: inherit; font-size: 11px; cursor: pointer; }
+.sess .ic { font-size: 14px; }
+.sess:hover { background: #24242c; color: var(--fg); }
+.sess.cur { background: #24242c; border-color: var(--accent); color: var(--fg); }
+.sess .dot { position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; }
+.sess .dot.bad { background: #e5484d; } .sess .dot.work { background: #f5c542; } .sess .dot.ok { background: #3ddc84; } .sess .dot.idle { background: #4a4a58; }
+.sess .x { position: absolute; left: 1px; top: -2px; font-size: 9px; opacity: 0; }
+.sess:hover .x { opacity: .7; }
+.sess-new { width: 38px; height: 28px; border: 1px dashed #3a3a48; border-radius: 8px; background: transparent; color: var(--dim); cursor: pointer; }
+.sess-new:hover { color: var(--fg); border-color: var(--accent); }
+#tabs .tab .sess-count { font-size: 10px; color: var(--accent); }
+
+/* M2: composer "send to" chips */
+.composer-to { font-weight: 400; color: var(--dim); margin-left: 6px; }
+.composer-to button { border: 1px solid #3a3a48; border-radius: 10px; padding: 0 7px; margin-left: 3px; font: inherit; font-size: 11px; background: transparent; color: var(--dim); cursor: pointer; }
+.composer-to button.on { background: var(--accent); border-color: var(--accent); color: #1b1b1f; }

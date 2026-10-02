@@ -1,0 +1,8 @@
+{
+  "plugins": {
+    "claudecode.nvim": {
+      "rev": "2390c6e45c4789072c293ac69de051d169668b29",
+      "src": "https://github.com/coder/claudecode.nvim"
+    }
+  }
+}

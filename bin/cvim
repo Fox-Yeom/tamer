@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+# cvim launcher: Neovim + Claude Code workspace
+# - NVIM_APPNAME=cvim -> ~/.config/cvim (symlink to repo nvim/)
+# - sets kitty user var IS_CVIM so Cmd+T etc. route into cvim
+set -u
+SELF="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+export CVIM_ROOT="$(dirname "$SELF")"
+export NVIM_APPNAME=cvim
+
+osc_var() { [ -t 1 ] && printf '\033]1337;SetUserVar=%s\007' "$1"; }
+
+osc_var "IS_CVIM=MQ=="          # base64("1")
+nvim "$@"
+code=$?
+osc_var "IS_CVIM"               # unset
+exit $code
