@@ -822,6 +822,7 @@ const commands = {
         u1_test: !!process.env.CVIM_DESKTOP_U1_TEST, // usage before the first reply, shell Claude's model/ctx
         s3_test: !!process.env.CVIM_DESKTOP_S3_TEST, // Gemini / OpenCode typed into the shells
         agents_test: !!process.env.CVIM_DESKTOP_AGENTS_TEST, // the agent connection list
+        keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
         diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
         multi_test: !!process.env.CVIM_DESKTOP_MULTI_TEST, // a shell finishing while another needs you
         cd_test: !!process.env.CVIM_DESKTOP_CD_TEST, // agents typed after a cd (#3)
@@ -998,6 +999,7 @@ const commands = {
   // { starter: id } | { uid } — the rules are checked in partner.take
   partner_take({ ws, starter, uid }) { return partnerTake(wsOf(ws), starter != null ? { starter } : { uid }); },
   dex_list: () => partner.dex(),
+  dex_viewed: ({ id }) => partner.viewed(id),
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
   pane_swap({ ws: id, on }) {
@@ -1030,6 +1032,15 @@ const testCommands = {
     const dbg = win.webContents.debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
     await dbg.sendCommand("Input.insertText", { text });
+  },
+  // a key as from the keyboard (modifiers: 8 = ⇧, 4 = ⌘) to the focused element (#7 #8 keys test)
+  async key_test({ key, code, keyCode, modifiers = 0, text }) {
+    const dbg = win.webContents.debugger;
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers };
+    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
+    if (text) await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", ...base, text, unmodifiedText: text });
+    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...base });
   },
   // type into a pane as if from the keyboard
   pty_write_test({ id, data }) { const p = ptys.get(id); if (p) p.write(data); },

@@ -114,7 +114,7 @@ const monOf = (b, uid) => b.mons.find((m) => m.uid === uid);
 const monView = (m) => {
   const sp = loadSprite(m.id, m.shiny) || { id: m.id, shiny: !!m.shiny, name: readJson(DEX, {})[m.id]?.name || `#${m.id}`, types: [], gif: null };
   return { ...sp, uid: m.uid, xp: m.xp || 0, folder: m.folder || null,
-    toEvolve: m.final ? null : EVOLVE_EVERY - (m.since_evo || 0) };
+    toEvolve: m.final ? null : Math.max(0, EVOLVE_EVERY - (m.since_evo || 0)) };
 };
 
 // folders.json mirror of the folder's individual (the Neovim CVIM reads / levels this)
@@ -157,7 +157,7 @@ async function assign(cwd) {
 
 function progress(cwd) {
   const m = readBox().mons.find((x) => x.folder === cwd);
-  return m ? { xp: m.xp || 0, toEvolve: m.final ? null : EVOLVE_EVERY - (m.since_evo || 0), uid: m.uid } : { xp: 0, toEvolve: null };
+  return m ? { xp: m.xp || 0, toEvolve: m.final ? null : Math.max(0, EVOLVE_EVERY - (m.since_evo || 0)), uid: m.uid } : { xp: 0, toEvolve: null };
 }
 
 // ── the first partner: 3 starters (different first types, unevolved, not legendary — fetch.py
@@ -247,25 +247,41 @@ function take(cwd, { starter: starterId, uid }) {
   return { partner: v, freed };
 }
 
-// a wild one caught: a new individual, resting in the box
+// a wild one caught: a new individual, resting in the box — marked new until you look at it in
+// the Pokédex (#10)
 function addCaught(sprite) {
   migrate();
-  updateBox((b) => addMon(b, sprite, "wild"));
+  updateBox((b) => { addMon(b, sprite, "wild").new = true; });
   recordCaught(sprite);
+}
+
+// the Pokédex showed this species: its new individuals aren't new any more
+function viewed(id) {
+  let n = 0;
+  updateBox((b) => { for (const m of b.mons) if (m.id === Number(id) && m.new) { delete m.new; n++; } });
+  return n;
 }
 
 function dex() {
   migrate();
   const t = readJson(DEX, {});
   const owned = new Map(); // species -> individuals in the box
-  for (const m of readBox().mons) owned.set(m.id, (owned.get(m.id) || 0) + 1);
+  const fresh = new Map(); // species -> new (not looked at) individuals
+  const mons = readBox().mons;
+  for (const m of mons) {
+    owned.set(m.id, (owned.get(m.id) || 0) + 1);
+    if (m.new) fresh.set(m.id, (fresh.get(m.id) || 0) + 1);
+  }
   const entries = Object.entries(t).map(([id, e]) => {
     const n = Number(id);
     const gif = [e.shiny && spriteBase(n, true), spriteBase(n, false)].filter(Boolean).map((b) => b + ".gif").find((f) => fs.existsSync(f)) || null;
     return { id: n, name: e.name, count: e.count || 1, shiny: !!e.shiny, caught: e.caught !== false, first: e.first, types: e.types || [], gif,
-      owned: owned.get(n) || 0 };
+      owned: owned.get(n) || 0, fresh: fresh.get(n) || 0 };
   }).sort((a, b) => a.id - b.id);
-  return { entries, total: 649, caught: entries.filter((e) => e.caught).length, shiny: entries.filter((e) => e.shiny).length };
+  // the latest wild catches, newest first (the "새로 잡은" row)
+  const recent = mons.filter((m) => m.how === "wild").sort((a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid).slice(0, 20)
+    .map((m) => ({ uid: m.uid, id: m.id, shiny: !!m.shiny, at: m.at, new: !!m.new, folder: m.folder || null }));
+  return { entries, recent, total: 649, caught: entries.filter((e) => e.caught).length, shiny: entries.filter((e) => e.shiny).length };
 }
 
 // next evolution stage, fetched one task early so the evolution itself is instant
@@ -282,7 +298,11 @@ function prefetchNext(id, shiny) {
   return nextStage.get(key);
 }
 
-// a task finished in this folder: +1 EXP for its individual; every EVOLVE_EVERY, evolve
+// a task finished in this folder: +1 EXP for its individual; every EVOLVE_EVERY, evolve.
+// EXP past the evolution point carries over to the next one (several sessions finishing at once):
+// an evolution takes EVOLVE_EVERY off since_evo instead of resetting it, and only one call per
+// individual evolves at a time — the others just add their EXP (#12).
+const evolving = new Set(); // uid
 async function onDone(cwd) {
   let m;
   updateBox((b) => {
@@ -295,21 +315,33 @@ async function onDone(cwd) {
   mirror(cwd, m);
   if (m.final) return { evolved: null };
   if (m.since_evo === EVOLVE_EVERY - 1) prefetchNext(m.id, m.shiny); // one task to go
-  if (m.since_evo < EVOLVE_EVERY) return { evolved: null };
-  const nextId = await prefetchNext(m.id, m.shiny);
-  const from = loadSprite(m.id, m.shiny);
-  const to = nextId ? loadSprite(Number(nextId), m.shiny) : null;
-  updateBox((b) => {
-    const x = monOf(b, m.uid);
-    if (!x) return;
-    if (!nextId) x.final = true;
-    else if (to) { x.id = to.id; x.since_evo = 0; }
-    m = x;
-  });
-  mirror(cwd, m);
+  if (m.since_evo < EVOLVE_EVERY || evolving.has(m.uid)) return { evolved: null };
+  evolving.add(m.uid);
+  const first = loadSprite(m.id, m.shiny);
+  let to = null;
+  try {
+    // more than EVOLVE_EVERY carried over: it may evolve again right away
+    for (;;) {
+      const nextId = await prefetchNext(m.id, m.shiny);
+      const next = nextId ? loadSprite(Number(nextId), m.shiny) : null;
+      let again = false;
+      updateBox((b) => {
+        const x = monOf(b, m.uid);
+        if (!x) return;
+        if (x.id === m.id && (x.since_evo || 0) >= EVOLVE_EVERY) {
+          if (!nextId) x.final = true;
+          else if (next) { x.id = next.id; x.since_evo -= EVOLVE_EVERY; to = next; again = x.since_evo >= EVOLVE_EVERY; }
+        }
+        m = x;
+      });
+      if (!again) break;
+    }
+  } finally { evolving.delete(m.uid); }
+  if (m.folder) mirror(m.folder, m);
   if (!to) return { evolved: null };
+  if (!m.final && m.since_evo === EVOLVE_EVERY - 1) prefetchNext(m.id, m.shiny);
   recordDex(to);
-  return { evolved: to, from };
+  return { evolved: to, from: first };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, onDone, progress, dex, fetchPy, loadSprite, recordSeen, migrate, EVOLVE_EVERY };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, onDone, progress, dex, fetchPy, loadSprite, recordSeen, migrate, EVOLVE_EVERY };

@@ -88,8 +88,20 @@ function makePane(tab, kind, opts = {}) {
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = "11";
   term.open(el);
-  // ⌘ shortcuts belong to the app, never to the program in the terminal
-  term.attachCustomKeyEventHandler((e) => !e.metaKey);
+  // ⌘ shortcuts belong to the app, never to the program in the terminal — except the iTerm2 /
+  // Terminal.app editing keys: ⇧↵ = a new line in the prompt (ESC CR, what Claude Code's
+  // /terminal-setup binds; zsh inserts a newline too) (#7), ⌘⌫ = delete to the line start
+  // (Ctrl-U, iTerm2's default) (#8). Not while composing Hangul: that Enter commits the syllable.
+  term.attachCustomKeyEventHandler((e) => {
+    const mods = (e.shiftKey ? "S" : "") + (e.metaKey ? "M" : "") + (e.ctrlKey ? "C" : "") + (e.altKey ? "A" : "");
+    const seq = e.key === "Enter" && mods === "S" ? "\x1b\r" : e.key === "Backspace" && mods === "M" ? "\x15" : null;
+    if (!seq) return !e.metaKey;
+    if (e.type === "keydown" && !e.isComposing && e.keyCode !== 229) {
+      e.preventDefault();
+      term.input(seq, true);
+    }
+    return false;
+  });
   const p = { id, kind, tab, term, fit, el, section, bytes: 0, discard: false };
   term.onData((data) => {
     imeLog(id, "onData", JSON.stringify(data));
@@ -1004,6 +1016,7 @@ const wild = createWild($("#wild"), {
   log: (line) => invoke("log_line", { line }),
   // caught (it rests in the box): make it this tab's partner right away
   partnerButton: (e) => active && takeSpecies(active, e.id),
+  dexButton: (e) => openDex(e.id), // #9
 });
 
 // ── 📝 changes panel (E1b): the folder's changed files (git), refreshed when a turn ends, the tab
@@ -1144,22 +1157,36 @@ $("#diffview").addEventListener("click", (e) => { if (e.target === $("#diffview"
 const REGIONS = [["관동", 1, 151], ["성도", 152, 251], ["호연", 252, 386], ["신오", 387, 493], ["하나", 494, 649]];
 let dexState = null;
 
-async function openDex() {
+// "3분 전" for a catch time (epoch s)
+function ago(at) {
+  const s = Math.max(0, Date.now() / 1000 - (at || 0));
+  return s < 60 ? "방금" : s < 3600 ? `${Math.floor(s / 60)}분 전` : s < 86400 ? `${Math.floor(s / 3600)}시간 전` : `${Math.floor(s / 86400)}일 전`;
+}
+
+// sel: the species to show first (a wild one just caught → "도감에서 보기", #9)
+async function openDex(sel) {
   closeMenu();
   const d = await invoke("dex_list");
   const byNo = new Map(d.entries.map((e) => [e.id, e]));
   // where this tab could take each species from: resting / other folders / already its partner
   const opts = active ? await invoke("partner_options", { ws: active.id }) : null;
-  dexState = { ...d, byNo, opts, sel: active?.partner?.id || d.entries[0]?.id || 1 };
-  const owned = d.entries.reduce((n, e) => n + (e.owned || 0), 0);
-  $("#dex-title").innerHTML = `📕 도감 <span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
-    + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`;
-  $("#dex-regions").innerHTML = REGIONS.map(([name, a, b]) => {
-    const got = d.entries.filter((e) => e.caught && e.id >= a && e.id <= b).length;
-    return `<button data-a="${a}">${name} <span class="dim">${got}/${b - a + 1}</span></button>`;
-  }).join("");
+  // a new catch you haven't looked at comes first
+  dexState = { ...d, byNo, opts, sel: sel || d.recent?.find((m) => m.new)?.id || active?.partner?.id || d.entries[0]?.id || 1 };
+  dexTitle();
+  $("#dex-regions").innerHTML = (d.recent?.length ? `<button data-a="new" class="new-tab">🆕 새로 잡은 <span class="dim">${d.recent.length}</span></button>` : "")
+    + REGIONS.map(([name, a, b]) => {
+      const got = d.entries.filter((e) => e.caught && e.id >= a && e.id <= b).length;
+      return `<button data-a="${a}">${name} <span class="dim">${got}/${b - a + 1}</span></button>`;
+    }).join("");
   const grid = $("#dex-grid");
-  grid.innerHTML = REGIONS.map(([name, a, b]) => {
+  // newest catches first (#10): the individuals, with when; yellow = not looked at yet
+  const recent = d.recent?.length ? `<h4 id="region-new">🆕 새로 잡은 포켓몬 <span class="dim">최근 ${d.recent.length}마리 · 노란 테두리 = 아직 안 본 것 (N: 다음)</span></h4><div class="cells recent">`
+    + d.recent.map((m) => {
+      const e = byNo.get(m.id);
+      return `<div class="cell caught${m.new ? " new" : ""}" data-n="${m.id}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.folder ? " · 파트너" : ""}">`
+        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q"></span>`) + `${m.shiny ? '<i class="shiny">✨</i>' : ""}${m.new ? '<i class="newb">NEW</i>' : ""}</div>`;
+    }).join("") + "</div>" : "";
+  grid.innerHTML = recent + REGIONS.map(([name, a, b]) => {
     const cells = [];
     for (let n = a; n <= b; n++) {
       const e = byNo.get(n);
@@ -1167,8 +1194,9 @@ async function openDex() {
       const mark = e?.owned > 1 ? `<i class="cnt">×${e.owned}</i>` : "";
       const star = e?.caught && e.shiny ? '<i class="shiny">✨</i>' : "";
       const me = active?.partner?.id === n ? " partner" : "";
-      cells.push(`<div class="cell ${cls}${me}" data-n="${n}" title="#${String(n).padStart(3, "0")}${e ? " " + esc(e.name) : ""}">`
-        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q">${e ? "" : "?"}</span>`) + `${mark}${star}</div>`);
+      const fresh = e?.fresh ? " new" : "";
+      cells.push(`<div class="cell ${cls}${me}${fresh}" data-n="${n}" title="#${String(n).padStart(3, "0")}${e ? " " + esc(e.name) : ""}">`
+        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q">${e ? "" : "?"}</span>`) + `${mark}${star}${fresh ? '<i class="newb">NEW</i>' : ""}</div>`);
     }
     return `<h4 id="region-${a}">${name}</h4><div class="cells">${cells.join("")}</div>`;
   }).join("");
@@ -1177,15 +1205,35 @@ async function openDex() {
   dexSelect(dexState.sel);
 }
 
-function dexSelect(n) {
+function dexTitle() {
+  const d = dexState;
+  const owned = d.entries.reduce((n, e) => n + (e.owned || 0), 0);
+  const fresh = d.entries.reduce((n, e) => n + (e.fresh || 0), 0);
+  $("#dex-title").innerHTML = `📕 도감 <span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
+    + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`
+    + (fresh ? `<span class="chip new">NEW ${fresh}</span>` : "");
+}
+
+// scroll: false when picked from the "새로 잡은" row (stay there)
+function dexSelect(n, scroll = true) {
   const d = dexState;
   if (!d) return;
   d.sel = Math.max(1, Math.min(d.total, n));
-  $("#dex-grid .cell.sel")?.classList.remove("sel");
-  const cell = $(`#dex-grid .cell[data-n="${d.sel}"]`);
-  cell?.classList.add("sel");
-  cell?.scrollIntoView({ block: "nearest" });
+  for (const c of document.querySelectorAll("#dex-grid .cell.sel")) c.classList.remove("sel");
+  for (const c of document.querySelectorAll(`#dex-grid .cell[data-n="${d.sel}"]`)) c.classList.add("sel");
+  if (scroll) $(`#dex-grid .cells:not(.recent) .cell[data-n="${d.sel}"]`)?.scrollIntoView({ block: "nearest" });
   const e = d.byNo.get(d.sel);
+  // looked at: its new ones aren't new any more (the highlight goes once you move on)
+  if (e?.fresh) {
+    invoke("dex_viewed", { id: d.sel });
+    e.fresh = 0;
+    for (const m of d.recent || []) if (m.id === d.sel) m.new = false;
+    dexTitle();
+    const id = d.sel;
+    setTimeout(() => {
+      for (const c of document.querySelectorAll(`#dex-grid .cell.new[data-n="${id}"]`)) { c.classList.remove("new"); c.querySelector(".newb")?.remove(); }
+    }, 1500);
+  }
   const no = `#${String(d.sel).padStart(3, "0")}`;
   const img = $("#dex-img");
   img.className = e && !e.caught ? "seen" : "";
@@ -1277,6 +1325,10 @@ function dexKey(e) {
   else if (k === "Home") dexSelect(1);
   else if (k === "End") dexSelect(d.total);
   else if (k === "Enter") dexChoose();
+  else if (k === "n" || k === "N") { // next new one (not looked at yet)
+    const next = d.entries.find((x) => x.fresh && x.id > d.sel) || d.entries.find((x) => x.fresh);
+    if (next) dexSelect(next.id); else toast("새로 잡은 포켓몬을 다 봤어요");
+  }
   else if (k === "Tab") { // next / previous Pokémon you've met
     const met = d.entries.map((x) => x.id);
     const next = e.shiftKey ? [...met].reverse().find((n) => n < d.sel) : met.find((n) => n > d.sel);
@@ -1285,9 +1337,15 @@ function dexKey(e) {
   return true;
 }
 
-$("#dex-grid").addEventListener("click", (e) => { const c = e.target.closest(".cell"); if (c) dexSelect(Number(c.dataset.n)); });
+$("#dex-grid").addEventListener("click", (e) => { const c = e.target.closest(".cell"); if (c) dexSelect(Number(c.dataset.n), !c.closest(".recent")); });
 $("#dex-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".cell")) dexChoose(); });
-$("#dex-regions").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) { dexSelect(Number(b.dataset.a)); $(`#region-${b.dataset.a}`).scrollIntoView({ block: "start" }); } });
+$("#dex-regions").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.a === "new") { const m = dexState?.recent?.[0]; if (m) dexSelect(m.id, false); }
+  else dexSelect(Number(b.dataset.a));
+  $(`#region-${b.dataset.a}`).scrollIntoView({ block: "start" });
+});
 $("#dex-take").addEventListener("click", () => dexChoose());
 $("#dex-from").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) dexFrom(Number(b.dataset.i)); });
 
@@ -1802,9 +1860,14 @@ async function wildTest() {
   }
   async function throwAs(result, label) {
     await invoke("wild_rig_test", { result });
+    const timer = () => $(".wild-timer").textContent;
+    const t = [timer()];
     const ok = wild.throwBall();
-    await wait(4200);
-    await log(`${label} thrown=${ok} text=${text()} active=${wild.active()} adopt=${!$(".wild-partner").hidden}`);
+    for (const ms of [400, 1500, 2300]) { await wait(ms - (ms === 400 ? 0 : ms === 1500 ? 400 : 1500)); t.push(timer()); }
+    await wait(1900);
+    t.push(timer());
+    // #11: the clock stands still while the ball plays out (before / 0.4 s / 1.5 s / 2.3 s / 4.2 s)
+    await log(`${label} thrown=${ok} text=${text()} active=${wild.active()} adopt=${!$(".wild-partner").hidden} dex=${!$(".wild-dex").hidden} timers=${t.join(",")}`);
   }
   await wait(2500);
   await log(`partner=${tab.partner?.name}`);
@@ -1825,7 +1888,18 @@ async function wildTest() {
   const caughtName = $(".wild-text b")?.textContent;
   let d = await invoke("dex_list");
   await log(`dex caught=${d.caught} entries=${d.entries.length} seen-only=${d.entries.filter((e) => !e.caught).map((e) => e.name).join(",")}`);
-  $(".wild-partner").click();
+  // #9 #10: 도감에서 보기 → the Pokédex on the caught one, highlighted as new, in the "새로 잡은" row
+  const caughtId = Number(d.recent?.[0]?.id);
+  $(".wild-dex").click();
+  await wait(1200);
+  const newCells = () => [...document.querySelectorAll("#dex-grid .cell.new")].map((c) => c.dataset.n).join(",");
+  await log(`dex-open open=${dexOpen()} sel=${dexState?.sel} want=${caughtId} recent=${dexState?.recent?.length} new-cells=${newCells()} title=${$("#dex-title").textContent}`);
+  await invoke("shot_test", { name: "dex-new" });
+  await wait(2000);
+  const box = await invoke("dex_list");
+  await log(`dex-viewed new-cells=${newCells()} fresh-left=${box.entries.filter((e) => e.fresh).length} recent-new=${box.recent.filter((m) => m.new).length}`);
+  closeDex();
+  await takeSpecies(tab, caughtId);
   await wait(1500);
   await log(`adopt partner=${tab.partner?.name} want=${caughtName} xp=${tab.partner?.xp}`);
   await encounter("appear-2");
@@ -2524,6 +2598,28 @@ async function main() {
     await invoke("log_line", { line: `diag-test tabs=${tabs.length} leaks=${JSON.stringify(leak)} cwd-lines=${JSON.stringify(d.split("\n").filter((l) => l.includes("cwd=")))}` });
     invoke("log_line", { line: "autotype done" });
   }, 4000);
+  if (info.test.keys_test) setTimeout(async () => {
+    const p = active.panes.shell;
+    p.term.focus();
+    const got = [];
+    const sub = p.term.onData((d) => got.push(d));
+    const keys = [
+      ["a", { key: "a", code: "KeyA", keyCode: 65, text: "a" }],
+      ["shift-enter", { key: "Enter", code: "Enter", keyCode: 13, modifiers: 8, text: "\r" }],
+      ["enter", { key: "Enter", code: "Enter", keyCode: 13, text: "\r" }],
+      ["cmd-backspace", { key: "Backspace", code: "Backspace", keyCode: 8, modifiers: 4 }],
+    ];
+    const out = {};
+    for (const [name, k] of keys) {
+      got.length = 0;
+      await invoke("key_test", k);
+      await new Promise((r) => setTimeout(r, 150));
+      out[name] = got.join("");
+    }
+    sub.dispose();
+    await invoke("log_line", { line: `keys-test ${JSON.stringify(out)}` });
+    invoke("log_line", { line: "autotype done" });
+  }, 3000);
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();

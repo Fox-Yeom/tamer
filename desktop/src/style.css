@@ -167,6 +167,12 @@ body.drop-target #views { outline: 2px dashed var(--accent); outline-offset: -6p
 .cell.partner::after { content: ""; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .cell .cnt { position: absolute; right: 2px; bottom: 0; font-style: normal; font-size: 9px; color: #d9f3c0; }
 .cell .shiny { position: absolute; right: 1px; top: -1px; font-style: normal; font-size: 9px; }
+/* new catches not looked at yet (#10) */
+.cell.new { box-shadow: inset 0 0 0 2px #f5c542; background: rgba(245, 197, 66, .14); animation: dex-new 1.6s ease-in-out infinite; }
+.cell .newb { position: absolute; left: 1px; bottom: 0; font-style: normal; font-size: 8px; font-weight: 800; color: #1a211d; background: #f5c542; border-radius: 3px; padding: 0 2px; line-height: 11px; }
+@keyframes dex-new { 50% { box-shadow: inset 0 0 0 2px rgba(245, 197, 66, .35); } }
+#dex-grid .cells.recent { padding-bottom: 6px; border-bottom: 1px dashed #2f4535; }
+#dex-title .chip.new, #dex-regions button.new-tab { border-color: #f5c542; color: #f5c542; background: rgba(245, 197, 66, .1); }
 .dex-preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px; text-align: center; }
 #dex-img { image-rendering: pixelated; }
 #dex-img.seen { filter: brightness(0) opacity(.6); }

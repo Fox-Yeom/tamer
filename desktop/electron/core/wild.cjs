@@ -100,13 +100,16 @@ function throwBall(token) {
   let result = "broke";
   if (checks === 4) { result = "caught"; partner.addCaught(c); }
   else if (rng() < (c.legendary ? FLEE * 2.5 : FLEE)) result = "fled";
-  // the animation (src/wild.js play: 800 ms + 600 ms a shake + 300 ms) plays out before the
-  // next ball; caught / fled end after it
+  // the animation (src/wild.js play: 1100 ms + 600 ms a shake) plays out before the next ball,
+  // and the clock stops while it plays: after a miss it goes on from where it was (at least 8 s
+  // left), so the card never shows the outcome early (#11). Caught / fled end after it.
+  const anim = 1100 + shakes * 600;
+  const left = Math.max(8000, c.until - Date.now());
   c.busy = true;
-  arm(c, ANIM + (result === "broke" ? Math.max(8000, c.until - Date.now()) : 0));
-  setTimeout(() => { c.busy = false; }, 1100 + shakes * 600);
+  arm(c, result === "broke" ? anim + left : ANIM);
+  setTimeout(() => { c.busy = false; }, anim);
   if (result !== "broke") setTimeout(() => end(result), ANIM - 500);
-  return { result, shakes, token, name: c.name, id: c.id, shiny: c.shiny, until: c.until };
+  return { result, shakes, token, name: c.name, id: c.id, shiny: c.shiny, left: result === "broke" ? left : 0 };
 }
 
 function setEnabled(on) {
