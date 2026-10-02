@@ -60,7 +60,7 @@ async function build(arch, id) {
   if (id) {
     const { signApp } = require("@electron/osx-sign");
     await signApp({ app, identity: id, optionsForFile: () => ({ hardenedRuntime: true, entitlements: path.join(ROOT, "build", "entitlements.plist") }) });
-  }
+  } else run("node", ["scripts/sign.cjs", app]); // this Mac's own identity (folder permissions survive updates)
   const dmg = path.join(OUT, `Tamer-${version}-${arch}.dmg`);
   const stage = fs.mkdtempSync(path.join(OUT, "stage-"));
   run("ditto", [app, path.join(stage, "Tamer.app")]);
