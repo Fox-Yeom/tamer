@@ -1117,7 +1117,8 @@ app.setAboutPanelOptions({
   credits: "AI 코딩 에이전트와 함께 쓰는 터미널 · 피드백: " + FEEDBACK + "\n오픈소스 고지: Tamer 메뉴 → 오픈소스 고지\nPokémon은 비공식 팬 기능이며 권리는 Nintendo / Creatures / GAME FREAK / The Pokémon Company에 있습니다.",
 });
 
-ipcMain.handle("host-invoke", (e, cmd, args) => {
+ipcMain.handle("host-invoke", async (e, cmd, args) => {
+  if (ready) await ready; // the core runs and agents have the terminal's environment
   // only our own pages may call in: the main window (dist/index.html, every command) and the
   // overlay (dist/overlay.html, its own short list)
   const url = e.senderFrame?.url || "";
@@ -1133,8 +1134,14 @@ ipcMain.handle("host-invoke", (e, cmd, args) => {
 // macOS hands folders to the app (Dock icon drop, "Open With", Dock recent) — may come before ready
 app.on("open-file", (e, file) => { e.preventDefault(); requestOpen(file); });
 
+// the terminal environment is read in the background (#4); the core starts with it, and every
+// command from the page waits for that — the window itself never waits
+let ready = null;
 app.whenReady().then(() => {
-  core = new RustCore({ onEvent: onCoreEvent, log: logLine });
+  ready = agents.prepareEnv().then(() => {
+    core = new RustCore({ onEvent: onCoreEvent, log: logLine });
+    logLine(`env ready (${Object.keys(agents.loginEnv()).length} vars)`);
+  });
   appMenu();
   powerMonitor.on("shutdown", () => { systemShutdown = true; logLine("system shutdown: keeping the session"); });
   // tests: quit by itself like ⌘Q (never quit other instances by app name)

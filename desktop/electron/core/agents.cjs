@@ -4,7 +4,7 @@
 //   state: "hooks" (Claude) | "codex_log" (Codex) | "activity" (anything else: working/idle only)
 const fs = require("node:fs");
 const path = require("node:path");
-const { execFileSync } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
 const { HOME, CACHE, ROOT, readJson, writeJson } = require("./paths.cjs");
 
 const CHOICE = path.join(CACHE, "agents.json");
@@ -45,31 +45,42 @@ const get = (key) => all()[key] || all().claude;
 // pnpm … add to PATH there; CODEX_HOME / CLAUDE_CONFIG_DIR may be set there). An app started from
 // Finder has a minimal PATH and none of that, so agents started by CVIM — and the core reading their
 // logs — get this environment, like in the user's own terminal.
-// An interactive shell ignores SIGTERM: a stuck shell config (e.g. a stale `pyenv rehash` lock)
-// would block the app — SIGKILL after 3 s, then the login PATH plus the usual places.
+// Read once, in the background, at startup (prepareEnv): nothing waits for it before the window
+// is up — a slow or stuck shell config made the app unresponsive for seconds at launch, and macOS
+// then refused to open it ("응답하지 않기 때문에 열 수 없습니다", #4). An interactive shell ignores
+// SIGTERM: SIGKILL after 3 s, then the login PATH plus the usual places.
 const MARK = "__CVIM_ENV__";
-let termEnv;
-function loginEnv() {
-  if (termEnv) return termEnv;
-  const shell = process.env.SHELL || "/bin/zsh";
+let termEnv, preparing;
+const run = (shell, args, ms) => new Promise((resolve) =>
+  execFile(shell, args, { encoding: "utf8", timeout: ms, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024 }, (err, out) => resolve(err ? null : out)));
+function usualPath(login = "") {
+  // nvm's node versions too (Gemini CLI is usually installed there with npm), newest first
+  let nvm = [];
   try {
-    const out = execFileSync(shell, ["-lic", `printf '\\n${MARK}\\n'; env -0`], { encoding: "utf8", timeout: 3000, killSignal: "SIGKILL", maxBuffer: 4 * 1024 * 1024 });
-    const body = out.slice(out.lastIndexOf(`${MARK}\n`) + MARK.length + 1); // rc files may print first
-    termEnv = Object.fromEntries(body.split("\0").filter((kv) => kv.includes("=")).map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]));
-    if (!termEnv.PATH) throw new Error("no PATH");
-  } catch {
-    let login = "";
-    try { login = execFileSync(shell, ["-lc", "printf %s \"$PATH\""], { encoding: "utf8", timeout: 2000, killSignal: "SIGKILL" }); } catch {}
-    // nvm's node versions too (Gemini CLI is usually installed there with npm), newest first
-    let nvm = [];
-    try {
-      const dir = path.join(HOME, ".nvm/versions/node");
-      nvm = fs.readdirSync(dir).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map((v) => path.join(dir, v, "bin"));
-    } catch {}
-    const usual = [path.join(HOME, ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", path.join(HOME, ".bun/bin"), ...nvm];
-    termEnv = { PATH: [login, process.env.PATH || "", ...usual].filter(Boolean).join(":") };
-  }
-  return termEnv;
+    const dir = path.join(HOME, ".nvm/versions/node");
+    nvm = fs.readdirSync(dir).sort((a, b) => b.localeCompare(a, undefined, { numeric: true })).map((v) => path.join(dir, v, "bin"));
+  } catch {}
+  const usual = [path.join(HOME, ".local/bin"), "/opt/homebrew/bin", "/usr/local/bin", path.join(HOME, ".bun/bin"), ...nvm];
+  return [login, process.env.PATH || "", ...usual].filter(Boolean).join(":");
+}
+function prepareEnv() {
+  if (preparing) return preparing;
+  const shell = process.env.SHELL || "/bin/zsh";
+  preparing = (async () => {
+    const out = await run(shell, ["-lic", `printf '\\n${MARK}\\n'; env -0`], 3000);
+    if (out != null && out.includes(`${MARK}\n`)) {
+      const body = out.slice(out.lastIndexOf(`${MARK}\n`) + MARK.length + 1); // rc files may print first
+      const env = Object.fromEntries(body.split("\0").filter((kv) => kv.includes("=")).map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]));
+      if (env.PATH) return (termEnv = env);
+    }
+    const login = await run(shell, ["-lc", "printf %s \"$PATH\""], 2000);
+    return (termEnv = { PATH: usualPath(login || "") });
+  })();
+  return preparing;
+}
+// the terminal's environment once read; until then (never blocking) the app's PATH plus the usual places
+function loginEnv() {
+  return termEnv || { PATH: usualPath() };
 }
 const shellPath = () => loginEnv().PATH;
 
@@ -192,4 +203,4 @@ function next(key) {
 
 const label = (key) => `${get(key).icon} ${get(key).name}`;
 
-module.exports = { all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, processEnv, where, status, INSTALL };
+module.exports = { all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, where, status, INSTALL };
