@@ -23,6 +23,14 @@ if (invite > 0) {
   process.exit(0);
 }
 
+// the release tag goes on main as GitHub has it: local main must be pushed first
+const git = (args) => execFileSync("git", args, { encoding: "utf8", cwd: ROOT }).trim();
+git(["fetch", "-q", "origin", "main"]);
+if (git(["rev-parse", "HEAD"]) !== git(["rev-parse", "origin/main"])) {
+  console.error("local main differs from origin/main — push first (git push), then npm run release");
+  process.exit(1);
+}
+
 const dmgs = ["arm64", "x64"].map((a) => path.join(OUT, `Tamer-${version}-${a}.dmg`));
 if (!dmgs.every((f) => fs.existsSync(f))) execFileSync("npm", ["run", "beta"], { stdio: "inherit", cwd: ROOT });
 
