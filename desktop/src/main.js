@@ -1270,7 +1270,7 @@ async function openDex(sel) {
       const e = byNo.get(m.id);
       const fade = Math.max(0, Math.min(1, (Date.now() / 1000 - (m.at || 0)) / day)).toFixed(2);
       return `<div class="cell caught${m.new ? " new" : ""}" style="--age:${fade}" data-n="${m.id}" data-ri="${i}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.folder ? " · 파트너" : ""}">`
-        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q"></span>`) + `${m.shiny ? '<i class="shiny">✨</i>' : ""}${m.new ? '<i class="newb">NEW</i>' : ""}</div>`;
+        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q"></span>`) + `<i class="no">${m.id}</i>${m.shiny ? '<i class="shiny">✨</i>' : ""}${m.new ? '<i class="newb">NEW</i>' : ""}</div>`;
     }).join("") + "</div>" : "";
   grid.innerHTML = recent + REGIONS.map(([name, a, b]) => {
     const cells = [];
@@ -1282,21 +1282,66 @@ async function openDex(sel) {
       const me = active?.partner?.id === n ? " partner" : "";
       const fresh = e?.fresh ? " new" : "";
       cells.push(`<div class="cell ${cls}${me}${fresh}" data-n="${n}" title="#${String(n).padStart(3, "0")}${e ? " " + esc(e.name) : ""}">`
-        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q">${e ? "" : "?"}</span>`) + `${mark}${star}${fresh ? '<i class="newb">NEW</i>' : ""}</div>`);
+        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q">${e ? "" : "?"}</span>`) + `<i class="no">${n}</i>${mark}${star}${fresh ? '<i class="newb">NEW</i>' : ""}</div>`);
     }
-    return `<h4 id="region-${a}">${name}</h4><div class="cells">${cells.join("")}</div>`;
-  }).join("");
+    return `<h4 id="region-${a}" data-name="${name}">${name}</h4><div class="cells" data-a="${a}">${cells.join("")}</div>`;
+  }).join("") + `<div id="dex-empty" hidden></div>`;
   grid.querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
   $("#dex").hidden = false;
   dexFilter();
-  if (dexState.zone === "recent") dexRecent(dexState.ri); else dexSelect(dexState.sel);
+  const d0 = dexState;
+  if (d0.hits && !d0.hits.includes(d0.sel)) { d0.zone = "grid"; if (d0.hits.length) d0.sel = d0.hits[0]; }
+  if (d0.zone === "recent") dexRecent(d0.ri); else dexSelect(d0.sel);
+}
+
+// while searching, ↑↓ go to the nearest shown cell above / below (the layout has gaps); null = none
+function dexGeo(from, cells, dir) {
+  const r = from.getBoundingClientRect();
+  let best = null, score = Infinity;
+  for (const c of cells) {
+    const b = c.getBoundingClientRect();
+    const dy = dir > 0 ? b.top - r.top : r.top - b.top;
+    if (dy < r.height / 2) continue;
+    const sc = dy * 1000 + Math.abs(b.left - r.left);
+    if (sc < score) { score = sc; best = c; }
+  }
+  return best;
+}
+const shownCells = (sel) => [...document.querySelectorAll(sel)].filter((c) => !c.classList.contains("nomatch") && c.offsetParent);
+// arrows while searching (only shown cells); false = not handled here
+function dexKeyFiltered(k, e) {
+  const d = dexState;
+  const row = shownCells("#dex-grid .cells.recent .cell"), grid = shownCells("#dex-grid .cells:not(.recent) .cell");
+  const cur = d.zone === "recent" ? $(`#dex-grid .cells.recent .cell[data-ri="${d.ri}"]`) : $(`#dex-grid .cells:not(.recent) .cell[data-n="${d.sel}"]`);
+  const left = k === "ArrowLeft" || k === "h", right = k === "ArrowRight" || k === "l", up = k === "ArrowUp" || k === "k", down = k === "ArrowDown" || k === "j";
+  if (!(left || right || up || down || k === "Home" || k === "End" || k === "Tab")) return false;
+  if (d.zone === "recent" && row.length) {
+    const i = Math.max(0, row.indexOf(cur));
+    if (left || right) return dexRecent(Number(row[Math.max(0, Math.min(row.length - 1, i + (right ? 1 : -1)))].dataset.ri)), true;
+    if (k === "Home" || k === "End") return dexRecent(Number(row[k === "Home" ? 0 : row.length - 1].dataset.ri)), true;
+    const to = cur && dexGeo(cur, row, up ? -1 : 1);
+    if (to) return dexRecent(Number(to.dataset.ri)), true;
+    if (down) dexSelect(d.sel);
+    return true;
+  }
+  if (!grid.length) return true;
+  if (left || right || k === "Tab") return dexStep(right || (k === "Tab" && !e?.shiftKey) ? 1 : -1), true;
+  if (k === "Home" || k === "End") return dexSelect(Number(grid[k === "Home" ? 0 : grid.length - 1].dataset.n)), true;
+  const to = cur && dexGeo(cur, grid, up ? -1 : 1);
+  if (to) dexSelect(Number(to.dataset.n));
+  else if (up && row.length) { const back = row.find((c) => Number(c.dataset.ri) === d.ri) || row[0]; dexRecent(Number(back.dataset.ri)); $("#region-new")?.scrollIntoView({ block: "start" }); }
+  return true;
 }
 
 // ── dex search (#21), Pokémon GO's search terms: "&" and, "," or, "!" not ─────────────────────
-const DEX_SEARCH_HELP = "이름 일부 · 번호 25 · 범위 1-151 · 타입(불꽃/fire) · 지역(관동…) · new(안 본 것) · ✨/이로치 · 잡음 · 만남 · 못만남 · 파트너 · age0(24시간 안에 잡음)·age0-7\n& 그리고 · , 또는 · ! 제외  예) 불꽃,물&!잡음";
+const DEX_SEARCH_HELP = "이름 일부 · 번호 25 · 범위 1-151 · 타입(불꽃/fire) · 지역(관동…) · new(안 본 것) · ✨/이로치 · 잡음 · 만남 · 못만남 · 파트너 · 전설 · 환상 · age0(24시간 안에 잡음)·age0-7\n& 그리고 · , 또는 · ! 제외  예) 불꽃,물&!잡음";
 const TYPE_KO = { 노말: "normal", 불꽃: "fire", 물: "water", 풀: "grass", 전기: "electric", 얼음: "ice", 격투: "fighting", 독: "poison", 땅: "ground",
   비행: "flying", 에스퍼: "psychic", 벌레: "bug", 바위: "rock", 고스트: "ghost", 드래곤: "dragon", 악: "dark", 강철: "steel", 페어리: "fairy" };
 let dexQuery = ""; // kept while the app runs (like GO), cleared with Esc in the box
+// legendary / mythical numbers #1–649 (PokéAPI is_legendary / is_mythical, 2026-10-04) — numbers only,
+// so even ones never met can be found, like GO's "legendary" / "mythical" (#22)
+const LEGENDARY = new Set([144, 145, 146, 150, 243, 244, 245, 249, 250, 377, 378, 379, 380, 381, 382, 383, 384, 480, 481, 482, 483, 484, 485, 486, 487, 488, 638, 639, 640, 641, 642, 643, 644, 645, 646]);
+const MYTHICAL = new Set([151, 251, 385, 386, 489, 490, 491, 492, 493, 494, 647, 648, 649]);
 
 // one term (no "!") against number n / entry e (undefined = never met)
 function dexTerm(t, n, e) {
@@ -1316,6 +1361,8 @@ function dexTerm(t, n, e) {
   if (["seen", "만남", "만나기만"].includes(t)) return !!e && !e.caught;
   if (["unknown", "못만남", "?"].includes(t)) return !e;
   if (["partner", "파트너"].includes(t)) return !!e?.partner;
+  if (["legendary", "전설"].includes(t)) return LEGENDARY.has(n);
+  if (["mythical", "환상"].includes(t)) return MYTHICAL.has(n);
   const region = REGIONS.find(([name]) => name === t);
   if (region) return n >= region[1] && n <= region[2];
   const type = TYPE_KO[t] || (TYPE_ICON[t] ? t : null);
@@ -1328,19 +1375,35 @@ function dexMatch(q, n, e) {
     return !ors.length || ors.some((t) => (t.startsWith("!") ? !dexTerm(t.slice(1).trim(), n, e) : dexTerm(t, n, e)));
   });
 }
-// dim what doesn't match; d.hits = matching numbers (null = no search)
+// a search shows only the results (#22, like Pokémon GO): matching cells, the regions that have any
+// (with their count), the number on each cell; nothing found → what was searched + how to fix it.
+// d.hits = matching numbers (null = no search)
 function dexFilter() {
   const d = dexState;
   if (!d) return;
-  const q = dexQuery.trim();
+  const q = dexQuery.trim(), grid = $("#dex-grid");
   d.hits = q ? [] : null;
+  grid.classList.toggle("filtering", !!q);
   for (let n = 1; n <= d.total; n++) {
     const ok = !q || dexMatch(q, n, d.byNo.get(n));
     if (q && ok) d.hits.push(n);
-    for (const c of document.querySelectorAll(`#dex-grid .cell[data-n="${n}"]`)) c.classList.toggle("nomatch", !ok);
+    for (const c of grid.querySelectorAll(`.cell[data-n="${n}"]`)) c.classList.toggle("nomatch", !ok);
   }
+  for (const cells of grid.querySelectorAll(".cells")) {
+    const shown = cells.querySelectorAll(".cell:not(.nomatch)").length, h = cells.previousElementSibling;
+    cells.hidden = h.hidden = !!q && !shown;
+    if (h.dataset.name) h.textContent = q ? `${h.dataset.name} ${shown}` : h.dataset.name;
+  }
+  const empty = $("#dex-empty");
+  empty.hidden = !q || d.hits.length > 0;
+  if (!empty.hidden) {
+    empty.innerHTML = `<b>"${esc(q)}"</b>에 맞는 포켓몬이 없어요<button id="dex-clear">검색 지우기</button>`
+      + `<div class="dim">${q.includes("&") || q.includes("!") ? "&amp; 조건을 하나 줄이거나 ! 를 빼 보세요 · " : ""}예) 불꽃 · 전설 · 잡음 · age0 · 1-151</div>`;
+  }
+  $(".dex-preview").style.visibility = empty.hidden ? "" : "hidden"; // nothing found: no stale preview
   $("#dex-found").textContent = q ? `${d.hits.length}종` : "";
 }
+
 // with a search: ←→ jump between results
 function dexStep(dir) {
   const d = dexState, h = d.hits;
@@ -1490,6 +1553,7 @@ function dexKey(e) {
   const k = e.key, cols = dexCols();
   if (k === "Escape" || k === "q") closeDex();
   else if (k === "Enter") dexChoose();
+  else if (d.hits && dexKeyFiltered(k, e)) { /* searching: shown cells only */ }
   else if (d.zone === "recent" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "h", "l", "k", "j", "Home", "End"].includes(k)) {
     // inside the "새로 잡은" row; ↓ from its last line goes to this Pokémon's place in the grid
     const n = d.recent.length, line = Math.floor(d.ri / cols), last = Math.floor((n - 1) / cols);
@@ -1536,6 +1600,11 @@ $("#dex-regions").addEventListener("click", (e) => {
   $(`#region-${b.dataset.a}`).scrollIntoView({ block: "start" });
 });
 $("#dex-take").addEventListener("click", () => dexChoose());
+$("#dex-grid").addEventListener("click", (e) => {
+  if (e.target.id !== "dex-clear") return;
+  dexQuery = ""; $("#dex-search").value = ""; dexFilter();
+  dexSelect(dexState.sel);
+});
 $("#dex-regions").addEventListener("input", (e) => { if (e.target.id === "dex-search") { dexQuery = e.target.value; dexFilter(); } });
 $("#dex-from").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) dexFrom(Number(b.dataset.i)); });
 
@@ -2931,7 +3000,7 @@ async function main() {
     // #21: GO-style search terms, typing in the box (letters don't move the dex), Enter → first hit
     await openDex();
     const out = {};
-    for (const q of ["p1", "불꽃", "물", "1-5", "new", "age0", "age1", "파트너", "불꽃,물", "잡음&!관동", "!잡음&관동", "못만남", "#37", "성도"]) {
+    for (const q of ["전설", "환상", "전설,환상", "전설&!못만남", "p1", "불꽃", "물", "1-5", "new", "age0", "age1", "파트너", "불꽃,물", "잡음&!관동", "!잡음&관동", "못만남", "#37", "성도"]) {
       dexQuery = q; dexFilter(); out[q] = dexState.hits.length <= 3 ? dexState.hits.join("/") : dexState.hits.length;
     }
     dexQuery = ""; dexFilter();
@@ -2953,8 +3022,27 @@ async function main() {
     $("#dex-search").value = "불꽃,물"; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true }));
     dexSelect(1); dexKey(new KeyboardEvent("keydown", { key: "ArrowRight" })); const r1 = dexState.sel;
     dexKey(new KeyboardEvent("keydown", { key: "ArrowRight" })); out.step = `${r1}>${dexState.sel}`;
-    await new Promise((r) => setTimeout(r, 1000));
+    // #22: only the results, region counts, ↑↓ among shown cells, nothing found → empty + clear
+    const vis = () => shownCells("#dex-grid .cells:not(.recent) .cell").map((c) => c.dataset.n).join(",");
+    const heads = () => [...document.querySelectorAll("#dex-grid h4")].filter((h) => !h.hidden).map((h) => h.textContent.trim()).join("|");
+    $("#dex-search").value = "불꽃,물"; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true }));
+    out.filter = `grid=${vis()} heads=${heads()} row=${shownCells("#dex-grid .cells.recent .cell").length} found=${$("#dex-found").textContent}`;
+    await new Promise((r) => setTimeout(r, 600));
     await invoke("shot_test", { name: "dexsearch" });
+    $("#dex-search").value = "p1"; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true }));
+    dexSelect(1);
+    const nav = [];
+    for (const k of ["ArrowRight", "ArrowDown", "ArrowLeft", "ArrowUp", "ArrowUp", "ArrowRight", "ArrowDown", "End", "Home"]) {
+      dexKey(new KeyboardEvent("keydown", { key: k }));
+      nav.push(`${k}=${dexState.zone}:${dexState.zone === "recent" ? dexState.ri : "#" + dexState.sel}`);
+    }
+    out.nav = `grid=${vis()} row=${shownCells("#dex-grid .cells.recent .cell").map((c) => c.dataset.n).join(",")} ${nav.join(" ")}`;
+    $("#dex-search").value = "불꽃&전설"; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true }));
+    out.empty = `shown=${!$("#dex-empty").hidden} text=${$("#dex-empty").textContent} heads=${heads()} preview=${$(".dex-preview").style.visibility}`;
+    await new Promise((r) => setTimeout(r, 600));
+    await invoke("shot_test", { name: "dexempty" });
+    $("#dex-clear").click();
+    out.cleared2 = `preview=${$(".dex-preview").style.visibility || "shown"} hits=${dexState.hits} filtering=${$("#dex-grid").classList.contains("filtering")} box=${$("#dex-search").value} grid-shown=${vis().split(",").length}`;
     await invoke("log_line", { line: `dexsearch-test ${JSON.stringify(out)}` });
     invoke("log_line", { line: "autotype done" });
   }, 6000);
