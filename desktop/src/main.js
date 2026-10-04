@@ -95,22 +95,29 @@ function makePane(tab, kind, opts = {}) {
   // while composing Hangul: that Enter commits the syllable.
   // These must never reach the hidden textarea either: there they move its caret off the end, and
   // xterm reads the next Hangul syllable from the end — old text came out instead (#13).
+  // A key pressed on an unfinished syllable first commits it (compositionend), and xterm sends the
+  // syllable a moment later (setTimeout 0) — a move sent right away went before it, and "하" landed
+  // at the line start (#15). Like iTerm2: a ⌘ move / delete that finishes a syllable only finishes
+  // it; ⇧↵ goes after the syllable.
   const EDIT_KEYS = { "S:Enter": "\x1b\r", "M:Backspace": "\x15", "M:ArrowLeft": "\x01", "M:ArrowRight": "\x05", "M:ArrowUp": "", "M:ArrowDown": "" };
+  let composing = false, committed = 0;
+  term.textarea.addEventListener("compositionstart", () => { composing = true; }, true);
+  term.textarea.addEventListener("compositionend", () => { composing = false; committed = performance.now(); }, true);
   term.attachCustomKeyEventHandler((e) => {
     const mods = (e.shiftKey ? "S" : "") + (e.metaKey ? "M" : "") + (e.ctrlKey ? "C" : "") + (e.altKey ? "A" : "");
     const seq = EDIT_KEYS[`${mods}:${e.key}`];
     if (seq == null) return !e.metaKey;
     if (e.type === "keydown" && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
-      if (seq) term.input(seq, true);
+      const justCommitted = !p.noCommitGuard && (composing || performance.now() - committed < 50);
+      if (justCommitted && e.metaKey) imeLog(id, "commit-only", e.key);
+      else if (justCommitted) setTimeout(() => term.input(seq, true), 0); // after the syllable
+      else if (seq) term.input(seq, true);
     }
     return false;
   });
   // the same guard for anything else that moves the textarea caret (⌘A, a click …): before a key
   // starts a new composition, put the caret back at the end, where xterm reads from (#13)
-  let composing = false;
-  term.textarea.addEventListener("compositionstart", () => { composing = true; }, true);
-  term.textarea.addEventListener("compositionend", () => { composing = false; }, true);
   term.textarea.addEventListener("keydown", () => {
     const t = term.textarea, n = t.value.length;
     if (composing || p.noCaretGuard || (t.selectionStart === n && t.selectionEnd === n)) return;
@@ -2636,6 +2643,20 @@ async function main() {
       return `${got.join("")} caret=${caret()}`;
     }
     const before = await hangul(false), after = await hangul(true);
+    // #15: ⌘← on an unfinished "하" (the IME commits it, then the key arrives)
+    async function commitThenKey(guard, k) {
+      p.noCommitGuard = !guard;
+      await invoke("ime_compose", { text: "하" });
+      got.length = 0;
+      await invoke("ime_commit_key_test", { text: "하", ...k });
+      await new Promise((r) => setTimeout(r, 200));
+      p.noCommitGuard = false;
+      return got.join("");
+    }
+    const LEFT = { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37, modifiers: 4, commands: ["moveToBeginningOfLine"] };
+    // (Enter can't be checked this way: DevTools' Enter puts a newline into the textarea and the
+    // syllable is lost even without the guard)
+    await invoke("log_line", { line: `keys-test commit-then-key unguarded-left=${JSON.stringify(await commitThenKey(false, LEFT))} guarded-left=${JSON.stringify(await commitThenKey(true, LEFT))}` });
     await invoke("log_line", { line: `keys-test hangul-after-caret-move unguarded=${JSON.stringify(before)} guarded=${JSON.stringify(after)}` });
     const keys = [
       ["cmd-left", { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37, modifiers: 4, commands: ["moveToBeginningOfLine"] }],

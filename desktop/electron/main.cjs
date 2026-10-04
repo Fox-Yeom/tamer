@@ -1043,6 +1043,18 @@ const testCommands = {
     if (text) await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", ...base, text, unmodifiedText: text });
     await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...base });
   },
+  // the IME commits a syllable and the key that did it arrives right after (#15)
+  async ime_commit_key_test({ text, ...k }) {
+    const dbg = win.webContents.debugger;
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    const base = { key: k.key, code: k.code, windowsVirtualKeyCode: k.keyCode, nativeVirtualKeyCode: k.keyCode, modifiers: k.modifiers || 0, ...(k.commands ? { commands: k.commands } : {}) };
+    await Promise.all([
+      dbg.sendCommand("Input.insertText", { text }),
+      dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base }),
+      ...(k.text ? [dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", ...base, text: k.text, unmodifiedText: k.text })] : []),
+      dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...base }),
+    ]);
+  },
   // type into a pane as if from the keyboard
   pty_write_test({ id, data }) { const p = ptys.get(id); if (p) p.write(data); },
   // the workspace ids the core knows about (tabs test: closed tabs must be gone)
