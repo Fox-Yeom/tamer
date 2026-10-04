@@ -95,24 +95,36 @@ function makePane(tab, kind, opts = {}) {
   // while composing Hangul: that Enter commits the syllable.
   // These must never reach the hidden textarea either: there they move its caret off the end, and
   // xterm reads the next Hangul syllable from the end — old text came out instead (#13).
-  // A key pressed on an unfinished syllable first commits it (compositionend), and xterm sends the
-  // syllable a moment later (setTimeout 0) — a move sent right away went before it, and "하" landed
-  // at the line start (#15). Like iTerm2: a ⌘ move / delete that finishes a syllable only finishes
-  // it; ⇧↵ goes after the syllable.
+  // A key pressed on an unfinished Hangul syllable first commits it (compositionend), and xterm
+  // sends the syllable a moment later (setTimeout 0). xterm sends it first only for keys it handles
+  // itself — not for ⌥ keys (macOptionIsMeta skips that step) nor for the ⌘ keys handled here, so
+  // "ESC b" / Ctrl-A went before the syllable and it landed a word / the line back (#15 #16). One
+  // rule for every key: the pending syllable goes first. And like iTerm2, a key that moves or
+  // deletes (arrows, Home/End, Page Up/Down, Delete, ⌘⌫ ⌥⌫ — any modifier) only finishes the
+  // syllable; the next press moves.
   const EDIT_KEYS = { "S:Enter": "\x1b\r", "M:Backspace": "\x15", "M:ArrowLeft": "\x01", "M:ArrowRight": "\x05", "M:ArrowUp": "", "M:ArrowDown": "" };
+  const NAV_KEYS = new Set(["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "Home", "End", "PageUp", "PageDown", "Delete"]);
   let composing = false, committed = 0;
   term.textarea.addEventListener("compositionstart", () => { composing = true; }, true);
   term.textarea.addEventListener("compositionend", () => { composing = false; committed = performance.now(); }, true);
   term.attachCustomKeyEventHandler((e) => {
+    const ime = e.isComposing || e.keyCode === 229; // the IME takes this key
+    if (e.type === "keydown" && !ime && !p.noCommitGuard && (composing || performance.now() - committed < 50)) {
+      committed = 0;
+      // the syllable first: xterm's own step for its keys (CompositionHelper.keydown → sent now)
+      term._core?._compositionHelper?.keydown(e);
+      if (NAV_KEYS.has(e.key) || (e.key === "Backspace" && (e.metaKey || e.altKey))) {
+        e.preventDefault();
+        imeLog(id, "commit-only", e.key);
+        return false;
+      }
+    }
     const mods = (e.shiftKey ? "S" : "") + (e.metaKey ? "M" : "") + (e.ctrlKey ? "C" : "") + (e.altKey ? "A" : "");
     const seq = EDIT_KEYS[`${mods}:${e.key}`];
     if (seq == null) return !e.metaKey;
-    if (e.type === "keydown" && !e.isComposing && e.keyCode !== 229) {
+    if (e.type === "keydown" && !ime) {
       e.preventDefault();
-      const justCommitted = !p.noCommitGuard && (composing || performance.now() - committed < 50);
-      if (justCommitted && e.metaKey) imeLog(id, "commit-only", e.key);
-      else if (justCommitted) setTimeout(() => term.input(seq, true), 0); // after the syllable
-      else if (seq) term.input(seq, true);
+      if (seq) term.input(seq, true);
     }
     return false;
   });
@@ -2646,6 +2658,7 @@ async function main() {
     // #15: ⌘← on an unfinished "하" (the IME commits it, then the key arrives)
     async function commitThenKey(guard, k) {
       p.noCommitGuard = !guard;
+      p.term.focus();
       await invoke("ime_compose", { text: "하" });
       got.length = 0;
       await invoke("ime_commit_key_test", { text: "하", ...k });
@@ -2657,6 +2670,30 @@ async function main() {
     // (Enter can't be checked this way: DevTools' Enter puts a newline into the textarea and the
     // syllable is lost even without the guard)
     await invoke("log_line", { line: `keys-test commit-then-key unguarded-left=${JSON.stringify(await commitThenKey(false, LEFT))} guarded-left=${JSON.stringify(await commitThenKey(true, LEFT))}` });
+    // #16: every key that moves / deletes, on an unfinished syllable (iTerm2: only finishes it)
+    const K = (key, code, keyCode, modifiers = 0, commands) => ({ key, code, keyCode, modifiers, ...(commands ? { commands } : {}) });
+    const NAV = {
+      "opt-left": K("ArrowLeft", "ArrowLeft", 37, 1, ["moveWordLeft"]), "opt-right": K("ArrowRight", "ArrowRight", 39, 1, ["moveWordRight"]),
+      "left": K("ArrowLeft", "ArrowLeft", 37), "right": K("ArrowRight", "ArrowRight", 39), "up": K("ArrowUp", "ArrowUp", 38), "down": K("ArrowDown", "ArrowDown", 40),
+      "shift-left": K("ArrowLeft", "ArrowLeft", 37, 8), "ctrl-left": K("ArrowLeft", "ArrowLeft", 37, 2),
+      "home": K("Home", "Home", 36), "end": K("End", "End", 35), "pgup": K("PageUp", "PageUp", 33), "fwd-delete": K("Delete", "Delete", 46),
+      "opt-backspace": K("Backspace", "Backspace", 8, 1, ["deleteWordBackward"]), "cmd-right": K("ArrowRight", "ArrowRight", 39, 4, ["moveToEndOfLine"]),
+      "cmd-backspace": K("Backspace", "Backspace", 8, 4, ["deleteToBeginningOfLine"]),
+    };
+    const nav = {}, plain = {};
+    for (const [name, k] of Object.entries(NAV)) {
+      nav[name] = await commitThenKey(true, k);
+      got.length = 0; await invoke("key_test", k); await new Promise((r) => setTimeout(r, 120)); plain[name] = got.join(""); // no composition: the key works
+    }
+    const other = {};
+    for (const [name, k] of Object.entries({ "opt-b": K("b", "KeyB", 66, 1), "tab": K("Tab", "Tab", 9), "esc": K("Escape", "Escape", 27), "ctrl-c": K("c", "KeyC", 67, 2) })) {
+      for (const g of [false, true]) {
+        p.term.focus();
+        other[`${name}${g ? "" : "-unguarded"}`] = await commitThenKey(g, k) + (document.activeElement === p.term.textarea ? "" : " (focus moved)");
+      }
+    }
+    await invoke("log_line", { line: `keys-test nav-on-syllable helper=${typeof p.term._core?._compositionHelper?.keydown} ${JSON.stringify(nav)} other=${JSON.stringify(other)}` });
+    await invoke("log_line", { line: `keys-test nav-plain ${JSON.stringify(plain)}` });
     await invoke("log_line", { line: `keys-test hangul-after-caret-move unguarded=${JSON.stringify(before)} guarded=${JSON.stringify(after)}` });
     const keys = [
       ["cmd-left", { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37, modifiers: 4, commands: ["moveToBeginningOfLine"] }],
