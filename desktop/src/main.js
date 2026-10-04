@@ -258,7 +258,7 @@ function renderWhere(tab) {
     const show = !!(where?.outside && !where.dismissed);
     el.hidden = !show;
     if (!show) continue;
-    el.innerHTML = `<span class="msg">⚠ 이 에이전트는 다른 폴더 <b>${esc(where.label)}</b>에서 실행 중이에요 — 이 탭(${esc(base(tab.cwd))})의 변경 사항·파트너와는 따로예요</span>`
+    el.innerHTML = `<span class="msg">⚠ 이 에이전트는 다른 폴더 <b>${esc(where.label)}</b>에서 실행 중이에요 — 이 탭(${esc(base(tab.cwd))})의 변경 사항과는 따로예요(경험치는 이 탭 파트너가 받아요)</span>`
       + `<button class="move" title="${esc(where.full)}">새 탭으로 옮기기</button><button class="ghost keep">그대로 두기</button>`;
     el.querySelector(".move").onclick = () => moveAgent(tab, pane);
     el.querySelector(".keep").onclick = () => { where.dismissed = true; renderWhere(tab); };
