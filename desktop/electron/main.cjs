@@ -19,6 +19,7 @@ const TEST = process.env.CVIM_DESKTOP_TEST === "1";
 // test instances show their window without activating it, so keys typed in the user's own apps
 // never land in a test terminal (seen 2026-10-02); CVIM_DESKTOP_TEST_FOCUS=1 for IME tests that need focus
 const QUIET_TEST = TEST && process.env.CVIM_DESKTOP_TEST_FOCUS !== "1";
+const linksOpened = []; // tests: links ⌘-clicked (never opened)
 const DIST = path.join(__dirname, "..", "dist");
 // terminal panes per tab (the Neovim pane became the "changes" panel, E1b — nvim runs in the shell)
 const KINDS = ["agent", "shell"];
@@ -823,6 +824,7 @@ const commands = {
         s3_test: !!process.env.CVIM_DESKTOP_S3_TEST, // Gemini / OpenCode typed into the shells
         agents_test: !!process.env.CVIM_DESKTOP_AGENTS_TEST, // the agent connection list
         dexnav_test: !!process.env.CVIM_DESKTOP_DEXNAV_TEST, // arrows in the "새로 잡은" row (#17)
+        links_test: !!process.env.CVIM_DESKTOP_LINKS_TEST, // ⌘-click links (#19)
         keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
         diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
         multi_test: !!process.env.CVIM_DESKTOP_MULTI_TEST, // a shell finishing while another needs you
@@ -951,6 +953,15 @@ const commands = {
     return { agent: agentInfo(t), id: p.cvimId };
   },
   // official install pages only
+  // ⌘-click on a link in a terminal (#19): web pages only, in the user's browser. Tests only log it
+  open_link({ url }) {
+    let u;
+    try { u = new URL(String(url)); } catch { throw new Error("not a link"); }
+    if (u.protocol !== "https:" && u.protocol !== "http:") throw new Error("only web links");
+    logLine("open link"); // not the address: the log goes into the diagnostics
+    if (TEST) { linksOpened.push(u.href); return; }
+    return shell.openExternal(u.href);
+  },
   open_url({ url }) {
     if (!Object.values(agents.INSTALL).some((i) => i.url === url)) throw new Error("not an install page");
     return shell.openExternal(url);
@@ -1033,6 +1044,16 @@ const testCommands = {
     const dbg = win.webContents.debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
     await dbg.sendCommand("Input.insertText", { text });
+  },
+  links_opened_test: () => linksOpened.splice(0),
+  // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)
+  async click_test({ x, y, modifiers = 0 }) {
+    const dbg = win.webContents.debugger;
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
+    await new Promise((r) => setTimeout(r, 120)); // the link under the pointer is looked up on move
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, modifiers, button: "left", clickCount: 1 });
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button: "left", clickCount: 1 });
   },
   // a key as from the keyboard (modifiers: 8 = ⇧, 4 = ⌘) to the focused element (#7 #8 keys test)
   async key_test({ key, code, keyCode, modifiers = 0, text, commands }) {

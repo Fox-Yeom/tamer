@@ -20,6 +20,7 @@ const EVOLVE_EVERY = 8;
 const BOX = path.join(CACHE, "box.json"); // { next, mons: [{ uid, id, shiny, xp, since_evo, final, how, at, folder }] }
 const STARTER = path.join(CACHE, "starters.json"); // { set: [{ id, shiny }] } — the first partner's choice
 const CHOICES = 3;
+const RECENT_HOURS = 24; // the dex "새로 잡은" row
 
 const spriteBase = (id, shiny) => path.join(SPRITES, `${id}${shiny ? "s" : ""}`);
 
@@ -278,10 +279,12 @@ function dex() {
     return { id: n, name: e.name, count: e.count || 1, shiny: !!e.shiny, caught: e.caught !== false, first: e.first, types: e.types || [], gif,
       owned: owned.get(n) || 0, fresh: fresh.get(n) || 0 };
   }).sort((a, b) => a.id - b.id);
-  // the latest wild catches, newest first (the "새로 잡은" row)
-  const recent = mons.filter((m) => m.how === "wild").sort((a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid).slice(0, 20)
+  // the "새로 잡은" row: wild catches of the last 24 hours, newest first — like Pokémon GO's blue
+  // background for the day's catches; whether you've looked at them is the NEW badge, not this (#18)
+  const since = now() - RECENT_HOURS * 3600;
+  const recent = mons.filter((m) => m.how === "wild" && (m.at || 0) >= since).sort((a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid).slice(0, 60)
     .map((m) => ({ uid: m.uid, id: m.id, shiny: !!m.shiny, at: m.at, new: !!m.new, folder: m.folder || null }));
-  return { entries, recent, total: 649, caught: entries.filter((e) => e.caught).length, shiny: entries.filter((e) => e.shiny).length };
+  return { entries, recent, recentHours: RECENT_HOURS, total: 649, caught: entries.filter((e) => e.caught).length, shiny: entries.filter((e) => e.shiny).length };
 }
 
 // next evolution stage, fetched one task early so the evolution itself is instant

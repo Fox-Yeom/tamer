@@ -71,6 +71,47 @@ function toast(msg) {
   toast.timer = setTimeout(() => t.classList.remove("show"), 1800);
 }
 
+// ── links in the terminal (#19): ⌘-click opens a web address in the browser, like iTerm2. A plain
+// click stays a click (selecting text copies). Web pages only (http/https). ─────────────────────
+function openLink(e, uri) {
+  if (!e.metaKey) return;
+  invoke("open_link", { url: uri }).catch((err) => toast(String(err.message || err)));
+}
+
+// web addresses in the text, across wrapped lines, mapped to cells (Hangul takes 2 cells)
+const URL_RE = /https?:\/\/[^\s<>"'`\u3000-\u9fff\uac00-\ud7af]+/g;
+function webLinks(term) {
+  return {
+    provideLinks(y, done) {
+      const buf = term.buffer.active;
+      let top = y - 1;
+      while (top > 0 && buf.getLine(top)?.isWrapped) top--;
+      let text = "";
+      const at = []; // text index → { x, y } (1-based cells)
+      for (let row = top; row < buf.length; row++) {
+        const line = buf.getLine(row);
+        if (!line || (row > top && !line.isWrapped)) break;
+        for (let x = 0; x < term.cols; x++) {
+          const cell = line.getCell(x);
+          if (!cell || cell.getWidth() === 0) continue;
+          const ch = cell.getChars() || " ";
+          for (const c of ch) { text += c; at.push({ x: x + 1, y: row + 1 }); }
+        }
+      }
+      const links = [];
+      for (const m of text.matchAll(URL_RE)) {
+        let url = m[0].replace(/[.,;:!?'"]+$/, "");
+        // a ")" that closes "(… url)" isn't part of it; one that's opened inside the url is
+        while (url.endsWith(")") && (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length) url = url.slice(0, -1);
+        const a = at[m.index], b = at[m.index + url.length - 1];
+        if (!a || !b || (a.y !== y && b.y !== y && !(a.y < y && b.y > y))) continue; // not on this line
+        links.push({ range: { start: a, end: b }, text: url, activate: (e) => openLink(e, url) });
+      }
+      done(links.length ? links : undefined);
+    },
+  };
+}
+
 // ── panes (xterm.js) ────────────────────────────────────────────────────────
 // opts.id / opts.el: an agent session's terminal (M1) — its own element inside the agent pane
 function makePane(tab, kind, opts = {}) {
@@ -80,6 +121,8 @@ function makePane(tab, kind, opts = {}) {
   const term = new Terminal({
     fontFamily: '"Fira Code", "CVIM Hangul", Menlo, monospace',
     fontSize, theme: THEME, macOptionIsMeta: true, scrollback: 100000, allowProposedApi: true,
+    // links a program marks itself (OSC 8, e.g. an agent's "출처" list): ⌘-click opens (#19)
+    linkHandler: { activate: (e, uri) => openLink(e, uri) },
   });
   const fit = new FitAddon();
   term.loadAddon(fit);
@@ -88,6 +131,7 @@ function makePane(tab, kind, opts = {}) {
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = "11";
   term.open(el);
+  term.registerLinkProvider(webLinks(term)); // plain web addresses in the output: ⌘-click opens (#19)
   // ⌘ shortcuts belong to the app, never to the program in the terminal — except the iTerm2
   // ("Natural Text Editing") editing keys: ⇧↵ = a new line in the prompt (ESC CR, what Claude
   // Code's /terminal-setup binds; zsh inserts a newline too) (#7), ⌘⌫ = delete to the line start
@@ -1216,11 +1260,14 @@ async function openDex(sel) {
       return `<button data-a="${a}">${name} <span class="dim">${got}/${b - a + 1}</span></button>`;
     }).join("");
   const grid = $("#dex-grid");
-  // newest catches first (#10): the individuals, with when; yellow = not looked at yet
-  const recent = d.recent?.length ? `<h4 id="region-new">🆕 새로 잡은 포켓몬 <span class="dim">최근 ${d.recent.length}마리 · 노란 테두리 = 아직 안 본 것</span></h4><div class="cells recent">`
+  // the last 24 hours' catches, newest first (#10 #18): blue that fades with time (Pokémon GO);
+  // yellow + NEW = not looked at yet
+  const day = (d.recentHours || 24) * 3600;
+  const recent = d.recent?.length ? `<h4 id="region-new">🆕 새로 잡은 포켓몬 <span class="dim">${d.recentHours || 24}시간 안 ${d.recent.length}마리 · 파란색은 시간이 지나며 옅어짐 · 노란 테두리 = 아직 안 본 것</span></h4><div class="cells recent">`
     + d.recent.map((m, i) => {
       const e = byNo.get(m.id);
-      return `<div class="cell caught${m.new ? " new" : ""}" data-n="${m.id}" data-ri="${i}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.folder ? " · 파트너" : ""}">`
+      const fade = Math.max(0, Math.min(1, (Date.now() / 1000 - (m.at || 0)) / day)).toFixed(2);
+      return `<div class="cell caught${m.new ? " new" : ""}" style="--age:${fade}" data-n="${m.id}" data-ri="${i}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.folder ? " · 파트너" : ""}">`
         + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q"></span>`) + `${m.shiny ? '<i class="shiny">✨</i>' : ""}${m.new ? '<i class="newb">NEW</i>' : ""}</div>`;
     }).join("") + "</div>" : "";
   grid.innerHTML = recent + REGIONS.map(([name, a, b]) => {
@@ -2771,6 +2818,37 @@ async function main() {
     await invoke("log_line", { line: `dexnav-test ${out.join(" ")}` });
     invoke("log_line", { line: "autotype done" });
   }, 6000);
+  if (info.test.links_test) setTimeout(async () => {
+    // #19: web addresses in the output → ranges (Hangul before them, ")" around them, wrapped), and
+    // a real ⌘-click opens (logged in tests), a plain click doesn't
+    const p = active.panes.shell, t = p.term, buf = () => t.buffer.active;
+    const long = "https://long.example/" + "a".repeat(t.cols + 10);
+    await invoke("pty_write_test", { id: p.id, data: `clear; echo '출처: https://example.com/a_(b) 끝'; echo '한글 (https://x.y/z).'; echo '[문서](https://docs.example/p?q=1)'; echo '${long}'\r` });
+    await new Promise((r) => setTimeout(r, 1500));
+    const prov = webLinks(t), found = [];
+    for (let y = 1; y <= buf().length; y++) {
+      const text = buf().getLine(y - 1)?.translateToString(true) || "";
+      if (!/https?:/.test(text) || text.includes("echo")) continue;
+      await new Promise((r) => prov.provideLinks(y, (ls) => { for (const l of ls || []) found.push({ y, text: l.text, s: `${l.range.start.x},${l.range.start.y}`, e: `${l.range.end.x},${l.range.end.y}` }); r(); }));
+    }
+    await invoke("log_line", { line: `links-test cols=${t.cols} found=${JSON.stringify(found)}` });
+    // click the first link's 3rd cell: plain, then with ⌘
+    const f = found[0];
+    const screen = t.element.querySelector(".xterm-screen").getBoundingClientRect();
+    const dim = t._core._renderService.dimensions.css.cell;
+    const [cx, cy] = f.s.split(",").map(Number);
+    const x = screen.left + (cx + 1.5) * dim.width, yy = screen.top + (cy - 1 - buf().viewportY + 0.5) * dim.height;
+    await invoke("click_test", { x, y: yy });
+    await new Promise((r) => setTimeout(r, 300));
+    const plain = await invoke("links_opened_test");
+    await invoke("click_test", { x, y: yy, modifiers: 4 });
+    await new Promise((r) => setTimeout(r, 300));
+    const cmd = await invoke("links_opened_test");
+    let bad = "";
+    try { await invoke("open_link", { url: "file:///etc/passwd" }); } catch (err) { bad = String(err.message || err); }
+    await invoke("log_line", { line: `links-test click plain=${JSON.stringify(plain)} cmd=${JSON.stringify(cmd)} file-url=${JSON.stringify(bad)}` });
+    invoke("log_line", { line: "autotype done" });
+  }, 4000);
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();
