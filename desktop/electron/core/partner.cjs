@@ -268,16 +268,19 @@ function dex() {
   const t = readJson(DEX, {});
   const owned = new Map(); // species -> individuals in the box
   const fresh = new Map(); // species -> new (not looked at) individuals
+  const caughtAt = new Map(), partnered = new Map(); // species -> latest catch (epoch s) / partners (dex search, #21)
   const mons = readBox().mons;
   for (const m of mons) {
     owned.set(m.id, (owned.get(m.id) || 0) + 1);
     if (m.new) fresh.set(m.id, (fresh.get(m.id) || 0) + 1);
+    if (m.how !== "legacy" && (m.at || 0) > (caughtAt.get(m.id) || 0)) caughtAt.set(m.id, m.at);
+    if (m.folder) partnered.set(m.id, (partnered.get(m.id) || 0) + 1);
   }
   const entries = Object.entries(t).map(([id, e]) => {
     const n = Number(id);
     const gif = [e.shiny && spriteBase(n, true), spriteBase(n, false)].filter(Boolean).map((b) => b + ".gif").find((f) => fs.existsSync(f)) || null;
     return { id: n, name: e.name, count: e.count || 1, shiny: !!e.shiny, caught: e.caught !== false, first: e.first, types: e.types || [], gif,
-      owned: owned.get(n) || 0, fresh: fresh.get(n) || 0 };
+      owned: owned.get(n) || 0, fresh: fresh.get(n) || 0, caughtAt: caughtAt.get(n) || null, partner: partnered.get(n) || 0 };
   }).sort((a, b) => a.id - b.id);
   // the "새로 잡은" row: wild catches of the last 24 hours, newest first — like Pokémon GO's blue
   // background for the day's catches; whether you've looked at them is the NEW badge, not this (#18)

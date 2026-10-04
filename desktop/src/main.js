@@ -1258,12 +1258,14 @@ async function openDex(sel) {
     + REGIONS.map(([name, a, b]) => {
       const got = d.entries.filter((e) => e.caught && e.id >= a && e.id <= b).length;
       return `<button data-a="${a}">${name} <span class="dim">${got}/${b - a + 1}</span></button>`;
-    }).join("");
+    }).join("")
+    + `<span class="dex-search"><input id="dex-search" type="search" spellcheck="false" placeholder="🔍 검색 ( / )" value="${esc(dexQuery)}"
+        title="${esc(DEX_SEARCH_HELP)}" /><span id="dex-found" class="dim"></span></span>`;
   const grid = $("#dex-grid");
   // the last 24 hours' catches, newest first (#10 #18): blue that fades with time (Pokémon GO);
   // yellow + NEW = not looked at yet
   const day = (d.recentHours || 24) * 3600;
-  const recent = d.recent?.length ? `<h4 id="region-new">🆕 새로 잡은 포켓몬 <span class="dim">${d.recentHours || 24}시간 안 ${d.recent.length}마리 · 파란색은 시간이 지나며 옅어짐 · 노란 테두리 = 아직 안 본 것</span></h4><div class="cells recent">`
+  const recent = d.recent?.length ? `<h4 id="region-new">🆕 새로 잡은 포켓몬</h4><div class="cells recent">`
     + d.recent.map((m, i) => {
       const e = byNo.get(m.id);
       const fade = Math.max(0, Math.min(1, (Date.now() / 1000 - (m.at || 0)) / day)).toFixed(2);
@@ -1286,7 +1288,76 @@ async function openDex(sel) {
   }).join("");
   grid.querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
   $("#dex").hidden = false;
+  dexFilter();
   if (dexState.zone === "recent") dexRecent(dexState.ri); else dexSelect(dexState.sel);
+}
+
+// ── dex search (#21), Pokémon GO's search terms: "&" and, "," or, "!" not ─────────────────────
+const DEX_SEARCH_HELP = "이름 일부 · 번호 25 · 범위 1-151 · 타입(불꽃/fire) · 지역(관동…) · new(안 본 것) · ✨/이로치 · 잡음 · 만남 · 못만남 · 파트너 · age0(24시간 안에 잡음)·age0-7\n& 그리고 · , 또는 · ! 제외  예) 불꽃,물&!잡음";
+const TYPE_KO = { 노말: "normal", 불꽃: "fire", 물: "water", 풀: "grass", 전기: "electric", 얼음: "ice", 격투: "fighting", 독: "poison", 땅: "ground",
+  비행: "flying", 에스퍼: "psychic", 벌레: "bug", 바위: "rock", 고스트: "ghost", 드래곤: "dragon", 악: "dark", 강철: "steel", 페어리: "fairy" };
+let dexQuery = ""; // kept while the app runs (like GO), cleared with Esc in the box
+
+// one term (no "!") against number n / entry e (undefined = never met)
+function dexTerm(t, n, e) {
+  t = t.toLowerCase();
+  let m;
+  if ((m = t.match(/^#?(\d+)$/))) return n === Number(m[1]);
+  if ((m = t.match(/^#?(\d*)-(\d*)$/)) && (m[1] || m[2])) return n >= (Number(m[1]) || 1) && n <= (Number(m[2]) || 9999);
+  if ((m = t.match(/^age(\d+)(?:-(\d*))?$/))) {
+    if (!e?.caughtAt) return false;
+    const age = Math.floor((Date.now() / 1000 - e.caughtAt) / 86400), lo = Number(m[1]);
+    const hi = m[2] === undefined ? lo : m[2] === "" ? Infinity : Number(m[2]);
+    return age >= lo && age <= hi;
+  }
+  if (["new", "새", "새로"].includes(t)) return !!e?.fresh;
+  if (["shiny", "✨", "이로치"].includes(t)) return !!e?.shiny;
+  if (["caught", "잡음", "잡은"].includes(t)) return !!e?.caught;
+  if (["seen", "만남", "만나기만"].includes(t)) return !!e && !e.caught;
+  if (["unknown", "못만남", "?"].includes(t)) return !e;
+  if (["partner", "파트너"].includes(t)) return !!e?.partner;
+  const region = REGIONS.find(([name]) => name === t);
+  if (region) return n >= region[1] && n <= region[2];
+  const type = TYPE_KO[t] || (TYPE_ICON[t] ? t : null);
+  if (type) return !!e?.types?.includes(type);
+  return !!e?.name && e.name.toLowerCase().includes(t);
+}
+function dexMatch(q, n, e) {
+  return q.split("&").every((group) => {
+    const ors = group.split(",").map((x) => x.trim()).filter(Boolean);
+    return !ors.length || ors.some((t) => (t.startsWith("!") ? !dexTerm(t.slice(1).trim(), n, e) : dexTerm(t, n, e)));
+  });
+}
+// dim what doesn't match; d.hits = matching numbers (null = no search)
+function dexFilter() {
+  const d = dexState;
+  if (!d) return;
+  const q = dexQuery.trim();
+  d.hits = q ? [] : null;
+  for (let n = 1; n <= d.total; n++) {
+    const ok = !q || dexMatch(q, n, d.byNo.get(n));
+    if (q && ok) d.hits.push(n);
+    for (const c of document.querySelectorAll(`#dex-grid .cell[data-n="${n}"]`)) c.classList.toggle("nomatch", !ok);
+  }
+  $("#dex-found").textContent = q ? `${d.hits.length}종` : "";
+}
+// with a search: ←→ jump between results
+function dexStep(dir) {
+  const d = dexState, h = d.hits;
+  if (!h?.length) return dexSelect(dir > 0 ? d.sel % d.total + 1 : (d.sel - 2 + d.total) % d.total + 1);
+  const next = dir > 0 ? h.find((n) => n > d.sel) ?? h[0] : [...h].reverse().find((n) => n < d.sel) ?? h.at(-1);
+  dexSelect(next);
+}
+function dexSearchKey(e) {
+  const box = $("#dex-search");
+  if (e.isComposing || e.keyCode === 229) return false; // Hangul being typed
+  if (e.key === "Escape") { if (box.value) { box.value = ""; dexQuery = ""; dexFilter(); } else box.blur(); return true; }
+  if (e.key === "Enter" || e.key === "ArrowDown") {
+    box.blur();
+    if (dexState.hits?.length) dexSelect(dexState.hits.find((n) => n >= dexState.sel) ?? dexState.hits[0]);
+    return true;
+  }
+  return false; // typing: the box gets it
 }
 
 function dexTitle() {
@@ -1435,8 +1506,9 @@ function dexKey(e) {
     dexRecent(d.ri);
     $("#region-new")?.scrollIntoView({ block: "start" });
   }
-  else if (k === "ArrowRight" || k === "l") dexSelect(d.sel % d.total + 1);
-  else if (k === "ArrowLeft" || k === "h") dexSelect((d.sel - 2 + d.total) % d.total + 1);
+  else if (k === "/") $("#dex-search").focus();
+  else if (k === "ArrowRight" || k === "l") dexStep(1);
+  else if (k === "ArrowLeft" || k === "h") dexStep(-1);
   else if (k === "ArrowDown" || k === "j") dexSelect(d.sel + cols);
   else if (k === "ArrowUp" || k === "k") dexSelect(d.sel - cols);
   else if (k === "PageDown") dexSelect(d.sel + cols * 5);
@@ -1464,6 +1536,7 @@ $("#dex-regions").addEventListener("click", (e) => {
   $(`#region-${b.dataset.a}`).scrollIntoView({ block: "start" });
 });
 $("#dex-take").addEventListener("click", () => dexChoose());
+$("#dex-regions").addEventListener("input", (e) => { if (e.target.id === "dex-search") { dexQuery = e.target.value; dexFilter(); } });
 $("#dex-from").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) dexFrom(Number(b.dataset.i)); });
 
 // ── start screen ────────────────────────────────────────────────────────────
@@ -1523,6 +1596,11 @@ function startKey(e) {
 
 // ── keys (physical key codes: work with any input source, e.g. Korean) ───────
 window.addEventListener("keydown", (e) => {
+  if (dexOpen() && e.metaKey && e.code === "KeyF") { e.preventDefault(); $("#dex-search").focus(); return; }
+  if (dexOpen() && e.target === $("#dex-search") && !e.metaKey) {
+    if (dexSearchKey(e)) { e.preventDefault(); e.stopPropagation(); }
+    return;
+  }
   if (dexOpen() && !(e.metaKey && e.code !== "KeyD")) {
     if (e.metaKey || dexKey(e)) { e.preventDefault(); e.stopPropagation(); if (e.metaKey) closeDex(); }
     return;
@@ -2849,6 +2927,37 @@ async function main() {
     await invoke("log_line", { line: `links-test click plain=${JSON.stringify(plain)} cmd=${JSON.stringify(cmd)} file-url=${JSON.stringify(bad)}` });
     invoke("log_line", { line: "autotype done" });
   }, 4000);
+  if (info.test.dexsearch_test) setTimeout(async () => {
+    // #21: GO-style search terms, typing in the box (letters don't move the dex), Enter → first hit
+    await openDex();
+    const out = {};
+    for (const q of ["p1", "불꽃", "물", "1-5", "new", "age0", "age1", "파트너", "불꽃,물", "잡음&!관동", "!잡음&관동", "못만남", "#37", "성도"]) {
+      dexQuery = q; dexFilter(); out[q] = dexState.hits.length <= 3 ? dexState.hits.join("/") : dexState.hits.length;
+    }
+    dexQuery = ""; dexFilter();
+    out.cleared = dexState.hits;
+    const sel0 = dexState.sel;
+    dexKey(new KeyboardEvent("keydown", { key: "/" }));
+    out.focused = document.activeElement?.id;
+    for (const [key, code, keyCode] of [["h", "KeyH", 72], ["p", "KeyP", 80], ["1", "Digit1", 49], ["5", "Digit5", 53]]) await invoke("key_test", { key, code, keyCode, text: key });
+    await new Promise((r) => setTimeout(r, 200));
+    out.typed = `${$("#dex-search").value}|sel-unchanged=${dexState.sel === sel0}|found=${$("#dex-found").textContent}`;
+    await invoke("key_test", { key: "Backspace", code: "Backspace", keyCode: 8 });
+    await invoke("ime_commit", { text: "" });
+    $("#dex-search").value = "p15"; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true }));
+    await invoke("key_test", { key: "Enter", code: "Enter", keyCode: 13, text: "\r" });
+    await new Promise((r) => setTimeout(r, 200));
+    out.enter = `sel=${dexState.sel} focus=${document.activeElement?.id || document.activeElement?.tagName} still-open=${dexOpen()}`;
+    dexKey(new KeyboardEvent("keydown", { key: "ArrowRight" }));
+    out.right = dexState.sel;
+    $("#dex-search").value = "불꽃,물"; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true }));
+    dexSelect(1); dexKey(new KeyboardEvent("keydown", { key: "ArrowRight" })); const r1 = dexState.sel;
+    dexKey(new KeyboardEvent("keydown", { key: "ArrowRight" })); out.step = `${r1}>${dexState.sel}`;
+    await new Promise((r) => setTimeout(r, 1000));
+    await invoke("shot_test", { name: "dexsearch" });
+    await invoke("log_line", { line: `dexsearch-test ${JSON.stringify(out)}` });
+    invoke("log_line", { line: "autotype done" });
+  }, 6000);
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();

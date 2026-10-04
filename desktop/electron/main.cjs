@@ -825,6 +825,7 @@ const commands = {
         agents_test: !!process.env.CVIM_DESKTOP_AGENTS_TEST, // the agent connection list
         dexnav_test: !!process.env.CVIM_DESKTOP_DEXNAV_TEST, // arrows in the "새로 잡은" row (#17)
         links_test: !!process.env.CVIM_DESKTOP_LINKS_TEST, // ⌘-click links (#19)
+        dexsearch_test: !!process.env.CVIM_DESKTOP_DEXSEARCH_TEST, // dex search terms (#21)
         keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
         diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
         multi_test: !!process.env.CVIM_DESKTOP_MULTI_TEST, // a shell finishing while another needs you

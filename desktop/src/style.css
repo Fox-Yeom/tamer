@@ -153,6 +153,12 @@ body.drop-target #views { outline: 2px dashed var(--accent); outline-offset: -6p
 #dex-regions { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid #2f4535; }
 #dex-regions button { cursor: pointer; font: inherit; font-size: 12px; }
 #dex-regions button:hover { background: rgba(120, 200, 110, .22); }
+/* dex search (#21) */
+#dex-regions .dex-search { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+#dex-search { width: 220px; border: 1px solid #4f7a57; border-radius: 8px; padding: 3px 9px; font: inherit; font-size: 12px; color: #d9f3c0; background: rgba(0, 0, 0, .25); outline: none; }
+#dex-search:focus { border-color: #b9e28c; }
+#dex-found { font-size: 12px; min-width: 3em; }
+.cell.nomatch { opacity: .15; }
 .dex-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 260px; }
 #dex-grid { overflow-y: auto; padding: 4px 12px 12px; border-right: 1px solid #2f4535; }
 #dex-grid h4 { margin: 12px 0 6px; font-size: 12px; color: #b9e28c; }
