@@ -822,6 +822,7 @@ const commands = {
         u1_test: !!process.env.CVIM_DESKTOP_U1_TEST, // usage before the first reply, shell Claude's model/ctx
         s3_test: !!process.env.CVIM_DESKTOP_S3_TEST, // Gemini / OpenCode typed into the shells
         agents_test: !!process.env.CVIM_DESKTOP_AGENTS_TEST, // the agent connection list
+        dexnav_test: !!process.env.CVIM_DESKTOP_DEXNAV_TEST, // arrows in the "새로 잡은" row (#17)
         keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
         diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
         multi_test: !!process.env.CVIM_DESKTOP_MULTI_TEST, // a shell finishing while another needs you

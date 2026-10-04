@@ -1204,8 +1204,11 @@ async function openDex(sel) {
   const byNo = new Map(d.entries.map((e) => [e.id, e]));
   // where this tab could take each species from: resting / other folders / already its partner
   const opts = active ? await invoke("partner_options", { ws: active.id }) : null;
-  // a new catch you haven't looked at comes first
-  dexState = { ...d, byNo, opts, sel: sel || d.recent?.find((m) => m.new)?.id || active?.partner?.id || d.entries[0]?.id || 1 };
+  // a new catch you haven't looked at comes first — in the "새로 잡은" row (zone "recent", ri = its
+  // place there); otherwise the grid. The arrows move inside the zone the selection is in (#17)
+  const ri = sel ? d.recent?.findIndex((m) => m.id === sel) ?? -1 : d.recent?.findIndex((m) => m.new) ?? -1;
+  dexState = { ...d, byNo, opts, zone: ri >= 0 ? "recent" : "grid", ri: Math.max(0, ri),
+    sel: sel || d.recent?.[ri]?.id || active?.partner?.id || d.entries[0]?.id || 1 };
   dexTitle();
   $("#dex-regions").innerHTML = (d.recent?.length ? `<button data-a="new" class="new-tab">🆕 새로 잡은 <span class="dim">${d.recent.length}</span></button>` : "")
     + REGIONS.map(([name, a, b]) => {
@@ -1214,10 +1217,10 @@ async function openDex(sel) {
     }).join("");
   const grid = $("#dex-grid");
   // newest catches first (#10): the individuals, with when; yellow = not looked at yet
-  const recent = d.recent?.length ? `<h4 id="region-new">🆕 새로 잡은 포켓몬 <span class="dim">최근 ${d.recent.length}마리 · 노란 테두리 = 아직 안 본 것 (N: 다음)</span></h4><div class="cells recent">`
-    + d.recent.map((m) => {
+  const recent = d.recent?.length ? `<h4 id="region-new">🆕 새로 잡은 포켓몬 <span class="dim">최근 ${d.recent.length}마리 · 노란 테두리 = 아직 안 본 것</span></h4><div class="cells recent">`
+    + d.recent.map((m, i) => {
       const e = byNo.get(m.id);
-      return `<div class="cell caught${m.new ? " new" : ""}" data-n="${m.id}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.folder ? " · 파트너" : ""}">`
+      return `<div class="cell caught${m.new ? " new" : ""}" data-n="${m.id}" data-ri="${i}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.folder ? " · 파트너" : ""}">`
         + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q"></span>`) + `${m.shiny ? '<i class="shiny">✨</i>' : ""}${m.new ? '<i class="newb">NEW</i>' : ""}</div>`;
     }).join("") + "</div>" : "";
   grid.innerHTML = recent + REGIONS.map(([name, a, b]) => {
@@ -1236,7 +1239,7 @@ async function openDex(sel) {
   }).join("");
   grid.querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
   $("#dex").hidden = false;
-  dexSelect(dexState.sel);
+  if (dexState.zone === "recent") dexRecent(dexState.ri); else dexSelect(dexState.sel);
 }
 
 function dexTitle() {
@@ -1248,14 +1251,31 @@ function dexTitle() {
     + (fresh ? `<span class="chip new">NEW ${fresh}</span>` : "");
 }
 
-// scroll: false when picked from the "새로 잡은" row (stay there)
-function dexSelect(n, scroll = true) {
+// a grid cell (the selection moves to the grid)
+function dexSelect(n) {
   const d = dexState;
   if (!d) return;
+  d.zone = "grid";
+  dexShow(n);
+}
+
+// the i-th cell of the "새로 잡은" row
+function dexRecent(i) {
+  const d = dexState;
+  if (!d?.recent?.length) return;
+  d.zone = "recent";
+  d.ri = Math.max(0, Math.min(d.recent.length - 1, i));
+  dexShow(d.recent[d.ri].id);
+}
+
+// show species n; the outline is on the cell of the zone the selection is in
+function dexShow(n) {
+  const d = dexState;
   d.sel = Math.max(1, Math.min(d.total, n));
   for (const c of document.querySelectorAll("#dex-grid .cell.sel")) c.classList.remove("sel");
-  for (const c of document.querySelectorAll(`#dex-grid .cell[data-n="${d.sel}"]`)) c.classList.add("sel");
-  if (scroll) $(`#dex-grid .cells:not(.recent) .cell[data-n="${d.sel}"]`)?.scrollIntoView({ block: "nearest" });
+  const cell = d.zone === "recent" ? $(`#dex-grid .cells.recent .cell[data-ri="${d.ri}"]`) : $(`#dex-grid .cells:not(.recent) .cell[data-n="${d.sel}"]`);
+  cell?.classList.add("sel");
+  cell?.scrollIntoView({ block: "nearest" });
   const e = d.byNo.get(d.sel);
   // looked at: its new ones aren't new any more (the highlight goes once you move on)
   if (e?.fresh) {
@@ -1271,8 +1291,9 @@ function dexSelect(n, scroll = true) {
   const no = `#${String(d.sel).padStart(3, "0")}`;
   const img = $("#dex-img");
   img.className = e && !e.caught ? "seen" : "";
+  const want = d.sel; // a picture that arrives after you moved on is dropped
   if (e?.gif) spriteUrl(e.gif).then(async (u) => {
-    if (!u || dexState?.sel !== d.sel) return;
+    if (!u || dexState?.sel !== want) return;
     img.src = u;
     await img.decode().catch(() => {});
     img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`;
@@ -1350,6 +1371,23 @@ function dexKey(e) {
   if (!d) return false;
   const k = e.key, cols = dexCols();
   if (k === "Escape" || k === "q") closeDex();
+  else if (k === "Enter") dexChoose();
+  else if (d.zone === "recent" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "h", "l", "k", "j", "Home", "End"].includes(k)) {
+    // inside the "새로 잡은" row; ↓ from its last line goes to this Pokémon's place in the grid
+    const n = d.recent.length, line = Math.floor(d.ri / cols), last = Math.floor((n - 1) / cols);
+    if (k === "ArrowLeft" || k === "h") dexRecent(d.ri - 1);
+    else if (k === "ArrowRight" || k === "l") dexRecent(d.ri + 1);
+    else if (k === "ArrowUp" || k === "k") dexRecent(line > 0 ? d.ri - cols : d.ri);
+    else if (k === "Home") dexRecent(0);
+    else if (k === "End") dexRecent(n - 1);
+    else if (line < last) dexRecent(Math.min(d.ri + cols, n - 1));
+    else dexSelect(d.sel);
+  }
+  // ↑ from the grid's first line: back to the "새로 잡은" row, where you were
+  else if ((k === "ArrowUp" || k === "k") && d.sel <= cols && d.recent?.length) {
+    dexRecent(d.ri);
+    $("#region-new")?.scrollIntoView({ block: "start" });
+  }
   else if (k === "ArrowRight" || k === "l") dexSelect(d.sel % d.total + 1);
   else if (k === "ArrowLeft" || k === "h") dexSelect((d.sel - 2 + d.total) % d.total + 1);
   else if (k === "ArrowDown" || k === "j") dexSelect(d.sel + cols);
@@ -1358,11 +1396,6 @@ function dexKey(e) {
   else if (k === "PageUp") dexSelect(d.sel - cols * 5);
   else if (k === "Home") dexSelect(1);
   else if (k === "End") dexSelect(d.total);
-  else if (k === "Enter") dexChoose();
-  else if (k === "n" || k === "N") { // next new one (not looked at yet)
-    const next = d.entries.find((x) => x.fresh && x.id > d.sel) || d.entries.find((x) => x.fresh);
-    if (next) dexSelect(next.id); else toast("새로 잡은 포켓몬을 다 봤어요");
-  }
   else if (k === "Tab") { // next / previous Pokémon you've met
     const met = d.entries.map((x) => x.id);
     const next = e.shiftKey ? [...met].reverse().find((n) => n < d.sel) : met.find((n) => n > d.sel);
@@ -1371,12 +1404,15 @@ function dexKey(e) {
   return true;
 }
 
-$("#dex-grid").addEventListener("click", (e) => { const c = e.target.closest(".cell"); if (c) dexSelect(Number(c.dataset.n), !c.closest(".recent")); });
+$("#dex-grid").addEventListener("click", (e) => {
+  const c = e.target.closest(".cell");
+  if (c) c.dataset.ri != null ? dexRecent(Number(c.dataset.ri)) : dexSelect(Number(c.dataset.n));
+});
 $("#dex-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".cell")) dexChoose(); });
 $("#dex-regions").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
-  if (b.dataset.a === "new") { const m = dexState?.recent?.[0]; if (m) dexSelect(m.id, false); }
+  if (b.dataset.a === "new") dexRecent(0);
   else dexSelect(Number(b.dataset.a));
   $(`#region-${b.dataset.a}`).scrollIntoView({ block: "start" });
 });
@@ -2715,6 +2751,26 @@ async function main() {
     await invoke("log_line", { line: `keys-test ${JSON.stringify(out)}` });
     invoke("log_line", { line: "autotype done" });
   }, 3000);
+  if (info.test.dexnav_test) setTimeout(async () => {
+    // #17: arrows inside the "새로 잡은" row, ↓ to the grid at that Pokémon, ↑ from the first line back
+    await openDex();
+    const st = () => `${dexState.zone}:${dexState.zone === "recent" ? dexState.ri : "-"}:#${dexState.sel}:${$("#dex-grid .cell.sel")?.closest(".recent") ? "row" : "grid"}`;
+    const out = [`open=${st()} cols=${dexCols()}`];
+    for (const k of ["ArrowRight", "ArrowRight", "ArrowLeft", "ArrowLeft", "ArrowLeft", "ArrowUp", "End", "ArrowRight", "ArrowDown", "ArrowUp", "ArrowUp", "ArrowLeft", "ArrowDown", "n"]) {
+      const handled = dexKey(new KeyboardEvent("keydown", { key: k }));
+      out.push(`${k}${handled ? "" : "(unhandled)"}=${st()}`);
+    }
+    document.querySelector('#dex-grid .cells.recent .cell[data-ri="1"]').click();
+    out.push(`click-row-1=${st()}`);
+    document.querySelector('#dex-grid .cells:not(.recent) .cell[data-n="7"]').click();
+    out.push(`click-grid-7=${st()}`);
+    dexRecent(3);
+    out.push(`open-at-end=${dexOpen()}`);
+    await new Promise((r) => setTimeout(r, 1000)); // painted before the capture
+    await invoke("shot_test", { name: "dexnav" });
+    await invoke("log_line", { line: `dexnav-test ${out.join(" ")}` });
+    invoke("log_line", { line: "autotype done" });
+  }, 6000);
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();
