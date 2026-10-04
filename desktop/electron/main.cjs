@@ -1034,10 +1034,11 @@ const testCommands = {
     await dbg.sendCommand("Input.insertText", { text });
   },
   // a key as from the keyboard (modifiers: 8 = ⇧, 4 = ⌘) to the focused element (#7 #8 keys test)
-  async key_test({ key, code, keyCode, modifiers = 0, text }) {
+  async key_test({ key, code, keyCode, modifiers = 0, text, commands }) {
     const dbg = win.webContents.debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
-    const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers };
+    // commands: the macOS editing command the key would run (moveToBeginningOfLine …)
+    const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers, ...(commands ? { commands } : {}) };
     await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
     if (text) await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", ...base, text, unmodifiedText: text });
     await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...base });

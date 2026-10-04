@@ -88,20 +88,35 @@ function makePane(tab, kind, opts = {}) {
   term.loadAddon(new Unicode11Addon());
   term.unicode.activeVersion = "11";
   term.open(el);
-  // ⌘ shortcuts belong to the app, never to the program in the terminal — except the iTerm2 /
-  // Terminal.app editing keys: ⇧↵ = a new line in the prompt (ESC CR, what Claude Code's
-  // /terminal-setup binds; zsh inserts a newline too) (#7), ⌘⌫ = delete to the line start
-  // (Ctrl-U, iTerm2's default) (#8). Not while composing Hangul: that Enter commits the syllable.
+  // ⌘ shortcuts belong to the app, never to the program in the terminal — except the iTerm2
+  // ("Natural Text Editing") editing keys: ⇧↵ = a new line in the prompt (ESC CR, what Claude
+  // Code's /terminal-setup binds; zsh inserts a newline too) (#7), ⌘⌫ = delete to the line start
+  // (Ctrl-U) (#8), ⌘← / ⌘→ = line start / end (Ctrl-A / Ctrl-E) (#14). ⌘↑ / ⌘↓ do nothing. Not
+  // while composing Hangul: that Enter commits the syllable.
+  // These must never reach the hidden textarea either: there they move its caret off the end, and
+  // xterm reads the next Hangul syllable from the end — old text came out instead (#13).
+  const EDIT_KEYS = { "S:Enter": "\x1b\r", "M:Backspace": "\x15", "M:ArrowLeft": "\x01", "M:ArrowRight": "\x05", "M:ArrowUp": "", "M:ArrowDown": "" };
   term.attachCustomKeyEventHandler((e) => {
     const mods = (e.shiftKey ? "S" : "") + (e.metaKey ? "M" : "") + (e.ctrlKey ? "C" : "") + (e.altKey ? "A" : "");
-    const seq = e.key === "Enter" && mods === "S" ? "\x1b\r" : e.key === "Backspace" && mods === "M" ? "\x15" : null;
-    if (!seq) return !e.metaKey;
+    const seq = EDIT_KEYS[`${mods}:${e.key}`];
+    if (seq == null) return !e.metaKey;
     if (e.type === "keydown" && !e.isComposing && e.keyCode !== 229) {
       e.preventDefault();
-      term.input(seq, true);
+      if (seq) term.input(seq, true);
     }
     return false;
   });
+  // the same guard for anything else that moves the textarea caret (⌘A, a click …): before a key
+  // starts a new composition, put the caret back at the end, where xterm reads from (#13)
+  let composing = false;
+  term.textarea.addEventListener("compositionstart", () => { composing = true; }, true);
+  term.textarea.addEventListener("compositionend", () => { composing = false; }, true);
+  term.textarea.addEventListener("keydown", () => {
+    const t = term.textarea, n = t.value.length;
+    if (composing || p.noCaretGuard || (t.selectionStart === n && t.selectionEnd === n)) return;
+    imeLog(id, "caret-reset", `${t.selectionStart}-${t.selectionEnd}/${n}`);
+    t.setSelectionRange(n, n);
+  }, true);
   const p = { id, kind, tab, term, fit, el, section, bytes: 0, discard: false };
   term.onData((data) => {
     imeLog(id, "onData", JSON.stringify(data));
@@ -2603,7 +2618,29 @@ async function main() {
     p.term.focus();
     const got = [];
     const sub = p.term.onData((d) => got.push(d));
+    const ta = p.term.textarea;
+    const caret = () => `${ta.selectionStart}/${ta.value.length}`;
+    // #13: Hangul typed after the textarea caret left the end (the old ⌘← did that)
+    async function hangul(guard) {
+      p.noCaretGuard = !guard;
+      for (const ch of ["나", "요"]) { await invoke("ime_compose", { text: ch }); await invoke("ime_commit", { text: ch }); await new Promise((r) => setTimeout(r, 80)); }
+      ta.setSelectionRange(0, 0);
+      got.length = 0;
+      // a key before the syllable (Shift: no input of its own) — the guard runs on keydown. The
+      // IME's own 229 keydown can't be sent here: through DevTools it lands in another xterm path
+      await invoke("key_test", { key: "Shift", code: "ShiftLeft", keyCode: 16, modifiers: 8 });
+      await invoke("ime_compose", { text: "가" });
+      await invoke("ime_commit", { text: "가" });
+      await new Promise((r) => setTimeout(r, 150));
+      p.noCaretGuard = false;
+      return `${got.join("")} caret=${caret()}`;
+    }
+    const before = await hangul(false), after = await hangul(true);
+    await invoke("log_line", { line: `keys-test hangul-after-caret-move unguarded=${JSON.stringify(before)} guarded=${JSON.stringify(after)}` });
     const keys = [
+      ["cmd-left", { key: "ArrowLeft", code: "ArrowLeft", keyCode: 37, modifiers: 4, commands: ["moveToBeginningOfLine"] }],
+      ["cmd-right", { key: "ArrowRight", code: "ArrowRight", keyCode: 39, modifiers: 4, commands: ["moveToEndOfLine"] }],
+      ["cmd-up", { key: "ArrowUp", code: "ArrowUp", keyCode: 38, modifiers: 4, commands: ["moveToBeginningOfDocument"] }],
       ["a", { key: "a", code: "KeyA", keyCode: 65, text: "a" }],
       ["shift-enter", { key: "Enter", code: "Enter", keyCode: 13, modifiers: 8, text: "\r" }],
       ["enter", { key: "Enter", code: "Enter", keyCode: 13, text: "\r" }],
@@ -2614,7 +2651,7 @@ async function main() {
       got.length = 0;
       await invoke("key_test", k);
       await new Promise((r) => setTimeout(r, 150));
-      out[name] = got.join("");
+      out[name] = got.join("") + (name.startsWith("cmd-") ? ` caret=${caret()}` : "");
     }
     sub.dispose();
     await invoke("log_line", { line: `keys-test ${JSON.stringify(out)}` });
