@@ -21,6 +21,8 @@ pub struct Codex {
     pub window: Option<f64>,
     /// the model of the current turn (gpt-5.5), for the tokens' estimated cost
     pub model_id: Option<String>,
+    /// the tool call waiting for the user's approval (#50), until its output comes
+    pub asking: Option<String>,
 }
 
 impl Codex {
@@ -33,6 +35,7 @@ impl Codex {
             scanned: None,
             window: None,
             model_id: None,
+            asking: None,
         }
     }
 }
@@ -102,6 +105,22 @@ fn read_cmd_tool(cmd: &str) -> &'static str {
     }
 }
 
+/// The command in the new `exec` tool's input — code like `text(await exec_command({cmd:"npm test", …}))`
+fn exec_cmd(code: &str) -> Option<String> {
+    let rest = &code[code.find("cmd:")? + 4..];
+    let rest = rest.trim_start().strip_prefix('"')?;
+    let mut out = String::new();
+    let mut chars = rest.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => out.extend(chars.next()),
+            '"' => return Some(out),
+            _ => out.push(ch),
+        }
+    }
+    None
+}
+
 /// One log record -> normalized event (or None); updates `usage` in place (`changed` = usage moved).
 pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, rec: &Value) -> Option<Event> {
     let p = &rec["payload"];
@@ -135,9 +154,26 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
             let a = &p["action"];
             ev("PreToolUse", Some("WebSearch"), Some(short(a["query"].as_str().or(a["url"].as_str()).unwrap_or(""))))
         }
+        // the answer to the call that asked for approval: the dialog is gone (approved, denied or ran)
+        "function_call_output" | "custom_tool_call_output" => {
+            let id = p["call_id"].as_str()?;
+            if c.asking.as_deref() != Some(id) {
+                return None;
+            }
+            c.asking = None;
+            ev("PostToolUse", None, None)
+        }
         "function_call" | "custom_tool_call" => {
             let name = p["name"].as_str().unwrap_or("?");
             let args = p["arguments"].as_str().or(p["input"].as_str()).unwrap_or("");
+            // a command to run outside the sandbox: with the on-request policy Codex asks first, and the log
+            // has no record of that dialog (#50) — "입력 필요" until this call's output
+            if args.contains("require_escalated") {
+                c.asking = p["call_id"].as_str().map(Into::into);
+                let a: Value = serde_json::from_str(args).unwrap_or(Value::Null);
+                let cmd = a["cmd"].as_str().map(Into::into).or_else(|| exec_cmd(args)).unwrap_or_default();
+                return ev("PermissionRequest", Some("Bash"), Some(short(&cmd)));
+            }
             match name {
                 "request_user_input" => ev("Notification", None, Some("입력 요청".into())),
                 "apply_patch" => {
@@ -152,6 +188,10 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
                     let a: Value = serde_json::from_str(args).unwrap_or(Value::Null);
                     let cmd = a["cmd"].as_str().or(a["chars"].as_str()).unwrap_or("");
                     ev("PreToolUse", Some(read_cmd_tool(cmd)), Some(short(cmd)))
+                }
+                "exec" if exec_cmd(args).is_some() => {
+                    let cmd = exec_cmd(args).unwrap_or_default();
+                    ev("PreToolUse", Some(read_cmd_tool(&cmd)), Some(short(&cmd)))
                 }
                 other => ev("PreToolUse", Some(other), Some(short(args))),
             }
@@ -256,6 +296,31 @@ mod tests {
         assert_eq!(u.ctx, Some(25.0));
         assert_eq!(u.five_hour, Some(Window { pct: 12.0, resets_at: Some(100) }));
         assert_eq!(u.seven_day, Some(Window { pct: 30.0, resets_at: None }));
+    }
+
+    #[test]
+    fn codex_escalation_is_waiting_until_output() {
+        let mut c = Codex::new(Path::new("/tmp"));
+        let (mut usage, mut changed) = (None, false);
+        let mut st = crate::state::State::default();
+        let t = Instant::now();
+        let mut feed = |rec: Value| {
+            if let Some(e) = translate(&mut c, &mut usage, &mut changed, &rec) {
+                st.apply(e, t);
+            }
+            (st.state, st.detail.clone())
+        };
+        feed(json!({"type":"event_msg","payload":{"type":"task_started"}}));
+        // new Codex: the `exec` tool, a sandboxed read — no approval
+        assert_eq!(feed(json!({"type":"response_item","payload":{"type":"custom_tool_call","call_id":"a","name":"exec","input":"text(await exec_command({cmd:\"rg foo\", yield_time_ms:1000}))"}})).0, "reading");
+        assert_eq!(feed(json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"a","output":"x"}})).0, "reading", "an output of a call that didn't ask changes nothing");
+        // outside the sandbox: Codex asks first
+        assert_eq!(feed(json!({"type":"response_item","payload":{"type":"custom_tool_call","call_id":"b","name":"exec","input":"text(await exec_command({cmd:\"npm view @openai/codex version\", sandbox_permissions:\"require_escalated\", justification:\"?\"}))"}})), ("waiting", Some("npm view @openai/codex version".into())));
+        assert_eq!(feed(json!({"type":"event_msg","payload":{"type":"token_count","info":null}})).0, "waiting");
+        assert_eq!(feed(json!({"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"b","output":"x"}})).0, "thinking");
+        // older Codex: exec_command with JSON arguments
+        assert_eq!(feed(json!({"type":"response_item","payload":{"type":"function_call","call_id":"c","name":"exec_command","arguments":"{\"cmd\":\"curl x\",\"sandbox_permissions\":\"require_escalated\"}"}})), ("waiting", Some("curl x".into())));
+        assert_eq!(feed(json!({"type":"response_item","payload":{"type":"function_call_output","call_id":"c","output":"x"}})).0, "thinking");
     }
 
     #[test]

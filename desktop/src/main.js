@@ -2398,6 +2398,13 @@ listen("host-agent", (e) => {
   renderRail(t);
   renderTab(t);
 });
+listen("claude-link", (e) => { // #49: the link changed while this Claude runs — its chip follows
+  const t = byId.get(e.payload.ws);
+  if (!t) return;
+  if (e.payload.shell) t.shellUnlinked = e.payload.unlinked || null;
+  else { const s = t.sessions?.find((x) => x.id === e.payload.session); if (s) s.hostUnlinked = e.payload.unlinked || null; }
+  if (t === active && t.state) renderBar(t);
+});
 listen("shell-agent", (e) => { const t = byId.get(e.payload.ws); if (t) { t.shellUnlinked = e.payload.agent ? e.payload.unlinked || null : null; onShellAgent(t, e.payload.agent, e.payload.where); } });
 // in another app the desktop overlay shows the wild card; the window's own copy would be a second one
 window.addEventListener("blur", () => document.body.classList.add("away"));
@@ -2657,6 +2664,7 @@ function labState() {
     usage: $("#usage")?.textContent || "",
     usageRaw: (() => { const u = active && shownOf(active)?.usage; return u ? Object.keys(u).filter((k) => u[k] != null).join(",") : null; })(),
     sid: active?.sid ?? null,
+    astate: active?.state?.state || null, // the agent state the top bar shows (waiting = 입력 필요)
     tsearch: $("#tsearch").hidden ? null : { q: $("#tsearch-q").value, n: $("#tsearch-n").textContent, pane: tsearchPane?.kind || null, alt: !$("#tsearch-alt").hidden },
     // the top bar and the hint line stay one line, nothing pushed out (#38)
     barFits: (() => { const b = $("#bar"); return b.scrollWidth <= b.clientWidth + 1 && [...b.children].every((c) => c.hidden || c.offsetHeight <= b.clientHeight); })(),

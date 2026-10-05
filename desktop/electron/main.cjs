@@ -77,7 +77,7 @@ async function claudeLinkAsk() {
     detail: `⌘G로 띄운 Claude처럼 5시간·주간 한도, ctx %, 생각 중·도구·입력 필요가 보여요.\n\n${f.file.replace(HOME, "~")} 끝에 아래 블록을 넣어요:\n\n${f.lines.join("\n")}\n\nTamer 셸 안에서만 동작해요(그 밖의 터미널에선 CVIM_CLAUDE_SETTINGS가 없어 아무 일도 안 함). ~/.claude/settings.json은 건드리지 않아요. 넣기 전 파일 사본을 ~/.cache/tamer/backup/shell-rc에 두고, 에이전트 연결 창에서 언제든 해제할 수 있어요. 새로 여는 셸부터 적용돼요.`,
   });
   if (r.response !== 0) return { ok: false, cancelled: true };
-  try { const l = agents.claudeLink(); logLine(`claude link ${l.already ? "already" : "ok"}`); return { ok: true, msg: "연결했어요 — 새로 여는 셸(⌘⇧T 또는 새 탭)부터 적용돼요" }; }
+  try { const l = agents.claudeLink(); logLine(`claude link ${l.already ? "already" : "ok"}`); relinkShown(); return { ok: true, msg: "연결했어요 — 새로 여는 셸(⌘⇧T 또는 새 탭)부터 적용돼요" }; }
   catch (e) { logLine(`claude link error ${e.code || e.message}`); return { ok: false, msg: `연결하지 못했어요: ${e.message}` }; }
 }
 
@@ -316,6 +316,12 @@ function linkState(d, kind) {
   if (d?.key !== "claude" || kind !== "claude_log" || !agents.claudeLinkFile()) return null;
   return agents.claudeLinked() ? "stale" : "off";
 }
+// the link was just turned on / off: the Claudes already running in shells keep their adapter (an
+// alias only reaches new shells), but their top-bar chip must say so now — "새 셸에서 다시" / "연결 안 됨"
+function relinkShown() {
+  for (const s of sessions.values()) if (s.hostKey === "claude" && s.hostKind) send("claude-link", { ws: tabOf(s).id, session: s.id, unlinked: linkState({ key: "claude" }, s.hostKind) });
+  for (const ws of workspaces.values()) if (ws.shell?.key === "claude" && ws.shell.kind) send("claude-link", { ws: ws.id, shell: true, unlinked: linkState({ key: "claude" }, ws.shell.kind) });
+}
 function hintClaudeLink(d, kind) {
   if (linkHinted || d?.key !== "claude" || kind !== "claude_log" || !agents.claudeLinkFile() || agents.claudeLinked()) return;
   linkHinted = true;
@@ -359,6 +365,7 @@ async function setHostAgent(s, d, cwd = null, args = "") {
   if (d) {
     // its logs are where it runs (after a `cd`, not necessarily the tab's folder) — #3
     hintClaudeLink(d, typedKind(d, args));
+    s.hostKind = typedKind(d, args);
     const fresh = await core.request("restart", { ws: s.id, kind: typedKind(d, args), cwd: cwd || s.cwd }).catch(() => null);
     if (fresh) send("agent-state", { ws: tabOf(s).id, session: s.id, source: "agent", agent: agentInfo(s), ...fresh });
   }
@@ -709,6 +716,7 @@ function setShellAgent(ws, d, cwd = null, args = "") {
     // its logs are where it runs (after a `cd`, not necessarily the tab's folder) — #3
     // which adapter fits depends on the PATH (Gemini linked …): after the shell environment
     hintClaudeLink(d, typedKind(d, args));
+    ws.shell.kind = typedKind(d, args);
     Promise.resolve(ready).then(() => core.request("open", { ws: id, kind: typedKind(d, args), cwd: cwd || ws.cwd, tabs: TABS })).catch((e) => logLine(`shell core error ${e}`));
     agents.remember(ws.cwd, d.key); // ⌘G offers it first next time
   }
@@ -1019,7 +1027,7 @@ const commands = {
     const r = await dialog.showMessageBox(win, { type: "question", buttons: ["해제", "취소"], defaultId: 0, cancelId: 1,
       message: "셸에서 친 Claude 연결을 해제할까요?", detail: `${f?.file?.replace(HOME, "~")}에서 Tamer가 넣은 블록만 지워요(지우기 전 파일 사본: ~/.cache/tamer/backup/shell-rc). 새로 여는 셸부터 적용돼요.` });
     if (r.response !== 0) return { ok: false, cancelled: true };
-    try { const u = agents.claudeUnlink(); logLine(`claude unlink ${u.absent ? "absent" : "ok"}`); return { ok: true, msg: "해제했어요 — 새로 여는 셸부터" }; }
+    try { const u = agents.claudeUnlink(); logLine(`claude unlink ${u.absent ? "absent" : "ok"}`); relinkShown(); return { ok: true, msg: "해제했어요 — 새로 여는 셸부터" }; }
     catch (e) { logLine(`claude unlink error ${e.code || e.message}`); return { ok: false, msg: `해제하지 못했어요: ${e.message}` }; }
   },
   // #3: an agent typed after `cd` into another folder moves — still running — into that folder's tab
@@ -1254,7 +1262,7 @@ const testCommands = {
   // a task finished (as if the agent said Stop) — EXP / evolution without a real agent
   partner_done_test({ ws }) { onCoreEvent({ event: "transition", ws, from: "thinking", to: "done" }); },
   // #45: the opt-in shell line without its dialog (lab: the line goes into the sandbox shell's ZDOTDIR)
-  claude_link_test({ on }) { return on ? agents.claudeLink() : agents.claudeUnlink(); },
+  claude_link_test({ on }) { const r = on ? agents.claudeLink() : agents.claudeUnlink(); relinkShown(); return r; },
   // an agent's state changes as the core would report it
   agent_state_test({ ws, from, to }) {
     onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to) } });

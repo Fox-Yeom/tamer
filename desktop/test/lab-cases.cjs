@@ -335,6 +335,30 @@ module.exports = [
   },
   // ── a Claude typed in the shell: the opt-in line (#45) — fake claude, sandbox ZDOTDIR, never ~/.zshrc ──
   {
+    id: "codex-escalation-waiting", tags: ["smoke", "agents"], what: "셸에서 친 Codex가 샌드박스 밖 명령(require_escalated)을 부르면 결과가 올 때까지 입력 필요, 결과 뒤 생각 중 (#50)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
+    // a fake Codex writing its session log the way codex-cli 0.159 does: the `exec` tool, then the output once approved
+    files: { "fakebin/codex": `#!/bin/sh
+[ "$1" = "--version" ] && { echo 'codex-cli 9.9.9-lab'; exit 0; }
+d="$CODEX_HOME/sessions/$(date +%Y/%m/%d)"; mkdir -p "$d"; f="$d/rollout-lab.jsonl"
+sleep 2
+printf '{"type":"session_meta","payload":{"cwd":"%s"}}\n' "$(pwd -P)" > "$f"
+echo '{"type":"event_msg","payload":{"type":"task_started"}}' >> "$f"
+echo '{"type":"response_item","payload":{"type":"custom_tool_call","call_id":"c1","name":"exec","input":"text(await exec_command({cmd:\\"npm view x version\\", sandbox_permissions:\\"require_escalated\\"}))"}}' >> "$f"
+sleep 10
+echo '{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"1.0.0"}}' >> "$f"
+sleep 30
+` },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "codex" }, { wait: 200 }, { key: "Enter" }, { until: "astate", timeout: 9000 }, { wait: 5000 }, { probe: "asking" },
+      { wait: 9000 }, { probe: "answered" }],
+    check: ({ probe, log }) => [
+      ok(/host-agent \S+ codex kind=codex_log/.test(log), "셸 Codex가 세션 로그 방식으로 안 잡힘"),
+      ok(probe.asking?.astate === "waiting", `승인 대기 중 상태 ${probe.asking?.astate} (입력 필요여야)`),
+      ok(probe.answered?.astate === "thinking", `결과 뒤 상태 ${probe.answered?.astate} (생각 중이어야)`),
+    ],
+  },
+  {
     id: "claude-typed-unlinked", tags: ["smoke", "agents"], what: "연결 안 한 셸에서 친 Claude: 대화 기록 방식, 상단 바에 \"5h·7d ?\" 안내 (#45)",
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": "#!/bin/sh\n# an unlinked Claude never runs Tamer's status line\necho \"fake-claude args: $*\"\nsleep 30\n" },
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
@@ -452,14 +476,17 @@ module.exports = [
     check: ({ log }) => [ok(/lab-grep LEAK=0 LINES=2 rows=\[\d/.test(log), "훅 기록에 명령·경로가 남았거나 줄이 안 써짐")],
   },
   {
-    id: "claude-typed-stale", tags: ["smoke", "agents"], what: "연결은 켰지만 그 전에 열린 셸에서 친 Claude: 대화 기록 방식, 상단 바에 '🔗 새 셸에서 다시' (#49)",
+    id: "claude-typed-stale", tags: ["smoke", "agents"], what: "Claude가 떠 있는 동안 연결을 켜고 끄면 상단 바 표시가 바로 따라감: 연결 안 됨 → 새 셸에서 다시 → 연결 안 됨 (#49)",
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": FAKE_CLAUDE },
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
-      { invoke: "claude_link_test", args: { on: true } }, // linked after this shell started: the alias isn't in it
-      { text: "claude" }, { wait: 200 }, { key: "Enter" }, { wait: 3500 }, { probe: "running" }, { invoke: "claude_link_test", args: { on: false } }],
+      { text: "claude" }, { wait: 200 }, { key: "Enter" }, { wait: 3500 }, { probe: "before" }, // not linked yet
+      { invoke: "claude_link_test", args: { on: true } }, { wait: 500 }, { probe: "running" }, // linked while it runs: the alias isn't in this shell
+      { invoke: "claude_link_test", args: { on: false } }, { wait: 500 }, { probe: "unlinked" }],
     check: ({ probe, log }) => [
       ok(/host-agent \S+ claude kind=claude_log/.test(log), "이전 셸인데 hooks로 잡힘(alias가 있을 리 없음)"),
-      ok(/🔗 새 셸에서 다시/.test(probe.running?.usage || ""), `상단 바 ${probe.running?.usage}`),
+      ok(/🔗 연결 안 됨/.test(probe.before?.usage || ""), `연결 전 상단 바 ${probe.before?.usage}`),
+      ok(/🔗 새 셸에서 다시/.test(probe.running?.usage || ""), `연결 직후(같은 셸) 상단 바 ${probe.running?.usage} — '새 셸에서 다시'로 바뀌어야`),
+      ok(/🔗 연결 안 됨/.test(probe.unlinked?.usage || ""), `해제 뒤 상단 바 ${probe.unlinked?.usage}`),
     ],
   },
 ];
