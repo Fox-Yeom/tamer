@@ -2,7 +2,7 @@
 // cvim-core (Rust, desktop/core-rs), which owns the agent state machine, the adapters (Claude
 // hooks, Codex log, activity) and the path policy. Partner Pokémon data is still here (partner.cjs).
 // Data: ~/.cache/tamer (copied once from the Neovim CVIM's ~/.cache/cvim — core/paths.cjs).
-const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, powerMonitor, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, powerMonitor, shell, nativeImage } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const pty = require("node-pty");
@@ -21,6 +21,9 @@ const TEST = process.env.CVIM_DESKTOP_TEST === "1";
 // never land in a test terminal (seen 2026-10-02); CVIM_DESKTOP_TEST_FOCUS=1 for IME tests that need focus
 const QUIET_TEST = TEST && process.env.CVIM_DESKTOP_TEST_FOCUS !== "1";
 const linksOpened = []; // tests: links ⌘-clicked (never opened)
+// UI scenes (npm run ui:shots, docs/UI_SYSTEM.md): captures compared with $CVIM_UI_BASELINE/<scene>.png
+// (the page stills its sprites and hides the terminals itself)
+const UI_SCENES = TEST && process.env.CVIM_DESKTOP_UI_SCENES ? process.env.CVIM_DESKTOP_UI_SCENES : null;
 const DIST = path.join(__dirname, "..", "dist");
 // terminal panes per tab (the Neovim pane became the "changes" panel, E1b — nvim runs in the shell)
 const KINDS = ["agent", "shell"];
@@ -854,6 +857,8 @@ const commands = {
         dexsearch_test: !!process.env.CVIM_DESKTOP_DEXSEARCH_TEST, // dex search terms (#21)
         cost_test: !!process.env.CVIM_DESKTOP_COST_TEST, // ≈$ for a Claude typed in the shell (#23)
         box_test: !!process.env.CVIM_DESKTOP_BOX_TEST, // "내 포켓몬" (#27)
+        choose_shot: !!process.env.CVIM_DESKTOP_CHOOSE_SHOT, // the partner dialog, captured (UI checks)
+        ui_scenes: UI_SCENES, // npm run ui:shots: "newuser" / "owner" scene sets
         keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
         diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
         multi_test: !!process.env.CVIM_DESKTOP_MULTI_TEST, // a shell finishing while another needs you
@@ -1106,6 +1111,23 @@ const testCommands = {
     await dbg.sendCommand("Input.insertText", { text });
   },
   links_opened_test: () => linksOpened.splice(0),
+  // a UI scene: this window as a picture in $CVIM_DESKTOP_SHOTS/<name>.png, and how much of it differs
+  // from $CVIM_UI_BASELINE/<name>.png (share of pixels whose colour moved more than a little)
+  async ui_shot({ name }) {
+    const n = String(name).replace(/[^\w-]/g, "");
+    const img = await win.webContents.capturePage();
+    if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${n}.png`), img.toPNG());
+    const basePath = process.env.CVIM_UI_BASELINE && path.join(process.env.CVIM_UI_BASELINE, `${n}.png`);
+    if (!basePath || !fs.existsSync(basePath)) return { name: n, diff: null };
+    const base = nativeImage.createFromPath(basePath), a = img.getSize(), b = base.getSize();
+    if (a.width !== b.width || a.height !== b.height) return { name: n, diff: 1, note: `size ${b.width}x${b.height} → ${a.width}x${a.height}` };
+    const x = img.toBitmap(), y = base.toBitmap();
+    let changed = 0;
+    for (let i = 0; i < x.length; i += 4) {
+      if (Math.max(Math.abs(x[i] - y[i]), Math.abs(x[i + 1] - y[i + 1]), Math.abs(x[i + 2] - y[i + 2])) > 24) changed++;
+    }
+    return { name: n, diff: changed / (x.length / 4) };
+  },
   // the overlay's "도감에서 보기" (#25), as if pressed there
   wild_dex_test({ id }) { overlayCommands.wild_dex({ id }); },
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)

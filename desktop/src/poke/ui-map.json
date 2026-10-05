@@ -1,0 +1,228 @@
+{
+  "about": "Tamer UI map (docs/UI_SYSTEM.md): components → the screens using them → the scenes npm run ui:shots captures. npm run ui:impact -- <name|file|class|function> reads this. Add a component / screen / scene here when you add one.",
+  "screens": {
+    "choose": {
+      "what": "파트너 고르기 (새 폴더 · 🔄 파트너 바꾸기 · 파트너 칸 버튼)",
+      "entry": "openChoose",
+      "scenes": [
+        "choose-starter",
+        "choose-box"
+      ]
+    },
+    "dex": {
+      "what": "도감 (⌘D)",
+      "entry": "openDex",
+      "scenes": [
+        "dex-grid",
+        "dex-search",
+        "dex-empty"
+      ]
+    },
+    "box": {
+      "what": "내 포켓몬 (도감 탭 · M)",
+      "entry": "dexView(\"box\")",
+      "scenes": [
+        "box-cards",
+        "box-search",
+        "box-empty"
+      ]
+    },
+    "wild": {
+      "what": "야생 포켓몬 카드 (창 안 · 바탕화면)",
+      "entry": "createWild",
+      "scenes": []
+    }
+  },
+  "components": {
+    "pk-tokens": {
+      "what": "포켓몬 화면 색·간격 토큰 (--pk-*)",
+      "files": [
+        "src/poke/poke.css"
+      ],
+      "selectors": [
+        ":root",
+        "--pk-"
+      ],
+      "screens": [
+        "choose",
+        "dex",
+        "box"
+      ]
+    },
+    "pk-window": {
+      "what": "포켓몬 창 틀: 제목 줄 탭(파트너 고르기·도감·내 포켓몬)·요약·✕, 도구 줄(지역·정렬·검색), 본문, 안내 줄",
+      "files": [
+        "index.html",
+        "src/poke/poke.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        "#dex",
+        ".pk-window",
+        ".pk-tabs",
+        ".pk-close",
+        "#dex-title",
+        "#dex-regions",
+        "#dex-help",
+        ".dex-body"
+      ],
+      "functions": [
+        "openDex",
+        "dexView",
+        "dexTitle",
+        "closeDex",
+        "openChoose",
+        "closeChoose",
+        "chooseOpen",
+        "dexKey"
+      ],
+      "screens": [
+        "choose",
+        "dex",
+        "box"
+      ]
+    },
+    "pk-card": {
+      "what": "포켓몬 카드 (이름·EXP·진화까지·위치·NEW·✨·번호 키)",
+      "files": [
+        "src/poke/card.js",
+        "src/poke/poke.css"
+      ],
+      "selectors": [
+        ".pk-card",
+        ".pk-group"
+      ],
+      "functions": [
+        "pkCard",
+        "boxRender",
+        "chooseItems"
+      ],
+      "screens": [
+        "choose",
+        "box"
+      ]
+    },
+    "pk-tile": {
+      "what": "도감 칸 (44px, 잡음·만남·?·NEW·✨·파트너 점·번호)",
+      "files": [
+        "src/main.js",
+        "src/poke/poke.css"
+      ],
+      "selectors": [
+        "#dex-grid",
+        ".cell",
+        ".cells"
+      ],
+      "functions": [
+        "openDex",
+        "dexSelect",
+        "dexRecent",
+        "dexShow"
+      ],
+      "screens": [
+        "dex"
+      ]
+    },
+    "pk-search": {
+      "what": "검색칸·결과 수·결과 없음 안내 (포켓몬 GO 검색어)",
+      "files": [
+        "src/main.js",
+        "src/poke/poke.css"
+      ],
+      "selectors": [
+        "#dex-search",
+        "#dex-found",
+        ".pk-empty",
+        "#dex-empty",
+        "#box-empty"
+      ],
+      "functions": [
+        "dexFilter",
+        "dexMatch",
+        "dexTerm",
+        "dexSearchKey",
+        "boxMatch",
+        "boxSorted"
+      ],
+      "screens": [
+        "choose",
+        "dex",
+        "box"
+      ]
+    },
+    "pk-preview": {
+      "what": "오른쪽 미리보기 + [이 탭의 파트너로] (다른 폴더는 두 번)",
+      "files": [
+        "index.html",
+        "src/main.js",
+        "src/poke/poke.css"
+      ],
+      "selectors": [
+        ".dex-preview",
+        "#dex-img",
+        "#dex-name",
+        "#dex-meta",
+        "#dex-take",
+        "#dex-from"
+      ],
+      "functions": [
+        "dexShow",
+        "boxSelect",
+        "boxButton",
+        "pkTake",
+        "dexChoose",
+        "dexTake",
+        "dexFrom"
+      ],
+      "screens": [
+        "choose",
+        "dex",
+        "box"
+      ]
+    },
+    "wild-card": {
+      "what": "야생 포켓몬 카드",
+      "files": [
+        "src/wild.js",
+        "src/wild.css",
+        "src/overlay.js"
+      ],
+      "selectors": [
+        ".wild-"
+      ],
+      "functions": [
+        "createWild"
+      ],
+      "screens": [
+        "wild"
+      ]
+    }
+  },
+  "css": {
+    "namespaces": {
+      "poke": {
+        "file": "src/poke/poke.css",
+        "prefixes": [
+          "#dex",
+          ".pk-",
+          ":root",
+          "@keyframes pk-"
+        ]
+      }
+    },
+    "allowRepeat": [
+      ":root"
+    ],
+    "documents": {
+      "main window (index.html)": [
+        "src/style.css",
+        "src/wild.css",
+        "src/poke/poke.css"
+      ],
+      "desktop overlay (overlay.html)": [
+        "src/overlay.css",
+        "src/wild.css"
+      ]
+    }
+  }
+}

@@ -1,7 +1,7 @@
 {
   "name": "cvim-desktop",
   "private": true,
-  "version": "0.3.0-beta.18",
+  "version": "0.3.0-beta.19",
   "description": "CVIM v2 desktop shell — X0 PoC (Tauri v2 + xterm.js)",
   "type": "module",
   "scripts": {
@@ -16,7 +16,9 @@
     "audit": "npm audit && node scripts/audit-crates.cjs",
     "beta": "node scripts/build-beta.cjs",
     "release": "node scripts/release.cjs",
-    "bump": "node scripts/bump.cjs"
+    "bump": "node scripts/bump.cjs",
+    "ui:shots": "node scripts/ui-shots.cjs",
+    "ui:impact": "node scripts/ui-impact.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

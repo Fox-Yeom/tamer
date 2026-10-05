@@ -1,0 +1,118 @@
+/* The Pokémon window (#29, docs/UI_SYSTEM.md): one frame for 파트너 고르기 · 도감 · 내 포켓몬.
+   Every rule here starts with #dex or .pk- (npm run ui:impact checks it), colours come from the
+   --pk-* tokens: the Pokédex green world; the app's orange (--accent) only marks "this tab". */
+:root {
+  --pk-bg-top: #23302a; --pk-bg: #1a211d; --pk-line: #3d5a45; --pk-line-soft: #2f4535; --pk-edge: #4f7a57;
+  --pk-fg: #d9f3c0; --pk-title: #b9e28c; --pk-dim: #9fbf93; --pk-faint: #3f5845; --pk-ink: #1a211d;
+  --pk-hover: rgba(120, 200, 110, .14); --pk-sel: rgba(120, 200, 110, .2); --pk-chip: rgba(120, 200, 110, .1);
+  --pk-card: rgba(0, 0, 0, .18); --pk-field: rgba(0, 0, 0, .25);
+  --pk-new: #f5c542; --pk-new-soft: rgba(245, 197, 66, .14); --pk-recent: 90, 160, 255; --pk-here: var(--accent);
+  --pk-radius: 10px; --pk-gap: 8px;
+}
+
+/* the window */
+#dex { position: fixed; inset: 28px 0 22px 0; display: flex; align-items: center; justify-content: center; background: rgba(10, 10, 14, .7); backdrop-filter: blur(3px); z-index: 20; }
+#dex[hidden] { display: none; }
+#dex .pk-window { width: min(1180px, 96vw); height: min(760px, 88vh); display: flex; flex-direction: column; border-radius: 14px; overflow: hidden;
+  background: linear-gradient(180deg, var(--pk-bg-top), var(--pk-bg)); border: 1px solid var(--pk-line); box-shadow: 0 18px 50px rgba(0, 0, 0, .55); color: var(--pk-fg); }
+#dex-title { display: flex; align-items: center; gap: var(--pk-gap); padding: 10px 14px; color: var(--pk-title); font-weight: 700; border-bottom: 1px solid var(--pk-line); }
+#dex-title .chip { border: 1px solid var(--pk-edge); border-radius: 8px; padding: 2px 9px; font-size: 12px; font-weight: 600; color: var(--pk-fg); background: var(--pk-chip); }
+#dex-title .chip.new { border-color: var(--pk-new); color: var(--pk-new); background: var(--pk-new-soft); }
+#dex-title .pk-sub { font-weight: 400; font-size: 12px; color: var(--pk-dim); }
+#dex .pk-tabs { display: inline-flex; gap: 4px; margin-right: 6px; }
+#dex .pk-tabs button { border: 1px solid var(--pk-edge); border-radius: 8px; padding: 3px 10px; font: inherit; font-size: 13px; font-weight: 700; cursor: pointer; color: var(--pk-title); background: transparent; }
+#dex .pk-tabs button.on { background: var(--pk-title); color: var(--pk-ink); }
+#dex .pk-tabs button.on .dim { color: var(--pk-faint); }
+#dex .pk-close { margin-left: auto; border: 0; background: transparent; color: var(--pk-dim); font-size: 15px; cursor: pointer; }
+#dex .pk-close:hover { color: var(--pk-fg); }
+
+/* the tool row: regions (Pokédex), sort, search */
+#dex-regions { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid var(--pk-line-soft); }
+#dex-regions button { border: 1px solid var(--pk-edge); border-radius: 8px; padding: 2px 9px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; color: var(--pk-fg); background: var(--pk-chip); }
+#dex-regions button:hover { background: var(--pk-sel); }
+#dex-regions button:disabled { opacity: .35; cursor: default; }
+#dex-regions button.new-tab { border-color: var(--pk-new); color: var(--pk-new); background: var(--pk-new-soft); }
+#dex.cardview #dex-regions > button { display: none; }
+#dex-regions .dex-search { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+#dex-search, #dex #box-sort { border: 1px solid var(--pk-edge); border-radius: 8px; font: inherit; font-size: 12px; color: var(--pk-fg); background: var(--pk-field); }
+#dex-search { width: 220px; padding: 3px 9px; outline: none; }
+#dex-search:focus { border-color: var(--pk-title); }
+#dex #box-sort { padding: 3px 6px; }
+#dex.chooseview #box-sort { display: none; }
+#dex-found { font-size: 12px; min-width: 3em; }
+
+/* body: the list on the left, the preview on the right */
+#dex .dex-body { flex: 1; min-height: 0; display: grid; grid-template-columns: 1fr 260px; }
+#dex-grid, #dex #box-grid { overflow-y: auto; border-right: 1px solid var(--pk-line-soft); }
+#dex-grid { padding: 4px 12px 12px; }
+#dex #box-grid { padding: 10px 12px; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: var(--pk-gap); align-content: start; }
+#dex #box-grid[hidden] { display: none; }
+
+/* group headings (Pokédex regions, the choose sections) */
+#dex-grid h4, #dex .pk-group { margin: 12px 0 6px; font-size: 12px; color: var(--pk-title); }
+#dex .pk-group { grid-column: 1 / -1; margin: 6px 0 0; }
+#dex .pk-group .dim { font-weight: 400; margin-left: 6px; }
+#dex .pk-note { grid-column: 1 / -1; margin: 0; font-size: 12px; color: var(--pk-dim); }
+
+/* a Pokédex tile (44 px) */
+#dex-grid .cells { display: grid; grid-template-columns: repeat(auto-fill, 44px); gap: 3px; }
+#dex-grid .cells.recent { padding-bottom: 6px; border-bottom: 1px dashed var(--pk-line-soft); }
+#dex-grid .cell { position: relative; width: 44px; height: 44px; display: flex; align-items: center; justify-content: center; border-radius: 7px; cursor: pointer; background: var(--pk-card); }
+#dex-grid .cell img { max-width: 42px; max-height: 42px; image-rendering: pixelated; object-fit: contain; }
+#dex-grid .cell.seen img { filter: brightness(0) opacity(.55); }
+#dex-grid .cell.unknown .q { color: var(--pk-faint); font-weight: 700; }
+#dex-grid .cell:hover { background: var(--pk-hover); }
+#dex-grid .cell.sel { outline: 2px solid var(--pk-title); background: var(--pk-sel); }
+#dex-grid .cell.partner::after { content: ""; position: absolute; left: 3px; top: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--pk-here); }
+#dex-grid .cell .cnt { position: absolute; right: 2px; bottom: 0; font-style: normal; font-size: 9px; color: var(--pk-fg); }
+#dex-grid .cell .shiny { position: absolute; right: 1px; top: -1px; font-style: normal; font-size: 9px; }
+#dex-grid .cell .no { display: none; position: absolute; left: 50%; top: -1px; transform: translateX(-50%); font-style: normal; font-size: 8px; color: var(--pk-dim); }
+#dex-grid.filtering .cell .no { display: block; }
+#dex-grid .cells.recent .cell:not(.new) { background: rgba(var(--pk-recent), calc(.32 * (1 - var(--age, 0)) + .06)); }
+#dex-grid.filtering .cell.nomatch, #dex-grid .cells[hidden], #dex-grid h4[hidden] { display: none; }
+
+/* a card (내 포켓몬 · 파트너 고르기) */
+#dex .pk-card { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 6px; border: 0; border-radius: var(--pk-radius);
+  background: var(--pk-card); color: var(--pk-fg); font: inherit; cursor: pointer; text-align: center; min-width: 0; }
+#dex .pk-card:hover { background: var(--pk-hover); }
+#dex .pk-card.sel { outline: 2px solid var(--pk-title); background: var(--pk-sel); }
+#dex .pk-card.confirm { outline: 2px solid var(--pk-new); }
+#dex .pk-card.loading { cursor: default; justify-content: center; outline: 1px dashed var(--pk-edge); min-height: 116px; }
+#dex .pk-card img { height: 56px; image-rendering: pixelated; object-fit: contain; }
+#dex .pk-card .q { height: 56px; line-height: 56px; color: var(--pk-faint); font-weight: 700; }
+#dex .pk-card b { font-size: 13px; color: var(--pk-fg); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dex .pk-card .dim { font-size: 11px; }
+#dex .pk-card .where { font-size: 11px; color: var(--pk-dim); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dex .pk-card.here .where { color: var(--pk-here); font-weight: 700; }
+#dex .pk-card .k { position: absolute; left: 8px; top: 6px; color: var(--pk-here); font-weight: 700; font-size: 12px; }
+
+/* NEW: not looked at yet (tiles and cards) */
+#dex-grid .cell.new, #dex .pk-card.new { box-shadow: inset 0 0 0 2px var(--pk-new); }
+#dex-grid .cell.new { background: var(--pk-new-soft); animation: pk-new 1.6s ease-in-out infinite; }
+#dex .pk-newb { position: absolute; font-style: normal; font-weight: 800; color: var(--pk-ink); background: var(--pk-new); border-radius: 3px; }
+#dex-grid .cell .pk-newb { left: 1px; bottom: 0; font-size: 8px; padding: 0 2px; line-height: 11px; }
+#dex .pk-card .pk-newb { left: 6px; top: 6px; font-size: 9px; padding: 0 3px; line-height: 12px; }
+@keyframes pk-new { 50% { box-shadow: inset 0 0 0 2px rgba(245, 197, 66, .35); } }
+
+/* nothing to show */
+#dex .pk-empty { grid-column: 1 / -1; padding: 48px 12px; text-align: center; line-height: 2; color: var(--pk-fg); }
+#dex .pk-empty[hidden] { display: none; }
+#dex .pk-empty button { margin-left: 10px; border: 0; border-radius: 8px; padding: 4px 12px; font: inherit; font-weight: 700; cursor: pointer; background: var(--pk-title); color: var(--pk-ink); }
+
+/* the preview */
+#dex .dex-preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px; text-align: center; }
+#dex-img { image-rendering: pixelated; }
+#dex-img.seen { filter: brightness(0) opacity(.6); }
+#dex-name { font-weight: 700; }
+#dex-meta { color: var(--pk-dim); }
+#dex-take { border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; font-weight: 700; cursor: pointer; background: var(--pk-title); color: var(--pk-ink); }
+#dex-take[hidden] { display: none; }
+#dex-take.confirm { background: var(--pk-new); }
+#dex-take:disabled { opacity: .5; cursor: default; }
+#dex-from { display: flex; flex-direction: column; gap: 5px; width: 100%; font-size: 12px; }
+#dex-from button { border: 1px solid var(--pk-edge); border-radius: 8px; padding: 5px 8px; font: inherit; cursor: pointer; background: var(--pk-chip); color: var(--pk-fg); }
+#dex-from button:hover { background: var(--pk-sel); }
+#dex-from button.confirm { background: var(--pk-new); color: var(--pk-ink); border-color: var(--pk-new); }
+
+/* the hint row */
+#dex .pk-window > footer { display: flex; justify-content: space-between; gap: 12px; padding: 6px 14px; border-top: 1px solid var(--pk-line); font-size: 12px; color: var(--pk-dim); }
