@@ -61,7 +61,7 @@ function sandbox(name, { data = "empty", folders = ["proj"], session = null } = 
     CVIM_DESKTOP_TEST: "1", CVIM_WILD_CHANCE: "0",
     // "legacy": the real-path layout (data under a fake home), so the first-run copy runs
     ...(legacy ? { CVIM_TEST_DATA_ROOT: path.join(dir, "home") } : { CVIM_CACHE_DIR: path.join(dir, "cache"), CVIM_STATE_DIR: path.join(dir, "state") }),
-    CODEX_HOME: path.join(dir, "codex"),
+    CODEX_HOME: path.join(dir, "codex"), SHELL: testShell(dir),
     CLAUDE_CONFIG_DIR: path.join(dir, "claudecfg"), CVIM_DESKTOP_USERDATA: path.join(dir, "profile"),
     CVIM_DESKTOP_SHOTS: path.join(dir, "shots"), CVIM_DESKTOP_LOG: path.join(dir, "log.txt"), CVIM_DESKTOP_QUIT_AFTER: "120000",
   };
@@ -112,10 +112,20 @@ function seed(data, dir, folder) {
   put("pokedex.json", { 134: entry(134), 37: entry(37), 222: entry(222), 418: entry(418), 422: entry(422, true), 25: entry(25), 16: entry(16, false, { caught: false }) });
 }
 
+// The shell the test app runs: zsh with its own small rc (ZDOTDIR), never the user's ~/.zshrc —
+// a test instance killed while that rc was starting left pyenv's rehash lock behind, and every
+// new zsh of the user's waited 60 s (2026-10-05). Also makes the prompt the same on every Mac.
+function testShell(dir) {
+  const z = path.join(dir, "zdot"), p = path.join(dir, "test-shell");
+  fs.mkdirSync(z, { recursive: true });
+  fs.writeFileSync(path.join(z, ".zshrc"), "PS1='lab$ '\n");
+  fs.writeFileSync(p, `#!/bin/sh\nexport ZDOTDIR=${JSON.stringify(z)}\nexec /bin/zsh "$@"\n`, { mode: 0o755 });
+  return p;
+}
 // a shell that takes `seconds` to start (a heavy ~/.zshrc): Tamer reads the login environment through it
 function slowShell(dir, seconds) {
   const p = path.join(dir, "slow-shell");
-  fs.writeFileSync(p, `#!/bin/sh\nsleep ${Number(seconds)}\nexec /bin/zsh "$@"\n`, { mode: 0o755 });
+  fs.writeFileSync(p, `#!/bin/sh\nsleep ${Number(seconds)}\nexec ${JSON.stringify(testShell(dir))} "$@"\n`, { mode: 0o755 });
   return p;
 }
 
