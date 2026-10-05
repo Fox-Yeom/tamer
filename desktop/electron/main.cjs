@@ -839,6 +839,8 @@ const commands = {
     const open = [...new Set([...restored, ...handed])];
     return {
       home: HOME, shell: agents.userShell(), recent: recentDirs(), open,
+      // in front: the folder handed in (dropped on the app to launch it), else last time's front tab
+      front: handed.at(-1) || (restored.length ? sess.active : null),
       restored: restored.length ? { tabs: restored, active: sess.active, sessions: sess.sessions || {}, shell: sess.shell || [] } : null,
       // a new folder opens as a shell; the agent starts with ⌘G (or typed in the shell). Tests and
       // CVIM_DESKTOP_AUTOSTART=1: the agent starts right away like before
@@ -1128,6 +1130,8 @@ const testCommands = {
     await dbg.sendCommand("Input.insertText", { text });
   },
   links_opened_test: () => linksOpened.splice(0),
+  // the window's inner size (lab: narrow windows)
+  win_resize_test({ w, h }) { win.setContentSize(Math.max(200, Number(w) || 800), Math.max(200, Number(h) || 600)); },
   // a UI scene: this window as a picture in $CVIM_DESKTOP_SHOTS/<name>.png, and how much of it differs
   // from $CVIM_UI_BASELINE/<name>.png (share of pixels whose colour moved more than a little)
   async ui_shot({ name }) {

@@ -7,8 +7,10 @@ const os = require("node:os");
 const path = require("node:path");
 
 const HOME = os.homedir();
-const DATA = path.join(HOME, ".cache/tamer");
-const LEGACY = path.join(HOME, ".cache/cvim");
+// tests only (npm run lab): both folders under a sandbox, so the first-run copy can be tried
+const TEST_ROOT = process.env.CVIM_DESKTOP_TEST === "1" && process.env.CVIM_TEST_DATA_ROOT;
+const DATA = TEST_ROOT ? path.join(TEST_ROOT, "tamer") : path.join(HOME, ".cache/tamer");
+const LEGACY = TEST_ROOT ? path.join(TEST_ROOT, "cvim") : path.join(HOME, ".cache/cvim");
 // not copied: hook logs (tabs/), the Neovim app's own state (overlay/, backup/), old agent files
 const LEGACY_SKIP = new Set(["tabs", "overlay", "backup", "agents"]);
 function adoptLegacy() {
@@ -49,8 +51,27 @@ function findRoot() {
 }
 const ROOT = findRoot();
 
+// A file that is there but can't be read (cut off mid-write by another tool, a full disk, an edit)
+// gets the fallback — and the next write would replace it. So it's copied aside first, once:
+// backup/corrupt/<name>.<time> (owner-only), and the data can still be put back by hand.
+const keptCorrupt = new Set();
+function keepCorrupt(file) {
+  if (keptCorrupt.has(file)) return;
+  keptCorrupt.add(file);
+  try {
+    if (!fs.statSync(file).size) return;
+    const dir = path.join(CACHE, "backup", "corrupt");
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    const to = path.join(dir, `${path.basename(file)}.${new Date().toISOString().replace(/[:.]/g, "-")}`);
+    fs.copyFileSync(file, to);
+    fs.chmodSync(to, 0o600);
+    console.error(`unreadable ${file} — kept a copy in ${to}`);
+  } catch {}
+}
 function readJson(file, fallback) {
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); } catch { return fallback; }
+  let text;
+  try { text = fs.readFileSync(file, "utf8"); } catch { return fallback; } // not there yet
+  try { return JSON.parse(text); } catch { keepCorrupt(file); return fallback; }
 }
 
 // CVIM's data is the user's alone (POLICY 11.3, S1): folders 700, files 600

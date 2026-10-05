@@ -2510,6 +2510,15 @@ function labState() {
     partner: active?.partner?.name || null, choosePending: !!active && !active.partner?.uid, wild: wild.active(),
     toast: $("#toast")?.classList.contains("show") ? $("#toast").textContent : null,
     focus: document.activeElement?.id || document.activeElement?.className?.toString().slice(0, 40) || null,
+    sessions: tabs.map((t) => t.sessions?.length || 1),
+    line: (() => { // the focused terminal's cursor line
+      const p = [...panes.values()].find((x) => x.term.textarea === document.activeElement);
+      if (!p) return null;
+      const b = p.term.buffer.active;
+      return lineText(p.term, b.baseY + b.cursorY + 1).text.trimEnd();
+    })(),
+    width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth,
+    pokeFits: dexOpen() ? (() => { const r = $("#dex .pk-window")?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() : null,
   };
 }
 const LAB_CALLS = { openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
@@ -2524,7 +2533,7 @@ async function labRun(steps) {
       else if (s.key) {
         const k = s.key, code = /^[0-9]$/.test(k) ? `Digit${k}` : k.length === 1 ? `Key${k.toUpperCase()}` : k;
         const keyCode = { Escape: 27, Enter: 13, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Tab: 9, Backspace: 8 }[k] || k.toUpperCase().charCodeAt(0);
-        await invoke("key_test", { key: k, code, keyCode, ...(k.length === 1 ? { text: k } : {}) });
+        await invoke("key_test", { key: k, code, keyCode, modifiers: s.mods || 0, ...(s.commands ? { commands: s.commands } : {}), ...(k.length === 1 && !s.mods ? { text: k } : {}) });
       } else if (s.click) {
         const el = document.querySelector(s.click);
         if (!el) { await log(`lab-missing ${s.click}`); continue; }
@@ -2532,6 +2541,9 @@ async function labRun(steps) {
         await invoke("click_test", { x: r.left + r.width / 2, y: r.top + r.height / 2 });
       } else if (s.probe) await log(`lab-probe ${s.probe} +${Math.round(performance.now())}ms ${JSON.stringify(labState())}`); // ms since the page began
       else if (s.shot) await invoke("shot_test", { name: s.shot });
+      else if (s.ime != null) await invoke("ime_compose", { text: s.ime }); // Hangul being composed
+      else if (s.text != null) await invoke("ime_commit", { text: s.text }); // text committed (typed / IME done)
+      else if (s.resize) { await invoke("win_resize_test", { w: s.resize[0], h: s.resize[1] }); await wait(400); }
       else if (s.call && LAB_CALLS[s.call]) await LAB_CALLS[s.call]();
     }
   } catch (e) { await log(`lab-error ${e?.stack || e}`); }
@@ -3259,7 +3271,7 @@ async function main() {
     for (const key of info.restored?.sessions?.[dir] || []) await newSession(tab, key); // null: was a shell
     if (tab?.sessions?.length > 1) switchSession(tab, tab.id, { quiet: true });
   }
-  if (info.restored?.active) { const t = tabs.find((x) => x.cwd === info.restored.active); if (t) selectTab(t); }
+  if (info.front) { const t = tabs.find((x) => x.cwd === info.front); if (t && t !== active) selectTab(t); } // a dropped folder wins over last time's front tab
   if (info.restored) toast(`지난번 탭 ${info.restored.tabs.length}개를 다시 열었어요 (대화 이어서)`);
   if (!tabs.length) showStart(true);
   invoke("startup_mark", { what: tabs.length ? "ui first tab shown" : "ui start screen shown" });

@@ -38,33 +38,64 @@ const SEED_IDS = [[1], [4], [7], [16], [25], [37], [134], [222], [418], [422, tr
 
 // ── a sandbox: its folders and the env that points the app at them ──────────
 // data: "empty" (nothing, like a brand-new Mac) · "newuser" (empty box, three starters ready) ·
-//       "owner" (six Pokémon, one new, one another folder's partner, the folder without one)
-function sandbox(name, { data = "empty", folders = ["proj"] } = {}) {
+//       "owner" (six Pokémon, one new, one another folder's partner, the folder without one) ·
+//       "legacy" (only the Neovim CVIM's ~/.cache/cvim: a partner for the first folder, a Pokédex —
+//       the app copies it into its own folder on the first launch) · "corrupt" (newuser whose
+//       box.json, pokedex.json and folders.json are cut off mid-write)
+// session: last time's tabs ({ tabs: [folder names], active, shell, quit }) in ui/desktop_session.json
+function sandbox(name, { data = "empty", folders = ["proj"], session = null } = {}) {
   const dir = path.join(WORK, "runs", name);
   fs.rmSync(dir, { recursive: true, force: true });
   for (const d of ["cache", "state", "codex", "claudecfg", "profile", "shots", "other", ...folders]) fs.mkdirSync(path.join(dir, d), { recursive: true });
-  seed(data, dir);
+  const folder = (f = folders[0]) => path.join(dir, f);
+  const legacy = data === "legacy";
+  const C = legacy ? path.join(dir, "home", "tamer") : path.join(dir, "cache"); // where the app keeps its data
+  seed(data, dir, folder);
+  if (session) {
+    fs.mkdirSync(path.join(C, "ui"), { recursive: true });
+    const abs = (l) => (l || []).map(folder);
+    fs.writeFileSync(path.join(C, "ui", "desktop_session.json"), JSON.stringify({ tabs: abs(session.tabs), active: session.active ? folder(session.active) : null,
+      sessions: {}, shell: abs(session.shell ?? session.tabs), ...(session.quit ? { quit: true } : {}) }));
+  }
   const env = {
     CVIM_DESKTOP_TEST: "1", CVIM_WILD_CHANCE: "0",
-    CVIM_CACHE_DIR: path.join(dir, "cache"), CVIM_STATE_DIR: path.join(dir, "state"), CODEX_HOME: path.join(dir, "codex"),
+    // "legacy": the real-path layout (data under a fake home), so the first-run copy runs
+    ...(legacy ? { CVIM_TEST_DATA_ROOT: path.join(dir, "home") } : { CVIM_CACHE_DIR: path.join(dir, "cache"), CVIM_STATE_DIR: path.join(dir, "state") }),
+    CODEX_HOME: path.join(dir, "codex"),
     CLAUDE_CONFIG_DIR: path.join(dir, "claudecfg"), CVIM_DESKTOP_USERDATA: path.join(dir, "profile"),
     CVIM_DESKTOP_SHOTS: path.join(dir, "shots"), CVIM_DESKTOP_LOG: path.join(dir, "log.txt"), CVIM_DESKTOP_QUIT_AFTER: "120000",
   };
-  return { dir, env, folder: (f = folders[0]) => path.join(dir, f) };
+  return { dir, env, folder, data: C };
 }
-function seed(data, dir) {
-  const C = path.join(dir, "cache"), put = (f, v) => fs.writeFileSync(path.join(C, f), JSON.stringify(v));
+function seed(data, dir, folder) {
   if (data === "empty") return;
+  const C = data === "legacy" ? path.join(dir, "home", "cvim") : path.join(dir, "cache");
+  fs.mkdirSync(C, { recursive: true });
+  const put = (f, v) => fs.writeFileSync(path.join(C, f), typeof v === "string" ? v : JSON.stringify(v));
   ensureSprites(SEED_IDS);
   fs.mkdirSync(path.join(C, "pokemon"), { recursive: true });
   for (const f of fs.readdirSync(path.join(SPRITES, "pokemon"))) fs.copyFileSync(path.join(SPRITES, "pokemon", f), path.join(C, "pokemon", f));
   const now = Math.floor(Date.now() / 1000), h = 3600;
   const info = (id, shiny) => JSON.parse(fs.readFileSync(sprite(id, shiny) + ".json", "utf8"));
   const entry = (id, shiny, extra = {}) => { const i = info(id, shiny); return { name: i.name_ko || i.name_en, types: i.types || [], count: 1, first: now - 30 * 24 * h, ...(shiny ? { shiny: true } : {}), ...extra }; };
+  const starters = { set: [{ id: 1, shiny: false }, { id: 4, shiny: false }, { id: 7, shiny: false }] };
   if (data === "newuser") {
     put("box.json", { next: 1, mons: [] });
-    put("starters.json", { set: [{ id: 1, shiny: false }, { id: 4, shiny: false }, { id: 7, shiny: false }] });
+    put("starters.json", starters);
     put("pokedex.json", {});
+    return;
+  }
+  if (data === "corrupt") { // a file cut off mid-write (by another tool, a full disk …)
+    put("box.json", '{"next":3,"mons":[{"uid":1,"id":25,"shiny":false,"xp":40,"since_evo":4,"how":"starter","at":1,"folder":null},{"uid":2,"id":13');
+    put("pokedex.json", '{"25":{"name":"피카츄","count":3');
+    put("folders.json", "{");
+    put("starters.json", starters);
+    return;
+  }
+  if (data === "legacy") { // the Neovim CVIM before boxes: a partner per folder, a Pokédex
+    put("folders.json", { [folder()]: { id: 25, xp: 30, since_evo: 3, name: info(25).name_ko } });
+    put("pokedex.json", { 25: entry(25), 16: entry(16), 7: entry(7, false, { caught: false }) });
+    put("recent_dirs", folder() + "\n");
     return;
   }
   if (data !== "owner") throw new Error(`unknown data set ${data}`);

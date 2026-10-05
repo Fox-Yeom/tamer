@@ -35,7 +35,8 @@ if (!picked.length) { console.error("no case matches"); process.exit(1); }
   const before = T.realSnapshot();
   const results = [];
   for (const { c, v, name } of picked.flatMap(variants)) {
-    const box = T.sandbox(name.replace(/[^\w@=.-]/g, "_"), { data: c.data, folders: c.folders?.length ? c.folders : ["proj"] });
+    const made = [...(c.folders || []), ...(c.make || [])];
+    const box = T.sandbox(name.replace(/[^\w@=.-]/g, "_"), { data: c.data, folders: made.length ? made : ["proj"], session: c.session });
     const env = { ...box.env, ...(c.env || {}), CVIM_LAB_STEPS: JSON.stringify(c.steps) };
     if (c.offline) env.CVIM_TEST_OFFLINE = "1";
     if (c.slowShell) env.SHELL = T.slowShell(box.dir, c.slowShell);
@@ -44,7 +45,7 @@ if (!picked.length) { console.error("no case matches"); process.exit(1); }
     const probe = {};
     for (const m of log.matchAll(/^lab-probe (\S+) \+(\d+)ms (\{.*\})$/gm)) { try { probe[m[1]] = { ...JSON.parse(m[3]), _ms: Number(m[2]) }; } catch {} }
     let fails = [];
-    try { fails = c.check({ probe, log, v }).filter((x) => typeof x === "string"); } // true = ok, a string = what went wrong
+    try { fails = c.check({ probe, log, v, box }).filter((x) => typeof x === "string"); } // true = ok, a string = what went wrong
     catch (e) { fails = [`check threw: ${e.message}`]; }
     if (timedOut) fails.unshift("시간 초과(lab-done이 안 옴)");
     for (const m of log.matchAll(/^lab-(error|timeout|missing) (.*)$/gm)) fails.push(`${m[1]}: ${m[2].slice(0, 120)}`);
