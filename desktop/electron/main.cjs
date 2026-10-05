@@ -866,6 +866,7 @@ const commands = {
         cost_test: !!process.env.CVIM_DESKTOP_COST_TEST, // ≈$ for a Claude typed in the shell (#23)
         box_test: !!process.env.CVIM_DESKTOP_BOX_TEST, // "내 포켓몬" (#27)
         choose_shot: !!process.env.CVIM_DESKTOP_CHOOSE_SHOT, // the partner dialog, captured (UI checks)
+        lab: (() => { try { return JSON.parse(process.env.CVIM_LAB_STEPS || "null"); } catch { return null; } })(), // npm run lab
         first_launch: !!process.env.CVIM_DESKTOP_FIRST_LAUNCH, // as a first launch (the agents dialog), nothing scripted
         drop_check: !!process.env.CVIM_DESKTOP_DROP_CHECK, // a folder dropped on the app to launch it
         first_run: !!process.env.CVIM_DESKTOP_FIRST_RUN, // a new user's first launch (agents dialog + first partner)
@@ -1264,7 +1265,7 @@ app.setAboutPanelOptions({
 
 // what the first screen needs doesn't wait for the shell environment (1–3 s with a heavy ~/.zshrc,
 // #31); everything that runs a shell or an agent, or talks to the core, does
-const NO_ENV = new Set(["app_info", "startup_mark", "log_line"]);
+const NO_ENV = new Set(["app_info", "startup_mark", "log_line", "recent_dirs"]);
 ipcMain.handle("host-invoke", async (e, cmd, args) => {
   if (ready && !NO_ENV.has(cmd)) await ready; // the core runs and agents have the terminal's environment
   // only our own pages may call in: the main window (dist/index.html, every command) and the

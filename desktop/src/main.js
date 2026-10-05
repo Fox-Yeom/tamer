@@ -1907,6 +1907,7 @@ let startItems = [];
 let startSel = 0;
 let recentCount = 0;
 
+let startShownOnce = false;
 async function showStart(required) {
   const recent = await invoke("recent_dirs");
   // a folder handed to the app (dropped on it to launch it) may be opening meanwhile: not over it
@@ -1927,6 +1928,7 @@ async function showStart(required) {
   $("#start").dataset.required = required ? "1" : "";
   $("#start-esc").hidden = !!required;
   $("#start").hidden = false;
+  if (required && !startShownOnce) { startShownOnce = true; invoke("startup_mark", { what: "start screen on screen" }); }
   startSel = 0;
   markStart();
 }
@@ -2488,6 +2490,51 @@ async function wildTest() {
   await wait(14000); // CVIM_WILD_STAY: it goes back to the grass
   await log(`left text=${text()}`);
   await log("autotype done");
+}
+
+// ── test lab (npm run lab, docs/TESTING.md) ──────────────────────────────────────────────────────
+// A case hands in a list of steps (CVIM_LAB_STEPS, JSON); the app runs them and logs "lab-probe"
+// lines — what's on screen, as data — for the runner to check. No test code per case in here.
+//   { wait: ms } · { until: "path", timeout } (a labState() value turns truthy) · { key: "Escape" }
+//   { click: "css selector" } · { probe: "name" } · { shot: "name" } · { call: "openDex" | … }
+function labState() {
+  const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
+  const top = el?.closest("#menu") ? "menu" : el?.closest("#agents") ? "agents" : el?.closest("#diffview") ? "diff"
+    : el?.closest("#dex") ? "poke" : el?.closest("#start") ? "start" : "main";
+  const st = dexState?.chooseOpts?.starter;
+  return {
+    tabs: tabs.map((t) => base(t.cwd)), active: active ? base(active.cwd) : null, start: startOpen(),
+    poke: dexOpen() ? dexState?.view || "dex" : null, choose: chooseOpen(), agents: agentsOpen(), menu: !$("#menu").hidden, diff: diffOpen(), top,
+    starters: st ? { ready: !!st.ready, n: st.set.length } : null, cards: document.querySelectorAll("#box-grid .pk-card[data-i]").length,
+    partner: active?.partner?.name || null, choosePending: !!active && !active.partner?.uid, wild: wild.active(),
+    toast: $("#toast")?.classList.contains("show") ? $("#toast").textContent : null,
+    focus: document.activeElement?.id || document.activeElement?.className?.toString().slice(0, 40) || null,
+  };
+}
+const LAB_CALLS = { openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
+async function labRun(steps) {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const log = (line) => invoke("log_line", { line });
+  const get = (path) => path.split(".").reduce((o, k) => (o == null ? o : o[k]), labState());
+  try {
+    for (const s of steps) {
+      if (s.wait != null) await wait(s.wait);
+      else if (s.until) { const end = performance.now() + (s.timeout || 15000); while (!get(s.until) && performance.now() < end) await wait(100); if (!get(s.until)) await log(`lab-timeout ${s.until}`); }
+      else if (s.key) {
+        const k = s.key, code = /^[0-9]$/.test(k) ? `Digit${k}` : k.length === 1 ? `Key${k.toUpperCase()}` : k;
+        const keyCode = { Escape: 27, Enter: 13, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Tab: 9, Backspace: 8 }[k] || k.toUpperCase().charCodeAt(0);
+        await invoke("key_test", { key: k, code, keyCode, ...(k.length === 1 ? { text: k } : {}) });
+      } else if (s.click) {
+        const el = document.querySelector(s.click);
+        if (!el) { await log(`lab-missing ${s.click}`); continue; }
+        const r = el.getBoundingClientRect();
+        await invoke("click_test", { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+      } else if (s.probe) await log(`lab-probe ${s.probe} +${Math.round(performance.now())}ms ${JSON.stringify(labState())}`); // ms since the page began
+      else if (s.shot) await invoke("shot_test", { name: s.shot });
+      else if (s.call && LAB_CALLS[s.call]) await LAB_CALLS[s.call]();
+    }
+  } catch (e) { await log(`lab-error ${e?.stack || e}`); }
+  await log("lab-done");
 }
 
 // A first launch as a new user has it: nothing on this Mac yet (the starters come from PokéAPI), the
@@ -3199,8 +3246,9 @@ async function a2Test() {
 
 // ── start ───────────────────────────────────────────────────────────────────
 async function main() {
-  info = await invoke("app_info"); // waits for the shell environment (host-invoke awaits it)
+  info = await invoke("app_info"); // doesn't wait for the shell environment (#31)
   invoke("startup_mark", { what: "ui has app info" });
+  if (info.test.lab) labRun(info.test.lab); // the lab watches the start itself
   invoke("wild_state").then((w) => { wildOn = w.enabled; if (w.current) wild.show(w.current); });
   if (info.test.sec_test) secTest();
   // session restore: last time's tabs (agents resume their conversations), then the last active one

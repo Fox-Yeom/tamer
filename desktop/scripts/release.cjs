@@ -31,6 +31,13 @@ if (git(["rev-parse", "HEAD"]) !== git(["rev-parse", "origin/main"])) {
   process.exit(1);
 }
 
+// the test lab passed on exactly this commit (docs/TESTING.md): every smoke case, real data untouched
+const lab = (() => { try { return JSON.parse(fs.readFileSync(path.join(require("node:os").homedir(), ".cache/tamer-dev/lab-last.json"), "utf8")); } catch { return null; } })();
+if (!lab || lab.head !== git(["rev-parse", "HEAD"]) || lab.dirty || !lab.smoke) {
+  console.error(`the test lab hasn't passed on this commit — cd desktop && npm run lab -- --tag smoke (last: ${lab ? `${lab.head.slice(0, 7)}${lab.dirty ? " with uncommitted changes" : ""}, smoke ${lab.smoke ? "pass" : "not met"}` : "none"})`);
+  process.exit(1);
+}
+
 // a version is released once (docs/VERSIONING.md): its tag and DMGs are never replaced. A release
 // that already exists means the version wasn't bumped (2026-10-05: a failed bump went unnoticed and
 // the release step re-uploaded the previous version) — stop. Only notes: --notes-only

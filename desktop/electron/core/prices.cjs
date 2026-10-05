@@ -31,6 +31,7 @@ function get() {
     // tests: a local copy of the list instead of the network
     const source = process.env.CVIM_PRICES_JSON
       ? Promise.resolve(readJson(process.env.CVIM_PRICES_JSON, null))
+      : process.env.CVIM_DESKTOP_TEST === "1" && process.env.CVIM_TEST_OFFLINE ? Promise.reject(new Error("offline (test)"))
       : fetch(URL, { headers: { "User-Agent": "tamer" }, signal: AbortSignal.timeout(15000) }).then((r) => (r.ok ? r.json() : null));
     loading = source.then((all) => {
       const models = pick(all);

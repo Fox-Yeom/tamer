@@ -20,6 +20,7 @@ let rng = Math.random; // tests can make picks predictable
 const randInt = (a, b) => a + Math.floor(rng() * (b - a + 1));
 
 async function get(url, as = "json") {
+  if (process.env.CVIM_DESKTOP_TEST === "1" && process.env.CVIM_TEST_OFFLINE) throw new Error("offline (test)"); // npm run lab
   const r = await fetch(url, { headers: { "User-Agent": "cvim" }, signal: AbortSignal.timeout(15000) });
   if (!r.ok) throw new Error(`${r.status} ${url}`);
   return as === "json" ? r.json() : Buffer.from(await r.arrayBuffer());
