@@ -464,7 +464,7 @@ sleep 30
       const a = (probe.log?.activity || []).map((x) => x.trim());
       return [
         ok(a.length === 4, `줄 수 ${a.length} ${JSON.stringify(a)} (PostToolUse 없이 4줄)`),
-        ok(/^✅ Stop all good/.test(a[0] || ""), `첫 줄(가장 새것) ${a[0]}`),
+        ok(/^✅ Stop\s*$/.test(a[0] || ""), `첫 줄(가장 새것) ${a[0]} — 응답 본문 없이 (#53)`),
         ok(/^✏️ Edit app\.js/.test(a[1] || "") || /^✏️ Edit src\/app\.js/.test(a[1] || ""), `둘째 줄 ${a[1]}`),
         ok(/^📖 Grep rg needle src/.test(a[2] || ""), `셋째 줄 ${a[2]}`),
         ok(/^💬 UserPromptSubmit/.test(a[3] || ""), `넷째 줄 ${a[3]}`),
@@ -648,6 +648,40 @@ sleep 30
       ok(/^⎇ [0-9a-f]{7,}$/.test(probe.t3?.branch?.text || "") && /브랜치가 아닌 커밋/.test(probe.t3?.branch?.title || ""), `detached ${JSON.stringify(probe.t3?.branch)}`),
       ok(probe.t4?.branch?.text === "", `git 아닌 폴더 ${JSON.stringify(probe.t4?.branch)}`),
     ],
+  },
+  {
+    id: "codex-failed-turn", tags: ["smoke", "agents", "poke"], what: "Codex 실패한 턴(task_complete.error): 💥 실패 · 종류 한글, EXP·야생 없음, 응답 본문은 안 보임 (#53)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], timeoutMs: 70000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    setup: (box) => evolvePartner(box),
+    files: { "fakebin/codex": `#!/bin/sh
+[ "$1" = "--version" ] && { echo 'codex-cli 9.9.9-lab'; exit 0; }
+d="$CODEX_HOME/sessions/$(date +%Y/%m/%d)"; mkdir -p "$d"; f="$d/rollout-lab.jsonl"
+w() { printf '%s\\n' "$1" >> "$f"; }
+sleep 2
+printf '{"type":"session_meta","payload":{"cwd":"%s"}}\\n' "$(pwd -P)" > "$f"
+w '{"type":"event_msg","payload":{"type":"task_started"}}'
+w '{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"SECRET-REPLY-TEXT"}}'
+sleep 9
+w '{"type":"event_msg","payload":{"type":"task_started"}}'
+w '{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"stream error url: https://api.example/v1 req_LABSECRET","codex_error_info":"server_overloaded"}}}'
+sleep 40
+` },
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 800 }, { call: "focusShell" },
+      { text: "codex" }, { wait: 200 }, { key: "Enter" }, { wait: 6000 }, { probe: "ok" },
+      { until: "astate", match: "error", timeout: 15000 }, { probe: "failed" }, { invoke: "overlay_payload_test", log: true }, { wait: 2500 }, { probe: "after" }],
+    check: ({ probe, log }) => {
+      const ov = JSON.parse(log.match(/^lab-invoke overlay_payload_test (.*)$/m)?.[1] || "{}");
+      const exps = log.split("\n").filter((l) => /^exp ws=/.test(l));
+      const act = (probe.failed?.activity || []).map((x) => x.trim());
+      return [
+        ok(/💥 실패 · 서버 과부하/.test(probe.failed?.doing || ""), `상단 바 "${probe.failed?.doing}"`),
+        ok(/^💥 StopFailure 서버 과부하/.test(act[0] || ""), `활동 기록 첫 줄 "${act[0]}"`),
+        ok(!JSON.stringify(probe.failed || {}).includes("SECRET-REPLY-TEXT") && !JSON.stringify(probe.failed || {}).includes("LABSECRET"), "응답 본문이나 오류 문장이 화면에 나옴"),
+        ok(ov.current?.ended === "error" && ov.current?.endedKind === "server_overloaded", `오버레이 ${ov.current?.ended} ${ov.current?.endedKind}`),
+        ok(exps.length === 1, `EXP ${exps.length}번 (성공 1번만이어야)`),
+        ok(!/^wild appeared/m.test(log.split("\n").slice(log.split("\n").findIndex((l) => /-> error/.test(l))).join("\n")), "실패 뒤에 야생이 나옴"),
+      ];
+    },
   },
   {
     id: "claude-typed-unlinked", tags: ["smoke", "agents"], what: "연결 안 한 셸에서 친 Claude: 대화 기록 방식, 상단 바에 \"5h·7d ?\" 안내 (#45)",

@@ -35,7 +35,16 @@ if (git(["rev-parse", "HEAD"]) !== git(["rev-parse", "origin/main"])) {
 const lab = (() => { try { return JSON.parse(fs.readFileSync(path.join(require("node:os").homedir(), ".cache/tamer-dev/lab-last.json"), "utf8")); } catch { return null; } })();
 // — or on exactly this commit's desktop/ content before it was committed (the run records the tree it built)
 const commitTree = git(["rev-parse", "HEAD:desktop"]);
-const labOk = lab?.smoke && ((lab.head === git(["rev-parse", "HEAD"]) && !lab.dirty) || (lab.tree && lab.tree === commitTree));
+// npm run bump after the run changes only package.json's "version" line: that difference is allowed
+const onlyBump = (() => {
+  if (!lab?.tree || lab.tree === commitTree) return false;
+  try {
+    if (git(["diff", "--name-only", lab.tree, commitTree]) !== "package.json") return false;
+    const lines = git(["diff", "-U0", lab.tree, commitTree, "--", "package.json"]).split("\n").filter((l) => /^[+-](?![+-])/.test(l));
+    return lines.length === 2 && lines.every((l) => /^[+-]\s*"version": "[^"]+",?$/.test(l));
+  } catch { return false; }
+})();
+const labOk = lab?.smoke && ((lab.head === git(["rev-parse", "HEAD"]) && !lab.dirty) || (lab.tree && lab.tree === commitTree) || onlyBump);
 if (!labOk) {
   console.error(`the test lab hasn't passed on this commit's content — cd desktop && npm run lab -- --tag smoke (last: ${lab ? `${lab.head.slice(0, 7)}${lab.dirty ? " with uncommitted changes" : ""}, content ${lab.tree?.slice(0, 10) || "?"} vs commit ${commitTree.slice(0, 10)}, smoke ${lab.smoke ? "pass" : "not met"}` : "none"})`);
   process.exit(1);

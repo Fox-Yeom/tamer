@@ -433,7 +433,8 @@ function outputSeen(wsId) {
 // unattended runs (STA-20): no new event for this long while working = a stall is suspected
 // (tests: CVIM_STALL_SECS)
 const STALL_MS = (TEST && Number(process.env.CVIM_STALL_SECS) * 1000) || 10 * 60 * 1000;
-const TIMES = (p) => ({ state: p.state, turn_at: p.turn_at, state_at: p.state_at, event_at: p.event_at, took: p.took, watch: p.watch });
+const TIMES = (p) => ({ state: p.state, turn_at: p.turn_at, state_at: p.state_at, event_at: p.event_at, took: p.took, watch: p.watch,
+  kind: p.state === "error" ? p.detail || null : null }); // how it failed (#53): the kind, never the error text
 // the times of the state the overlay shows for a tab (shownState's pick)
 function shownTimes(ws) {
   if (ws.shell && ws.swapped) return ws.shell.times || null;
@@ -462,6 +463,8 @@ function onCoreEvent(msg) {
       sess.times = TIMES(msg.payload);
       send("agent-state", { ws: ws.id, session: sess.id, source: "agent", agent: agentInfo(sess), ...msg.payload });
     }
+    // the core sends the transition before this state: a failure's kind arrives here (#53)
+    if (ws.ended?.how === "error" && !ws.ended.kind && msg.payload.state === "error") ws.ended.kind = msg.payload.detail || null;
     if (ws.state !== shownState(ws)) ws.state = shownState(ws);
     overlayUpdate(); // the times move with every event (STA-20)
   }
@@ -472,7 +475,8 @@ function onCoreEvent(msg) {
   if (msg.event === "transition" && ["done", "interrupted", "error"].includes(msg.to) && msg.from !== msg.to) {
     // which shell (several in the folder): the bubble says "셸 2 완료" — another shell's "입력 필요"
     // must not hide it
-    ws.ended = { how: msg.to, at: Date.now(), n: sess && ws.sessions.length > 1 ? ws.sessions.indexOf(sess) + 1 : null };
+    ws.ended = { how: msg.to, at: Date.now(), n: sess && ws.sessions.length > 1 ? ws.sessions.indexOf(sess) + 1 : null,
+      kind: msg.to === "error" ? (fromShell ? ws.shell?.times : sess?.times)?.kind || null : null }; // #53
     overlayUpdate();
     setTimeout(overlayUpdate, 15100); // the bubble goes away
   }
@@ -785,6 +789,7 @@ function overlayPayload() {
     ws: ws.id, name: path.basename(ws.cwd), state: ws.state || "idle", active: ws.id === activeWs, sessions: ws.sessions?.length || 1,
     ended: ws.ended && now - ws.ended.at < 15000 ? ws.ended.how : null,
     endedN: ws.ended && now - ws.ended.at < 15000 ? ws.ended.n : null,
+    endedKind: ws.ended && now - ws.ended.at < 15000 ? ws.ended.kind : null, // #53
     times: shownTimes(ws), // STA-20
     partner: ws.partner && { name: ws.partner.name, shiny: ws.partner.shiny, gif: ws.partner.gif, types: ws.partner.types },
   }));

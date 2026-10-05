@@ -8,6 +8,7 @@ import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
 import { createWild, josa } from "./wild.js";
 import { timing, dur, MINUTE } from "./elapsed.js";
+import { failLabel } from "./fail.js";
 import "./poke/poke.css";
 import { pkCard } from "./poke/card.js";
 
@@ -903,7 +904,7 @@ function renderBar(tab) {
   const st = tab.state;
   const doing = $("#doing");
   const what = DOING[st.state] || "";
-  const detail = DETAIL_STATES.includes(st.state) ? ` ${short(st.detail).slice(0, 32)}` : "";
+  const detail = DETAIL_STATES.includes(st.state) ? ` ${short(st.detail).slice(0, 32)}` : st.state === "error" && failLabel(st.detail) ? ` · ${failLabel(st.detail)}` : ""; // #53 how it failed
   // unattended runs (STA-20): · 12분 working, · 4분째 waiting for you, 23분 걸림 when done, ⏳ no change
   const tm = timing(st, { stallMs: info.stallMs });
   const when = tm.run ? ` · ${tm.run}` : tm.wait ? ` · ${tm.wait}째` : tm.took ? ` · ${tm.took} 걸림` : "";
@@ -1002,7 +1003,8 @@ function renderState(tab, st, { quiet = false } = {}) {
       const i = log.length - 1 - ri, p = log.slice(0, i).findLast((x) => x.event === "UserPromptSubmit");
       if (p && ms(ev) - ms(p) >= MINUTE) took = ` · ${dur(ms(ev) - ms(p))} 걸림`;
     }
-    return `<li><span class="dim">${t}</span> ${icon} ${esc(label)} <span class="dim">${esc(short(ev.detail).slice(0, 60))}${esc(took)}</span></li>`;
+    const detail = ev.event === "StopFailure" ? failLabel(ev.detail) || ev.detail || "" : short(ev.detail).slice(0, 60); // #53
+    return `<li><span class="dim">${t}</span> ${icon} ${esc(label)} <span class="dim">${esc(detail)}${esc(took)}</span></li>`;
   }).join("");
 }
 
@@ -2378,7 +2380,8 @@ listen("agent-state", (e) => {
       if (prev && prev !== e.payload.state && ["done", "waiting", "error"].includes(e.payload.state)) {
         if (e.payload.state === "done") react(t, "attack");
         const took = timing(e.payload).took; // STA-20
-        if (t === active) toast(`셸 ${sessNo(t, sess)}: ${e.payload.state === "done" ? `🎉 완료${took ? ` · ${took} 걸림` : ""}` : e.payload.state === "waiting" ? "❗ 입력 필요" : "💥 실패"}`);
+        const why = e.payload.state === "error" ? failLabel(e.payload.detail) : null; // #53
+        if (t === active) toast(`셸 ${sessNo(t, sess)}: ${e.payload.state === "done" ? `🎉 완료${took ? ` · ${took} 걸림` : ""}` : e.payload.state === "waiting" ? "❗ 입력 필요" : `💥 실패${why ? ` · ${why}` : ""}`}`);
       }
       renderRail(t); renderTab(t); renderSummary();
       return;
@@ -2871,6 +2874,11 @@ async function uiScenes(set) {
       await showStart(false, ["dev/tamer", "dev/blog", "work/api-server", "Documents/notes"].map((d) => `${info.home}/${d}`));
       startSel = 1; markStart();
       await shot("start-screen"); hideStart();
+      // a failed turn (#53): 💥 실패 · 서버 과부하
+      const kept = tab.state;
+      tab.state = { ...tab.state, state: "error", detail: "server_overloaded" }; renderBar(tab); renderTab(tab);
+      await shot("bar-failed");
+      tab.state = kept; renderBar(tab); renderTab(tab);
       // 변경 사항 칸 제목의 브랜치 (TRM-18): a long name (… in the narrow title), ahead/behind, a short list
       const keep = tab.changes;
       tab.changes = { repo: true, branch: { name: "feature/unattended-run-display", upstream: "origin/feature/unattended-run-display", ahead: 2, behind: 1 },

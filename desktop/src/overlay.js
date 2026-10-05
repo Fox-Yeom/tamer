@@ -4,6 +4,7 @@
 import { invoke, listen } from "./host.js";
 import { createWild } from "./wild.js";
 import { timing, dur, MINUTE } from "./elapsed.js";
+import { failLabel } from "./fail.js";
 
 const ICON = {
   idle: "😌", sleep: "💤", thinking: "💭", coding: "⌨️", reading: "📖", searching: "🔍",
@@ -42,7 +43,8 @@ async function bigCard(t, extra = "") {
   const url = await spriteUrl(t.partner?.gif);
   const end = ENDED[t.ended];
   // a finished shell shows even while another shell of the folder needs you (both bubbles)
-  const took = t.ended === "done" && t.times?.took >= MINUTE ? ` · ${dur(t.times.took)}` : ""; // STA-20
+  const took = t.ended === "done" && t.times?.took >= MINUTE ? ` · ${dur(t.times.took)}` // STA-20
+    : t.ended === "error" && failLabel(t.endedKind || t.times?.kind) ? ` · ${failLabel(t.endedKind || t.times?.kind)}` : ""; // #53
   const endBubble = end ? `<div class="bubble ${end[0]}${t.state === "waiting" ? " second" : ""}">${t.endedN ? `셸 ${t.endedN} ` : ""}${end[1]}${took}</div>` : "";
   const bubble = (t.state === "waiting" ? '<div class="bubble bad">❗ 입력 필요</div>' : "") + endBubble;
   const motion = t.state === "waiting" ? "st-waiting" : ["done", "interrupted", "error", "idle", "sleep"].includes(t.state) ? `st-${t.state}` : "st-working";

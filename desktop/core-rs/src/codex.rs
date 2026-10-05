@@ -121,6 +121,21 @@ fn exec_cmd(code: &str) -> Option<String> {
     None
 }
 
+/// The kind of a failed turn from `codex_error_info`: "server_overloaded" (a unit variant) or
+/// {"http_connection_failed": {"http_status_code": 401}} → "http_connection_failed 401"
+fn fail_kind(error: &Value) -> Option<String> {
+    let info = &error["codex_error_info"];
+    let clean = |s: &str| s.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '_').take(48).collect::<String>();
+    match info {
+        Value::String(s) => Some(clean(s)),
+        Value::Object(m) => m.iter().next().map(|(k, v)| match v.get("http_status_code").and_then(Value::as_u64) {
+            Some(code) => format!("{} {code}", clean(k)),
+            None => clean(k),
+        }),
+        _ => None,
+    }
+}
+
 /// One log record -> normalized event (or None); updates `usage` in place (`changed` = usage moved).
 pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, rec: &Value) -> Option<Event> {
     let p = &rec["payload"];
@@ -147,7 +162,13 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
             }
             ev("UserPromptSubmit", None, None)
         }
-        "task_complete" => ev("Stop", None, Some(short(p["last_agent_message"].as_str().unwrap_or("")).chars().take(120).collect())),
+        // a failed turn ends with task_complete too, its last error in `error` (#53): only the kind is
+        // kept — the message carries URLs and request ids. Never the reply text (STA-14)
+        "task_complete" => match fail_kind(&p["error"]) {
+            Some(kind) => ev("StopFailure", None, Some(kind)),
+            None if !p["error"].is_null() => ev("StopFailure", None, None),
+            None => ev("Stop", None, None),
+        },
         "turn_aborted" => ev("Interrupted", None, p["reason"].as_str().map(Into::into)),
         "reasoning" => ev("PostToolUse", None, None),
         "web_search_call" => {
@@ -286,7 +307,7 @@ mod tests {
             ("PreToolUse".into(), s("Bash"), s("npm test")),
             ("PreToolUse".into(), s("WebSearch"), s("lua json")),
             ("Notification".into(), None, s("입력 요청")),
-            ("Stop".into(), None, s("done!")),
+            ("Stop".into(), None, None),
             ("Interrupted".into(), None, s("interrupted")),
             ("PreCompact".into(), None, s("compact")),
         ]);
@@ -296,6 +317,24 @@ mod tests {
         assert_eq!(u.ctx, Some(25.0));
         assert_eq!(u.five_hour, Some(Window { pct: 12.0, resets_at: Some(100) }));
         assert_eq!(u.seven_day, Some(Window { pct: 30.0, resets_at: None }));
+    }
+
+    #[test]
+    fn failed_turns_are_failures_with_their_kind_only() {
+        let (evs, _) = run(&[
+            // as the user's own logs have them (2026-10-06): a unit kind, a struct kind, none, an older Codex
+            json!({"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"stream error: https://x/y req_1","codex_error_info":"server_overloaded"}}}),
+            json!({"type":"event_msg","payload":{"type":"task_complete","last_agent_message":null,"error":{"message":"unexpected status 401 … url: https://api.openai.com/v1/responses","codex_error_info":{"http_connection_failed":{"http_status_code":401}}}}}),
+            json!({"type":"event_msg","payload":{"type":"task_complete","error":{"message":"?"}}}),
+            json!({"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"secret reply text"}}),
+        ]);
+        let got: Vec<(String, Option<String>)> = evs.into_iter().map(|e| (e.event, e.detail)).collect();
+        assert_eq!(got, vec![
+            ("StopFailure".into(), Some("server_overloaded".into())),
+            ("StopFailure".into(), Some("http_connection_failed 401".into())),
+            ("StopFailure".into(), None),
+            ("Stop".into(), None), // never the reply text
+        ]);
     }
 
     #[test]
