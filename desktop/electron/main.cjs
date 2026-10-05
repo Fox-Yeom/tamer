@@ -310,11 +310,17 @@ function shellEnv(id) {
 // #49: a Claude typed in a shell that isn't linked is read from its conversation log — no "입력 필요"
 // (the log never says a permission dialog is open) and no 5h · 7d. Say how to get them, once per run
 let linkHinted = false;
+// a Claude typed here and read from its log (no "입력 필요"): "off" — the shell line isn't on;
+// "stale" — it's on, but this shell was opened before (the alias only reaches new shells); null — fine
+function linkState(d, kind) {
+  if (d?.key !== "claude" || kind !== "claude_log" || !agents.claudeLinkFile()) return null;
+  return agents.claudeLinked() ? "stale" : "off";
+}
 function hintClaudeLink(d, kind) {
   if (linkHinted || d?.key !== "claude" || kind !== "claude_log" || !agents.claudeLinkFile() || agents.claudeLinked()) return;
   linkHinted = true;
   logLine("hint: shell claude not linked");
-  send("toast", { text: "셸에서 친 Claude는 '입력 필요'·한도를 알 수 없어요 — ⌘G → ⚙ 에이전트 연결 상태 → \"셸에서 친 Claude도 연결\"을 켜면 ⌘G처럼 보여요" });
+  send("toast", { text: "셸에서 친 Claude는 '입력 필요'·한도를 알 수 없어요 — ⌘G → ⚙ 에이전트 연결 상태 → \"셸에서 친 Claude도 연결\"을 켜면 ⌘G처럼 보여요", ms: 6000 });
 }
 
 function typedKind(d, args = "") {
@@ -349,7 +355,7 @@ async function setHostAgent(s, d, cwd = null, args = "") {
   }
   logLine(`host-agent ws=${s.id} ${d?.key || "-"}${d ? ` kind=${typedKind(d, args)}` : ""}${cwd && cwd !== s.cwd ? ` cwd=${cwd}` : ""}`);
   saveSession();
-  send("host-agent", { ws: tabOf(s).id, session: s.id, agent: d ? agentInfo(s) : null, where: d ? whereOf(tabOf(s), cwd) : null });
+  send("host-agent", { ws: tabOf(s).id, session: s.id, agent: d ? agentInfo(s) : null, where: d ? whereOf(tabOf(s), cwd) : null, unlinked: d ? linkState(d, typedKind(d, args)) : null });
   if (d) {
     // its logs are where it runs (after a `cd`, not necessarily the tab's folder) — #3
     hintClaudeLink(d, typedKind(d, args));
@@ -709,7 +715,7 @@ function setShellAgent(ws, d, cwd = null, args = "") {
   logLine(`shell-agent ws=${ws.id} ${d?.key || "-"}${cwd && cwd !== ws.cwd ? ` cwd=${cwd}` : ""}`);
   ws.state = shownState(ws);
   overlayUpdate();
-  send("shell-agent", { ws: ws.id, agent: d && { key: d.key, name: d.name, icon: d.icon, label: agents.label(d.key) }, where: d ? whereOf(ws, cwd) : null });
+  send("shell-agent", { ws: ws.id, agent: d && { key: d.key, name: d.name, icon: d.icon, label: agents.label(d.key) }, where: d ? whereOf(ws, cwd) : null, unlinked: d ? linkState(d, typedKind(d, args)) : null });
 }
 
 // ── desktop overlay ─────────────────────────────────────────────────────────

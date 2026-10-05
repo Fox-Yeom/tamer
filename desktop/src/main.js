@@ -66,12 +66,12 @@ function b64bytes(s) {
   return out;
 }
 
-function toast(msg) {
+function toast(msg, ms = 1800) {
   const t = $("#toast");
   t.textContent = msg;
   t.classList.add("show");
   clearTimeout(toast.timer);
-  toast.timer = setTimeout(() => t.classList.remove("show"), 1800);
+  toast.timer = setTimeout(() => t.classList.remove("show"), ms);
 }
 
 // ── links in the terminal (#19): ⌘-click opens a web address in the browser, like iTerm2. A plain
@@ -909,6 +909,9 @@ function renderBar(tab) {
   if (u?.seven_day) parts.push(`<span class="${level(u.seven_day.pct)}"${old("seven_day")}>7d ${gauge(u.seven_day.pct)}${Math.round(u.seven_day.pct)}%</span>`);
   // a Claude typed in the shell without the opt-in line: no 5h · 7d (only its status line has them) (#45)
   const typedClaude = (st.shellKey || tab.hostAgent?.key) === "claude" && st.state !== "shell";
+  // #49: always in view while such a Claude is the one shown — the 1.8-6 s toast is easy to miss
+  const unlinked = st.shellKey === "claude" ? tab.shellUnlinked : tab.hostAgent?.key === "claude" ? curSession(tab)?.hostUnlinked : null;
+  if (typedClaude && unlinked) parts.unshift(`<button class="u-link" title="${unlinked === "stale" ? "연결은 켜져 있지만 이 셸은 그 전에 열렸어요 — 새 셸(⌘⇧T)이나 새 탭에서 claude를 다시 실행하면 '입력 필요'·한도가 보여요" : "셸에서 직접 친 Claude는 '입력 필요'·한도를 알 수 없어요 — 눌러서 에이전트 연결 창에서 \'셸에서 친 Claude도 연결\'을 켜세요(새 셸부터)"}">🔗 ${unlinked === "stale" ? "새 셸에서 다시" : "연결 안 됨"}</button>`);
   if (typedClaude && !u?.five_hour && !u?.seven_day) parts.push('<span class="dim u-hint" title="셸에서 직접 친 Claude는 한도와 \'입력 필요\'를 알려 주지 않아요 — ⌘G → ⚙ 에이전트 연결 상태 → \'셸에서 친 Claude도 연결\'을 켜거나 ⌘G로 띄우면 보여요 (Pro·Max 구독, 첫 응답 뒤)">5h·7d ?</span>');
   if (u?.cost != null) parts.push(`<span class="dim">$${u.cost.toFixed(2)}</span>`);
   else if (u?.tokens) { // no cost of its own (Claude typed in the shell, Codex): tokens × API prices (#23)
@@ -2016,6 +2019,8 @@ $("#dex-regions").addEventListener("input", (e) => {
   if (e.target.id === "dex-search") { dexQuery = e.target.value; if (dexState?.view !== "dex") boxRender(); else dexFilter(); }
   if (e.target.id === "box-sort") { boxSort = e.target.value; try { localStorage.setItem("tamer.box.sort", boxSort); } catch {} boxRender(); }
 });
+$("#usage").addEventListener("click", (e) => { if (e.target.closest(".u-link")) openAgents(); }); // #49
+
 $("#dex-title").addEventListener("click", (e) => {
   if (e.target.closest(".pk-close")) return dexEsc();
   const b = e.target.closest("button[data-view]");
@@ -2366,7 +2371,7 @@ listen("partner-progress", (e) => {
   else showProgress(t, e.payload);
 });
 listen("open-folder", (e) => openFolder(e.payload.cwd));
-listen("toast", (e) => toast(e.payload.text)); // from the main process (a shell environment that couldn't be read …)
+listen("toast", (e) => toast(e.payload.text, e.payload.ms || 1800)); // from the main process (a shell environment that couldn't be read …)
 listen("select-tab", (e) => selectTab(byId.get(e.payload.ws))); // overlay click
 // a resumed agent that had nothing to continue: started fresh
 listen("agent-restarted", (e) => {
@@ -2381,6 +2386,7 @@ listen("host-agent", (e) => {
   if (!sess?.host) return;
   const a = e.payload.agent;
   sess.hostAgent = a;
+  sess.hostUnlinked = a ? e.payload.unlinked || null : null; // #49: read from its log — no "입력 필요"
   sess.hostWhere = a ? e.payload.where : null;
   sess.running = !!a;
   renderWhere(t);
@@ -2392,7 +2398,7 @@ listen("host-agent", (e) => {
   renderRail(t);
   renderTab(t);
 });
-listen("shell-agent", (e) => { const t = byId.get(e.payload.ws); if (t) onShellAgent(t, e.payload.agent, e.payload.where); });
+listen("shell-agent", (e) => { const t = byId.get(e.payload.ws); if (t) { t.shellUnlinked = e.payload.agent ? e.payload.unlinked || null : null; onShellAgent(t, e.payload.agent, e.payload.where); } });
 // in another app the desktop overlay shows the wild card; the window's own copy would be a second one
 window.addEventListener("blur", () => document.body.classList.add("away"));
 window.addEventListener("focus", () => document.body.classList.remove("away"));

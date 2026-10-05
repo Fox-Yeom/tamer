@@ -280,3 +280,7 @@ body.ui-test .xterm-screen { visibility: hidden !important; } /* what the shells
 #tsearch #tsearch-alt { color: #e5a33a; white-space: nowrap; cursor: help; }
 #tsearch button { padding: 1px 6px; color: var(--fg); background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
 #tsearch button:hover { background: #33333f; }
+
+/* #49 a Claude typed in a shell that isn't linked: always-visible chip in the top bar (opens 에이전트 연결) */
+#usage .u-link { margin-right: 8px; padding: 0 6px; border: 1px solid #c9a227; border-radius: 4px; color: #e5c76b; background: transparent; font: inherit; cursor: pointer; }
+#usage .u-link:hover { background: #3a3320; }
