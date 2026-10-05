@@ -38,6 +38,9 @@ if (!lab || lab.head !== git(["rev-parse", "HEAD"]) || lab.dirty || !lab.smoke) 
   process.exit(1);
 }
 
+// --check: only the checks above (pushed, lab passed) — nothing is built, uploaded or edited
+if (process.argv.includes("--check")) { console.log(`ready to release ${TAG}: pushed, the lab passed on this commit`); process.exit(0); }
+
 // a version is released once (docs/VERSIONING.md): its tag and DMGs are never replaced. A release
 // that already exists means the version wasn't bumped (2026-10-05: a failed bump went unnoticed and
 // the release step re-uploaded the previous version) — stop. Only notes: --notes-only
