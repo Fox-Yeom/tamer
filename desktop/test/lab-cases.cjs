@@ -684,6 +684,32 @@ sleep 40
     },
   },
   {
+    id: "quit-waits-terminals", tags: ["smoke", "app"], what: "끌 때 모든 터미널이 끝난 것(종료 알림)을 확인한 뒤 종료 — 늦게 끝나는 셸도 (#54)",
+    data: "owner", mode: "direct", folders: ["proj"], until: "quit: terminals ended",
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 3500 }, { call: "focusShell" },
+      { text: "trap 'sleep 0.4; exit 0' HUP" }, { wait: 200 }, { key: "Enter" }, { wait: 500 }, { invoke: "quit_test" }, { wait: 5000 }],
+    check: ({ log }) => {
+      const m = log.match(/^quit: terminals ended in (\d+)ms(.*)$/m);
+      return [
+        ok(m, "끄기 전에 터미널을 기다린 기록이 없음"),
+        ok(m && Number(m[1]) >= 300 && !m[2], `기다린 시간 ${m?.[1]}ms${m?.[2] || ""} (늦게 끝나는 셸 0.4초를 기다려야, 남은 것 없이)`),
+      ];
+    },
+  },
+  {
+    id: "changes-git-live", tags: ["smoke", "terminal"], what: "셸에서 git 브랜치를 바꾸면 변경 사항 칸 제목이 바로(10초 틱 없이) 바뀜 (#52)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    setup: (box) => gitRepo(box.folder("proj"), [["init", "-q"], (d) => fs.writeFileSync(path.join(d, "a.txt"), "1\n"), ["add", "."], ["commit", "-qm", "one"]]),
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2000 }, { probe: "before" }, { call: "focusShell" },
+      { text: "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git checkout -qb live-branch" }, { wait: 200 }, { key: "Enter" },
+      { until: "branch.text", match: "live-branch", timeout: 5000 }, { probe: "after" }],
+    check: ({ probe }) => [
+      ok(probe.before?.branch?.text === "⎇ main", `처음 ${JSON.stringify(probe.before?.branch)}`),
+      ok(probe.after?.branch?.text === "⎇ live-branch", `바꾼 뒤 ${JSON.stringify(probe.after?.branch)}`),
+      ok(probe.after && probe.after._ms - probe.before._ms < 4500, `바뀌기까지 ${probe.after && probe.after._ms - probe.before._ms}ms (10초 틱 아님 — 시험 창은 포커스가 없어 틱이 돌지 않음)`),
+    ],
+  },
+  {
     id: "claude-typed-unlinked", tags: ["smoke", "agents"], what: "연결 안 한 셸에서 친 Claude: 대화 기록 방식, 상단 바에 \"5h·7d ?\" 안내 (#45)",
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": "#!/bin/sh\n# an unlinked Claude never runs Tamer's status line\necho \"fake-claude args: $*\"\nsleep 30\n" },
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },

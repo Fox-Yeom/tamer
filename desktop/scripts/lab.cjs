@@ -48,7 +48,7 @@ if (!picked.length) { console.error("no case matches"); process.exit(1); }
     if (c.setup) c.setup(box); // anything else the case needs in its sandbox before launch (old files, dates …)
     if (c.pathFirst) env.PATH = [...c.pathFirst.map((d) => path.join(box.dir, d)), process.env.PATH].join(":");
     const t0 = Date.now();
-    const { log, timedOut } = await T.launch({ env, mode: c.mode, folders: (c.folders || []).map((f) => box.folder(f)), lateMs: v.lateMs ?? 300, args: c.args || [], timeoutMs: (c.timeoutMs || 60000) + (c.slowShell || 0) * 1000 });
+    const { log, timedOut } = await T.launch({ env, mode: c.mode, ...(c.until ? { until: c.until } : {}), folders: (c.folders || []).map((f) => box.folder(f)), lateMs: v.lateMs ?? 300, args: c.args || [], timeoutMs: (c.timeoutMs || 60000) + (c.slowShell || 0) * 1000 });
     const probe = {};
     for (const m of log.matchAll(/^lab-probe (\S+) \+(\d+)ms (\{.*\})$/gm)) { try { probe[m[1]] = { ...JSON.parse(m[3]), _ms: Number(m[2]) }; } catch {} }
     let fails = [];

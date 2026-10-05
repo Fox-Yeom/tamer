@@ -1264,6 +1264,8 @@ async function refreshChanges(tab) {
   } catch {} finally { tab.changesBusy = false; }
 }
 setInterval(() => { if (active && document.hasFocus()) refreshChanges(active); }, 10000);
+// git's state changed in that folder (branch, commit, staging, fetch — #52): read again now
+listen("changes-dirty", (e) => { const t = byId.get(e.payload.ws); if (t) refreshChanges(t); });
 
 function renderChanges(tab) {
   const ul = $(".changes", tab.view), r = tab.changes;

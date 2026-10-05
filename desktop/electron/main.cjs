@@ -127,6 +127,9 @@ function isDir(p) {
 // shell: the user's own shell, interactive (any shell — zsh, bash, fish, tcsh …); otherwise the
 // command (agents) runs through /bin/sh with the user's terminal environment (PATH etc. from
 // agents.loginEnv) — the user's shell can't be relied on to take `-l -c <POSIX command>` (csh)
+// every terminal process whose exit hasn't been heard yet — also ones already dropped from `ptys`
+// (closed tabs, replaced agents): quitting waits for all of them (#54)
+const livePtys = new Set();
 function spawnPty({ id, cmd, shell = false, cwd, cols, rows, env }) {
   const old = ptys.get(id);
   if (old) { try { old.kill(); } catch {} ptys.delete(id); }
@@ -150,7 +153,10 @@ function spawnPty({ id, cmd, shell = false, cwd, cols, rows, env }) {
     else if (kind === "shell" && workspaces.get(wsId)?.shell) outputSeen(workspaces.get(wsId).shell.id); // an agent run in the shell
     send("pty", { id, data: Buffer.from(buf).toString("base64") });
   });
+  livePtys.add(p);
   p.onExit(() => {
+    livePtys.delete(p);
+    if (quitting) return; // quitting: nothing restarts, nothing is saved (drainPtys only waits for this)
     const id = p.cvimId, [wsId, kind] = id.split(":");
     if (ptys.get(id) !== p) return;
     ptys.delete(id);
@@ -213,6 +219,7 @@ function openWorkspace(cwd) {
 function closeWorkspace(id) {
   const ws = workspaces.get(id);
   if (!ws) return;
+  try { ws.gitWatch?.close(); } catch {} // #52
   for (const sid of [...ws.sessions.map((x) => `${x.id}:agent`), `${id}:shell`]) {
     const p = ptys.get(sid);
     if (p) { ptys.delete(sid); settleKill(p); }
@@ -561,9 +568,30 @@ const lineCount = (file) => {
   } catch { return null; }
 };
 
+// git's own state files changed (a branch switch, a commit, staging, a fetch): the changes pane
+// reads again at once instead of on its next 10 s tick (#52). One watcher per tab, on the git
+// directory (a worktree's own one too), only for HEAD / index / FETCH_HEAD / ORIG_HEAD
+const GIT_STATE = new Set(["HEAD", "index", "FETCH_HEAD", "ORIG_HEAD"]);
+async function watchGit(ws) {
+  if (ws.gitWatch !== undefined) return;
+  ws.gitWatch = null;
+  const dir = await git(ws.cwd, ["rev-parse", "--absolute-git-dir"]);
+  if (!dir.ok || !workspaces.has(ws.id)) return;
+  try {
+    let timer = null;
+    ws.gitWatch = fs.watch(dir.out.trim(), (_, name) => {
+      if (!GIT_STATE.has(String(name))) return;
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (workspaces.has(ws.id)) send("changes-dirty", { ws: ws.id }); }, 300);
+    });
+    ws.gitWatch.on("error", () => { try { ws.gitWatch?.close(); } catch {} ws.gitWatch = null; });
+  } catch { ws.gitWatch = null; }
+}
+
 async function changesOf(ws) {
   const top = await git(ws.cwd, ["rev-parse", "--show-toplevel"]);
   if (!top.ok) return { repo: false };
+  watchGit(ws);
   const root = top.out.trim();
   const head = (await git(ws.cwd, ["rev-parse", "--verify", "-q", "HEAD"])).ok;
   // -b: the first entry is the branch line (TRM-18) — no extra git run for it
@@ -1532,12 +1560,44 @@ function userQuit() {
   }
   quitting = true;
 }
-app.on("before-quit", userQuit);
-
-app.on("window-all-closed", () => {
-  userQuit(); // closing the window is quitting too
-  for (const id of [...workspaces.keys()]) closeWorkspace(id);
-  for (const p of ptys.values()) { try { p.kill(); } catch {} }
+// Quitting ends every terminal process and waits until each one's exit has been heard, then
+// quits for real (#54): node-pty reports an exit from its own thread, and one that arrived while
+// Node was already being torn down aborted the app ("가끔 닫으면 오류" — SIGABRT in
+// ThreadSafeFunction::CallJS, beta.31 and beta.36 crash reports). A shell younger than
+// SHELL_SETTLE still gets its rc time (settleKill); whatever hasn't ended after that + 1 s gets
+// SIGKILL, and after 1.5 s more the app quits anyway.
+function drainPtys() {
+  const live = [...livePtys];
+  if (!live.length) return Promise.resolve({ ms: 0, left: 0 });
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    const settle = Math.max(0, ...live.map((p) => SHELL_SETTLE - (t0 - (p.startedAt || 0))));
+    const finish = () => { clearInterval(tick); clearTimeout(hard); clearTimeout(giveUp); resolve({ ms: Date.now() - t0, left: livePtys.size }); };
+    for (const p of live) settleKill(p);
+    const tick = setInterval(() => { if (!live.some((p) => livePtys.has(p))) finish(); }, 20);
+    const hard = setTimeout(() => { for (const p of live) if (livePtys.has(p)) { try { p.kill("SIGKILL"); } catch {} } }, settle + 1000);
+    const giveUp = setTimeout(finish, settle + 2500);
+  });
+}
+let drained = false, draining = false;
+app.on("before-quit", (e) => {
+  userQuit();
+  if (drained) return;
+  e.preventDefault();
+  if (draining) return;
+  draining = true;
+  // (tabs aren't closed here: a Mac shutdown quits too, and its session must keep the tabs)
   if (core) core.stop(); // the core removes its hook files and exits
+  drainPtys().then(({ ms, left }) => {
+    logLine(`quit: terminals ended in ${ms}ms${left ? ` (${left} still running)` : ""}`);
+    drained = true;
+    app.quit();
+  });
+});
+
+// closing the window is quitting too
+app.on("window-all-closed", () => {
+  userQuit();
+  for (const id of [...workspaces.keys()]) closeWorkspace(id);
   app.quit();
 });
