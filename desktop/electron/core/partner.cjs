@@ -263,6 +263,18 @@ function viewed(id) {
   return n;
 }
 
+// "내 포켓몬" (#27): every individual — in the box or a folder's partner — with its EXP and where it is
+function boxList(cwd) {
+  migrate();
+  const folders = readJson(FOLDERS, {});
+  return readBox().mons.map((m) => {
+    const v = monView(m);
+    return { uid: m.uid, id: m.id, shiny: !!m.shiny, name: v.name, gif: v.gif, types: v.types || [], xp: m.xp || 0,
+      toEvolve: v.toEvolve, how: m.how || null, at: m.at || null, new: !!m.new,
+      folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder] };
+  });
+}
+
 function dex() {
   migrate();
   const t = readJson(DEX, {});
@@ -350,4 +362,4 @@ async function onDone(cwd) {
   return { evolved: to, from: first };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, onDone, progress, dex, fetchPy, loadSprite, recordSeen, migrate, EVOLVE_EVERY };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, progress, dex, fetchPy, loadSprite, recordSeen, migrate, EVOLVE_EVERY };

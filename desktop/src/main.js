@@ -1365,6 +1365,7 @@ async function openDex(sel) {
   }).join("") + `<div id="dex-empty" hidden></div>`;
   grid.querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
   $("#dex").hidden = false;
+  if (dexLastView === "box" && !sel) return dexView("box");
   dexFilter();
   const d0 = dexState;
   if (d0.hits && !d0.hits.includes(d0.sel)) { d0.zone = "grid"; if (d0.hits.length) d0.sel = d0.hits[0]; }
@@ -1499,9 +1500,11 @@ function dexStep(dir) {
 function dexSearchKey(e) {
   const box = $("#dex-search");
   if (e.isComposing || e.keyCode === 229) return false; // Hangul being typed
-  if (e.key === "Escape") { if (box.value) { box.value = ""; dexQuery = ""; dexFilter(); } else box.blur(); return true; }
+  const boxView = dexState?.view === "box";
+  if (e.key === "Escape") { if (box.value) { box.value = ""; dexQuery = ""; if (boxView) boxRender(); else dexFilter(); } else box.blur(); return true; }
   if (e.key === "Enter" || e.key === "ArrowDown") {
     box.blur();
+    if (boxView) { boxSelect(0); return true; }
     if (dexState.hits?.length) dexSelect(dexState.hits.find((n) => n >= dexState.sel) ?? dexState.hits[0]);
     return true;
   }
@@ -1512,10 +1515,155 @@ function dexTitle() {
   const d = dexState;
   const owned = d.entries.reduce((n, e) => n + (e.owned || 0), 0);
   const fresh = d.entries.reduce((n, e) => n + (e.fresh || 0), 0);
-  $("#dex-title").innerHTML = `📕 도감 <span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
+  const n = d.box ? d.box.length : owned;
+  $("#dex-title").innerHTML = `<span class="dex-views"><button data-view="dex"${d.view === "box" ? "" : ' class="on"'}>📕 도감</button>`
+    + `<button data-view="box"${d.view === "box" ? ' class="on"' : ""}>🎒 내 포켓몬 <span class="dim">${n}</span></button></span>`
+    + `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
     + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`
     + (fresh ? `<span class="chip new">NEW ${fresh}</span>` : "");
 }
+
+// ── "내 포켓몬" (#27): every individual you have — in the box or a folder's partner — as cards,
+// sorted (newest catch first by default), searched with the same terms, taken from the preview ──
+let dexLastView = "dex";
+let boxSort = (() => { try { return localStorage.getItem("tamer.box.sort") || "recent"; } catch { return "recent"; } })();
+const BOX_SORTS = [["recent", "최근 잡은 순"], ["no", "번호"], ["name", "이름"], ["exp", "경험치"], ["partner", "파트너 먼저"]];
+const HOW = { wild: "야생에서 잡음", starter: "첫 파트너", legacy: "이전 기록에서 옮김" };
+
+async function dexView(v) {
+  const d = dexState;
+  if (!d) return;
+  d.view = dexLastView = v;
+  $("#dex").classList.toggle("boxview", v === "box");
+  $("#dex-grid").hidden = v === "box";
+  $("#box-grid").hidden = v !== "box";
+  $("#dex-help").textContent = v === "box"
+    ? "←→↑↓ 이동 · / 검색 · Enter 이 탭의 파트너로 · M 도감 · Esc 닫기"
+    : "←→↑↓ 이동 · / 검색 · Tab 다음 만난 포켓몬 · Enter 이 탭의 파트너로(박스에 있으면) · M 내 포켓몬 · Esc 닫기";
+  if (v === "box") {
+    if (!d.box) d.box = await invoke("box_list", { ws: active?.id }).catch(() => []);
+    if (!$("#box-sort")) $(".dex-search").insertAdjacentHTML("afterbegin", `<select id="box-sort" title="정렬">${BOX_SORTS.map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>`);
+    $("#box-sort").value = boxSort;
+    d.bi ??= 0;
+    boxRender();
+  } else {
+    $(".dex-preview").style.visibility = "";
+    dexFilter();
+    if (d.zone === "recent") dexRecent(d.ri); else dexSelect(d.sel);
+  }
+  dexTitle();
+}
+
+function boxMatch(q, m) {
+  const e = dexState.byNo.get(m.id);
+  return dexMatch(q, m.id, { ...(e || { name: m.name, types: m.types, caught: true }), caughtAt: m.at, fresh: m.new ? 1 : 0, shiny: m.shiny, partner: m.folder ? 1 : 0 });
+}
+function boxSorted() {
+  const d = dexState, q = dexQuery.trim();
+  const list = d.box.filter((m) => !q || boxMatch(q, m));
+  const recent = (a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid;
+  const by = {
+    recent, no: (a, b) => a.id - b.id || recent(a, b), name: (a, b) => String(a.name).localeCompare(String(b.name), "ko") || recent(a, b),
+    exp: (a, b) => b.xp - a.xp || recent(a, b), partner: (a, b) => (a.folder ? (a.folder === "here" ? 0 : 1) : 2) - (b.folder ? (b.folder === "here" ? 0 : 1) : 2) || recent(a, b),
+  }[boxSort] || recent;
+  return list.sort(by);
+}
+function boxRender() {
+  const d = dexState, grid = $("#box-grid");
+  const prevUid = d.list?.[d.bi]?.uid;
+  d.list = boxSorted();
+  const q = dexQuery.trim();
+  $("#dex-found").textContent = q ? `${d.list.length}마리` : "";
+  if (!d.list.length) {
+    grid.innerHTML = `<div id="box-empty">${!d.box.length ? "아직 잡은 포켓몬이 없어요 — 작업을 끝내면 가끔 야생 포켓몬이 나타나요"
+      : `<b>"${esc(q)}"</b>에 맞는 포켓몬이 없어요<button id="box-clear">검색 지우기</button>`}</div>`;
+    $(".dex-preview").style.visibility = "hidden";
+    return;
+  }
+  $(".dex-preview").style.visibility = "";
+  grid.innerHTML = d.list.map((m, i) => {
+    const where = m.folder === "here" ? "이 탭" : m.folder ? `📁 ${esc(m.folder)}` : "쉬는 중";
+    const evo = m.toEvolve == null ? "최종" : `진화까지 ${m.toEvolve}`;
+    return `<div class="mon${m.new ? " new" : ""}${m.folder === "here" ? " here" : ""}" data-i="${i}" title="${esc(m.name)} · ${m.at ? ago(m.at) : ""}">`
+      + (m.gif ? `<img data-gif="${esc(m.gif)}" alt="" />` : `<span class="q">?</span>`)
+      + `<b>${m.shiny ? "✨" : ""}${esc(m.name)}</b><span class="dim">EXP ${m.xp} · ${evo}</span><span class="where">${where}</span>`
+      + `${m.new ? '<i class="newb">NEW</i>' : ""}</div>`;
+  }).join("");
+  grid.querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
+  const keep = d.list.findIndex((m) => m.uid === prevUid);
+  boxSelect(keep >= 0 ? keep : Math.min(d.bi || 0, d.list.length - 1));
+}
+function boxSelect(i) {
+  const d = dexState;
+  if (!d?.list?.length) return;
+  d.bi = Math.max(0, Math.min(d.list.length - 1, i));
+  d.boxAsk = false;
+  const m = d.list[d.bi];
+  for (const c of document.querySelectorAll("#box-grid .mon.sel")) c.classList.remove("sel");
+  const card = $(`#box-grid .mon[data-i="${d.bi}"]`);
+  card?.classList.add("sel");
+  card?.scrollIntoView({ block: "nearest" });
+  const img = $("#dex-img"), want = m.uid;
+  img.className = "";
+  if (m.gif) spriteUrl(m.gif).then(async (u) => {
+    if (!u || dexState?.list?.[dexState.bi]?.uid !== want) return;
+    img.src = u;
+    await img.decode().catch(() => {});
+    img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`;
+  });
+  else img.removeAttribute("src");
+  $("#dex-name").textContent = `#${String(m.id).padStart(3, "0")} ${m.shiny ? "✨" : ""}${m.name}`;
+  const where = m.folder === "here" ? "이 탭의 파트너" : m.folder ? `📁 ${esc(m.folder)}의 파트너${m.folderGone ? " (닫힌 폴더)" : ""}` : "박스에서 쉬는 중";
+  $("#dex-meta").innerHTML = `${(m.types || []).map((t) => `${TYPE_ICON[t] || ""} ${t}`).join(" · ")}<br>EXP ${m.xp} · ${m.toEvolve == null ? "최종 진화" : `진화까지 ${m.toEvolve}`}<br>${where}`
+    + `<br>${HOW[m.how] || ""}${m.at ? ` · ${ago(m.at)}` : ""}`;
+  $("#dex-from").innerHTML = "";
+  boxButton();
+  $("#dex-pos").textContent = `${d.bi + 1} / ${d.list.length}`;
+  // looked at: its NEW goes (like the Pokédex)
+  if (m.new) {
+    invoke("dex_viewed", { id: m.id });
+    for (const x of d.box) if (x.id === m.id) x.new = false;
+    const e = d.byNo.get(m.id);
+    if (e) e.fresh = 0;
+    dexTitle();
+    const uid = m.uid;
+    setTimeout(() => { const c = $(`#box-grid .mon.new[data-i="${d.list.findIndex((x) => x.uid === uid)}"]`); c?.classList.remove("new"); c?.querySelector(".newb")?.remove(); }, 1500);
+  }
+}
+// the take button: this tab's already / resting → take / another folder's → press twice
+function boxButton() {
+  const d = dexState, m = d.list[d.bi], b = $("#dex-take");
+  b.hidden = !active;
+  b.disabled = m.folder === "here";
+  b.className = d.boxAsk ? "confirm" : "";
+  b.textContent = m.folder === "here" ? "이 탭의 파트너예요" : !m.folder ? "이 탭의 파트너로"
+    : d.boxAsk ? `한 번 더 누르면 데려오기 (📁 ${m.folder}는 비어요)` : `📁 ${m.folder}에서 데려오기`;
+}
+async function boxTake() {
+  const d = dexState, m = d?.list?.[d.bi];
+  if (!m || !active || m.folder === "here") return;
+  if (m.folder && !d.boxAsk) { d.boxAsk = true; return boxButton(); }
+  return dexTake({ uid: m.uid }, m.folder ? { folderName: m.folder } : null);
+}
+function boxKey(k) {
+  const d = dexState, n = d.list?.length || 0;
+  const cols = getComputedStyle($("#box-grid")).gridTemplateColumns.split(" ").length || 4;
+  if (k === "/") $("#dex-search").focus();
+  else if (!n) return k === "Enter" || k.startsWith("Arrow");
+  else if (k === "ArrowRight" || k === "l") boxSelect(d.bi + 1);
+  else if (k === "ArrowLeft" || k === "h") boxSelect(d.bi - 1);
+  else if (k === "ArrowDown" || k === "j") boxSelect(Math.min(n - 1, d.bi + cols));
+  else if (k === "ArrowUp" || k === "k") boxSelect(Math.max(0, d.bi - cols));
+  else if (k === "Home") boxSelect(0);
+  else if (k === "End") boxSelect(n - 1);
+  else if (k === "Enter") boxTake();
+  else return false;
+  return true;
+}
+$("#box-grid").addEventListener("click", (e) => {
+  if (e.target.id !== "box-clear") return;
+  dexQuery = ""; $("#dex-search").value = ""; boxRender();
+});
 
 // a grid cell (the selection moves to the grid)
 function dexSelect(n) {
@@ -1586,6 +1734,7 @@ function dexShow(n) {
 }
 
 async function dexChoose() {
+  if (dexState?.view === "box") return boxTake();
   const d = dexState, e = d?.byNo.get(d.sel);
   if (!e || !active) return;
   if (!e.owned) { toast(e.caught ? `박스에 ${e.name}가 없어요` : `${josa(e.name, "은", "는")} 아직 잡지 못했어요`); return; }
@@ -1626,7 +1775,7 @@ async function dexTake(m, other) {
   if (shown && !shown.choose) { await showPartner(tab, shown); react(tab, "cute"); toast(`${josa(shown.name, "과", "와")} 함께해요!${other ? ` (${other.folderName}에서 데려옴)` : ""}`); }
 }
 
-function closeDex() { $("#dex").hidden = true; dexState = null; focusBig(active); }
+function closeDex() { $("#dex").hidden = true; dexState = null; focusBig(active); $(".dex-preview").style.visibility = ""; }
 const dexOpen = () => !$("#dex").hidden;
 
 // grid columns right now (for ↑↓)
@@ -1637,6 +1786,8 @@ function dexKey(e) {
   if (!d) return false;
   const k = e.key, cols = dexCols();
   if (k === "Escape" || k === "q") closeDex();
+  else if (k === "m" || k === "M") dexView(d.view === "box" ? "dex" : "box");
+  else if (d.view === "box") return boxKey(k);
   else if (k === "Enter") dexChoose();
   else if (d.hits && dexKeyFiltered(k, e)) { /* searching: shown cells only */ }
   else if (d.zone === "recent" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "h", "l", "k", "j", "Home", "End"].includes(k)) {
@@ -1697,7 +1848,13 @@ $("#dex-grid").addEventListener("click", (e) => {
   dexQuery = ""; $("#dex-search").value = ""; dexFilter();
   dexSelect(dexState.sel);
 });
-$("#dex-regions").addEventListener("input", (e) => { if (e.target.id === "dex-search") { dexQuery = e.target.value; dexFilter(); } });
+$("#dex-regions").addEventListener("input", (e) => {
+  if (e.target.id === "dex-search") { dexQuery = e.target.value; if (dexState?.view === "box") boxRender(); else dexFilter(); }
+  if (e.target.id === "box-sort") { boxSort = e.target.value; try { localStorage.setItem("tamer.box.sort", boxSort); } catch {} boxRender(); }
+});
+$("#dex-title").addEventListener("click", (e) => { const b = e.target.closest("button[data-view]"); if (b) dexView(b.dataset.view); });
+$("#box-grid").addEventListener("click", (e) => { const c = e.target.closest(".mon"); if (c) boxSelect(Number(c.dataset.i)); });
+$("#box-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".mon")) boxTake(); });
 $("#dex-from").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) dexFrom(Number(b.dataset.i)); });
 
 // ── start screen ────────────────────────────────────────────────────────────
@@ -3176,6 +3333,40 @@ async function main() {
     await invoke("log_line", { line: `cost-test usage=${$("#usage").textContent} tip=${$("#usage [title]")?.title || ""} tokens=${JSON.stringify(tab.state?.usage?.tokens || null)}` });
     invoke("log_line", { line: "autotype done" });
   }, 3000);
+  if (info.test.box_test) setTimeout(async () => {
+    // #27 "내 포켓몬": cards, the five sorts, search, the take button, arrows, taking one
+    const out = {}, wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    if (chooseOpen()) closeChoose(false);
+    await openDex();
+    await dexView("box");
+    const ids = () => dexState.list.map((m) => m.id).join(",");
+    out.title = $("#dex-title .dex-views").textContent.trim();
+    out.cards = [...document.querySelectorAll("#box-grid .mon")].map((c) => c.textContent.replace(/\s+/g, " ").trim()).join(" | ");
+    for (const [k] of BOX_SORTS) { $("#box-sort").value = k; $("#box-sort").dispatchEvent(new Event("input", { bubbles: true })); out[`sort-${k}`] = ids(); }
+    $("#box-sort").value = "recent"; $("#box-sort").dispatchEvent(new Event("input", { bubbles: true }));
+    for (const q of ["파트너", "age0", "new", "불꽃", "zzz"]) { $("#dex-search").value = q; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true })); out[`q-${q}`] = ids() || $("#box-empty")?.textContent; }
+    $("#box-clear")?.click();
+    out.cleared = ids();
+    const at = (id) => dexState.list.findIndex((m) => m.id === id);
+    const btn = () => `${$("#dex-take").textContent}${$("#dex-take").disabled ? "(off)" : ""}`;
+    boxSelect(at(134)); out.btnHere = btn();
+    boxSelect(at(222)); out.btnOther = btn(); await boxTake(); out.btnOther2 = btn();
+    boxSelect(at(418)); out.btnRest = btn(); out.meta = $("#dex-meta").textContent;
+    const nav = [];
+    boxSelect(0);
+    for (const k of ["ArrowRight", "ArrowRight", "ArrowLeft", "End", "Home", "ArrowDown"]) { boxKey(k); nav.push(`${k}=${dexState.bi}`); }
+    out.nav = nav.join(" ");
+    dexKey(new KeyboardEvent("keydown", { key: "m" })); out.toggled = `${dexState.view} grid-hidden=${$("#dex-grid").hidden}`;
+    dexKey(new KeyboardEvent("keydown", { key: "m" })); out.back = dexState.view;
+    boxSelect(at(37));
+    await wait(1700);
+    await invoke("shot_test", { name: "box" });
+    boxSelect(at(418)); await boxTake();
+    await wait(1500);
+    out.took = `partner=${active.partner?.id} dexOpen=${dexOpen()}`;
+    await invoke("log_line", { line: `box-test ${JSON.stringify(out)}` });
+    invoke("log_line", { line: "autotype done" });
+  }, 5000);
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();

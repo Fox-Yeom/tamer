@@ -853,6 +853,7 @@ const commands = {
         links_test: !!process.env.CVIM_DESKTOP_LINKS_TEST, // ⌘-click links (#19)
         dexsearch_test: !!process.env.CVIM_DESKTOP_DEXSEARCH_TEST, // dex search terms (#21)
         cost_test: !!process.env.CVIM_DESKTOP_COST_TEST, // ≈$ for a Claude typed in the shell (#23)
+        box_test: !!process.env.CVIM_DESKTOP_BOX_TEST, // "내 포켓몬" (#27)
         keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
         diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
         multi_test: !!process.env.CVIM_DESKTOP_MULTI_TEST, // a shell finishing while another needs you
@@ -1070,6 +1071,7 @@ const commands = {
   // model prices for an estimated cost (#23), fetched only when asked (an agent without its own cost)
   prices: () => prices.get(),
   dex_viewed: ({ id }) => partner.viewed(id),
+  box_list: ({ ws }) => partner.boxList(ws && workspaces.has(ws) ? wsOf(ws).cwd : null), // "내 포켓몬" (#27)
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
   pane_swap({ ws: id, on }) {
