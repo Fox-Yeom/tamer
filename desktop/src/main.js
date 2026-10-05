@@ -1954,12 +1954,15 @@ function startKey(e) {
 
 // ── keys (physical key codes: work with any input source, e.g. Korean) ───────
 window.addEventListener("keydown", (e) => {
-  if (dexOpen() && e.metaKey && e.code === "KeyF") { e.preventDefault(); $("#dex-search").focus(); return; }
-  if (dexOpen() && e.target === $("#dex-search") && !e.metaKey) {
+  // the keys belong to the top layer: the Pokémon window (z 20) only when no dialog / menu is over it
+  // (first launch: 에이전트 연결 opens over 파트너 고르기 — Esc there must close that one)
+  const pokeOnTop = dexOpen() && !agentsOpen() && !diffOpen() && $("#menu").hidden;
+  if (pokeOnTop && e.metaKey && e.code === "KeyF") { e.preventDefault(); $("#dex-search").focus(); return; }
+  if (pokeOnTop && e.target === $("#dex-search") && !e.metaKey) {
     if (dexSearchKey(e)) { e.preventDefault(); e.stopPropagation(); }
     return;
   }
-  if (dexOpen() && !(e.metaKey && e.code !== "KeyD")) {
+  if (pokeOnTop && !(e.metaKey && e.code !== "KeyD")) {
     if (e.metaKey || dexKey(e)) { e.preventDefault(); e.stopPropagation(); if (e.metaKey) closeDex(); }
     return;
   }
@@ -2478,6 +2481,46 @@ async function wildTest() {
   await wait(14000); // CVIM_WILD_STAY: it goes back to the grass
   await log(`left text=${text()}`);
   await log("autotype done");
+}
+
+// A first launch as a new user has it: nothing on this Mac yet (the starters come from PokéAPI), the
+// agents dialog opening over 파트너 고르기, then the first partner picked with real keys and clicks
+async function firstRunTest() {
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const log = (line) => invoke("log_line", { line: `first-run ${line}` });
+  const key = (k, code, keyCode, text) => invoke("key_test", { key: k, code, keyCode, ...(text ? { text } : {}) });
+  const clickAt = async (el) => { const r = el.getBoundingClientRect(); await invoke("click_test", { x: r.left + r.width / 2, y: r.top + r.height / 2 }); };
+  const top = () => { const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2); return el?.closest("#agents") ? "agents" : el?.closest("#dex") ? "poke" : el?.tagName; };
+  try {
+    const tab = active;
+    for (let i = 0; i < 40 && !(chooseOpen() && agentsOpen()); i++) await wait(500);
+    const o = dexState?.chooseOpts;
+    await log(`open choose=${chooseOpen()} agents=${agentsOpen()} on-top=${top()} starter=${!!o?.starter} ready=${o?.starter?.ready} loading-cards=${document.querySelectorAll("#box-grid .pk-card.loading").length} note=${$("#box-grid .pk-note")?.textContent || ""}`);
+    await invoke("shot_test", { name: "first-1-agents" });
+    await key("Escape", "Escape", 27); await wait(500);
+    await log(`esc agents=${agentsOpen()} choose=${chooseOpen()} on-top=${top()}`);
+    await invoke("shot_test", { name: "first-2-choose" });
+    const t0 = Date.now();
+    for (let i = 0; i < 120 && !dexState?.chooseOpts?.starter?.ready; i++) await wait(500);
+    await wait(800);
+    const ready = dexState?.chooseOpts?.starter;
+    await log(`starters ready=${ready?.ready} after=${Math.round((Date.now() - t0) / 1000)}s set=${ready?.set.map((x) => `${x.name}:${x.types?.[0]}`).join(",")} cards=${[...document.querySelectorAll("#box-grid .pk-card[data-i]")].map((c) => c.querySelector("b")?.textContent).join(",")} loading-left=${document.querySelectorAll("#box-grid .pk-card.loading").length} sel=${dexState.bi} button=${$("#dex-take").textContent}`);
+    await invoke("shot_test", { name: "first-3-ready" });
+    await key("ArrowRight", "ArrowRight", 39); await wait(300);
+    await log(`arrow sel=${dexState.bi} button=${$("#dex-take").textContent} preview=${$("#dex-name").textContent}`);
+    await clickAt($('#box-grid .pk-card[data-key="s2"]')); await wait(300);
+    await log(`click card3 sel=${dexState.bi} button=${$("#dex-take").textContent}`);
+    const want = dexState.list[dexState.bi];
+    await clickAt($("#dex-take")); await wait(2000);
+    await log(`took partner=${tab.partner?.name}#${tab.partner?.id} want=${want?.name}#${want?.id} window=${dexOpen()} toast=${$("#toast").textContent} avatar-label=${$(".poke-label", tab.view)?.textContent}`);
+    await invoke("shot_test", { name: "first-4-partner" });
+    await openChoose(tab); await wait(800);
+    await log(`reopen starter=${!!dexState?.chooseOpts?.starter} title=${$("#dex-title .pk-sub")?.textContent} cards=${document.querySelectorAll("#box-grid .pk-card[data-i]").length} notes=${[...document.querySelectorAll("#box-grid .pk-note")].map((n) => n.textContent).join("|")}`);
+    await key("Escape", "Escape", 27); await wait(300);
+    await log(`closed window=${dexOpen()}`);
+  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
+  await log("done");
+  invoke("log_line", { line: "autotype done" });
 }
 
 // ── UI scenes (npm run ui:shots, docs/UI_SYSTEM.md, src/poke/ui-map.json) ─────────────────────
@@ -3163,7 +3206,8 @@ async function main() {
   if (info.restored) toast(`지난번 탭 ${info.restored.tabs.length}개를 다시 열었어요 (대화 이어서)`);
   if (!tabs.length) showStart(true);
   // first launch: which agents CVIM sees (once)
-  invoke("agents_status").then((st) => { if (!st.seen && !Object.keys(info.test).length) openAgents(); }); // not in tests
+  // not in tests (first_run: a first launch as it is)
+  invoke("agents_status").then((st) => { if (!st.seen && (!Object.keys(info.test).length || info.test.first_run)) openAgents(); });
   if (info.test.switch_test && active) switchTest(active);
   if (info.test.tabs_test) tabsTest();
   if (info.test.poke_test) pokemonTest();
@@ -3449,6 +3493,7 @@ async function main() {
     invoke("log_line", { line: "autotype done" });
   }, 6000);
   if (info.test.ui_scenes) uiScenes(info.test.ui_scenes);
+  if (info.test.first_run) firstRunTest();
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();

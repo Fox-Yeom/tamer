@@ -31,6 +31,11 @@
       "what": "야생 포켓몬 카드 (창 안 · 바탕화면)",
       "entry": "createWild",
       "scenes": []
+    },
+    "agents": {
+      "what": "에이전트 연결 창 (첫 실행 자동 · ⌘G → ⚙) — 포켓몬 창 위(z 26)",
+      "entry": "openAgents",
+      "scenes": []
     }
   },
   "components": {
@@ -74,7 +79,8 @@
         "openChoose",
         "closeChoose",
         "chooseOpen",
-        "dexKey"
+        "dexKey",
+        "keydown (pokeOnTop)"
       ],
       "screens": [
         "choose",
@@ -195,6 +201,24 @@
       ],
       "screens": [
         "wild"
+      ]
+    },
+    "dlg": {
+      "what": "가운데 대화 상자 (에이전트 연결)",
+      "files": [
+        "index.html",
+        "src/style.css"
+      ],
+      "selectors": [
+        ".dlg",
+        ".dlg-body",
+        "#agents"
+      ],
+      "functions": [
+        "openAgents"
+      ],
+      "screens": [
+        "agents"
       ]
     }
   },

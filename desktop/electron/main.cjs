@@ -858,6 +858,7 @@ const commands = {
         cost_test: !!process.env.CVIM_DESKTOP_COST_TEST, // ≈$ for a Claude typed in the shell (#23)
         box_test: !!process.env.CVIM_DESKTOP_BOX_TEST, // "내 포켓몬" (#27)
         choose_shot: !!process.env.CVIM_DESKTOP_CHOOSE_SHOT, // the partner dialog, captured (UI checks)
+        first_run: !!process.env.CVIM_DESKTOP_FIRST_RUN, // a new user's first launch (agents dialog + first partner)
         ui_scenes: UI_SCENES, // npm run ui:shots: "newuser" / "owner" scene sets
         keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
         diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
