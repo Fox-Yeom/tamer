@@ -16,8 +16,10 @@ const DEFS = {
     name: "Codex", short: "Codex", icon: "◎", color: "#10A37F", state: "codex_log",
     // the user's own `codex` first — the one their terminal runs (#42: the Codex app's copy can be
     // older, 0.152 vs 0.160 here, and it showed "Update available"). Only one that answers --version:
-    // the npm wrapper can be installed without its native binary — then the app's copy
-    cmd: ["codex", "/Applications/Codex.app/Contents/Resources/codex"], check: ["--version"],
+    // the npm wrapper can be installed without its native binary — then an app's copy: the ChatGPT
+    // app first (the Codex desktop app updates into it — same bundle id com.openai.codex — and the old
+    // Codex.app stays behind, never updated: 0.152 vs 0.160 here, 2026-10-05), the old Codex.app last
+    cmd: ["codex", "/Applications/ChatGPT.app/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex", "/Applications/Codex.app/Contents/Resources/codex"], check: ["--version"],
   },
   // A2: official events, injected for CVIM's run only (agentEnv) — Gemini hooks, an OpenCode plugin
   gemini: { name: "Gemini CLI", short: "Gemini", icon: "✦", color: "#4F8DF7", cmd: ["gemini"], state: "hooks" },
