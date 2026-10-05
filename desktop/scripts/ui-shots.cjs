@@ -81,6 +81,7 @@ function run(set) {
     ...process.env, CVIM_DESKTOP_TEST: "1", CVIM_DESKTOP_UI_SCENES: set, CVIM_WILD_CHANCE: "0",
     CVIM_DESKTOP_DIRS: path.join(dir, "proj"), CVIM_CACHE_DIR: path.join(dir, "cache"), CVIM_STATE_DIR: path.join(dir, "state"),
     CODEX_HOME: path.join(dir, "codex"), CLAUDE_CONFIG_DIR: path.join(dir, "claudecfg"), CVIM_DESKTOP_LOG: log,
+    CVIM_DESKTOP_USERDATA: path.join(dir, "profile"), // a fresh browser profile: no remembered sort / usage
     CVIM_DESKTOP_SHOTS: shots, CVIM_DESKTOP_QUIT_AFTER: "90000", ...(saveBaseline ? {} : { CVIM_UI_BASELINE: BASE }),
   };
   const child = spawn(path.join(APP, "Contents/MacOS/Tamer"), [], { env, stdio: "ignore" });

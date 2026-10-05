@@ -17,6 +17,10 @@ const { RustCore } = require("./core/rust.cjs");
 const ptys = new Map(); // pane id "<ws>:<agent|shell>" -> IPty
 // test hooks (DevTools input emulation, stand-in commands) only exist in test runs
 const TEST = process.env.CVIM_DESKTOP_TEST === "1";
+// a test run keeps its own browser profile (localStorage: last usage, 내 포켓몬 sort, font size …),
+// fresh every run — never the user's ~/Library/Application Support/Tamer (until 2026-10-05 they
+// shared it, and a test's sort choice showed up in ui:shots)
+if (TEST) app.setPath("userData", process.env.CVIM_DESKTOP_USERDATA || path.join(require("node:os").tmpdir(), `tamer-test-profile-${process.pid}`));
 // test instances show their window without activating it, so keys typed in the user's own apps
 // never land in a test terminal (seen 2026-10-02); CVIM_DESKTOP_TEST_FOCUS=1 for IME tests that need focus
 const QUIET_TEST = TEST && process.env.CVIM_DESKTOP_TEST_FOCUS !== "1";
