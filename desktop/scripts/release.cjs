@@ -40,7 +40,8 @@ const onlyBump = (() => {
   if (!lab?.tree || lab.tree === commitTree) return false;
   try {
     if (git(["diff", "--name-only", lab.tree, commitTree]) !== "package.json") return false;
-    const lines = git(["diff", "-U0", lab.tree, commitTree, "--", "package.json"]).split("\n").filter((l) => /^[+-](?![+-])/.test(l));
+    // ":(top)": the trees are desktop/'s own, so the path is from their root — not from this folder
+    const lines = git(["diff", "-U0", lab.tree, commitTree, "--", ":(top)package.json"]).split("\n").filter((l) => /^[+-](?![+-])/.test(l));
     return lines.length === 2 && lines.every((l) => /^[+-]\s*"version": "[^"]+",?$/.test(l));
   } catch { return false; }
 })();
