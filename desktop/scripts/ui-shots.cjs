@@ -13,6 +13,7 @@ const T = require("./test-env.cjs"); // the one test environment (docs/TESTING.m
 
 const BASE = path.join(T.DEV, "ui-baseline");
 const LIMIT = 0.003; // a scene "moved" when more than 0.3 % of its pixels changed
+const BLOCK_LIMIT = 0.15; // … or when one 24-pixel square changed by more than 15 % (a few words changed)
 const args = process.argv.slice(2);
 const saveBaseline = args.includes("--baseline");
 const SHOTS = path.join(T.WORK, "shots");
@@ -25,7 +26,7 @@ async function run(set) {
   fs.mkdirSync(SHOTS, { recursive: true });
   const env = { ...box.env, CVIM_DESKTOP_UI_SCENES: set, CVIM_DESKTOP_SHOTS: SHOTS, ...(saveBaseline ? {} : { CVIM_UI_BASELINE: BASE }) };
   const { log } = await T.launch({ env, mode: "direct", folders: [box.folder()], until: "ui-scenes done", timeoutMs: 95000 });
-  const out = [...log.matchAll(/ui-scenes shot (\S+) diff=(\S+)(.*)/g)].map((m) => ({ scene: m[1], diff: m[2] === "-" ? null : Number(m[2]), note: m[3].trim() }));
+  const out = [...log.matchAll(/ui-scenes shot (\S+) diff=(\S+) block=(\S+)(.*)/g)].map((m) => ({ scene: m[1], diff: m[2] === "-" ? null : Number(m[2]), block: Number(m[3]), note: m[4].trim() }));
   return { out, err: log.match(/ui-scenes ERROR.*/)?.[0], shots: SHOTS };
 }
 
@@ -46,8 +47,9 @@ async function run(set) {
   }
   let moved = 0;
   for (const s of all) {
-    const tag = s.diff == null ? "new (no baseline)" : s.diff > LIMIT ? `MOVED ${(s.diff * 100).toFixed(2)} %` : `same (${(s.diff * 100).toFixed(2)} %)`;
-    if (s.diff == null || s.diff > LIMIT) moved++;
+    const hit = s.diff != null && (s.diff > LIMIT || s.block > BLOCK_LIMIT);
+    const tag = s.diff == null ? "new (no baseline)" : `${hit ? "MOVED" : "same"} (${(s.diff * 100).toFixed(2)} % · 가장 바뀐 칸 ${Math.round((s.block || 0) * 100)} %)`;
+    if (s.diff == null || hit) moved++;
     console.log(`  ${s.scene.padEnd(16)} ${tag}${s.note ? ` — ${s.note}` : ""}`);
   }
   console.log(`pictures: ${shots}  ·  baseline: ${BASE}`);

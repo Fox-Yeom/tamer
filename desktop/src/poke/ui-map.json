@@ -54,7 +54,15 @@
         "bar-1100",
         "bar-900",
         "bar-720",
-        "term-search"
+        "term-search",
+        "bar-stall"
+      ]
+    },
+    "overlay": {
+      "what": "바탕화면 오버레이 — 다른 앱을 쓰는 동안 지금 탭·가장 급한 탭 카드, 아이콘 줄 (STA-15, STA-20)",
+      "entry": "bigCard",
+      "scenes": [
+        "overlay-stall"
       ]
     },
     "home": {

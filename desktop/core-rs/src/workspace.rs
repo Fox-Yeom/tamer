@@ -136,6 +136,10 @@ impl Workspace {
         json!({
             "state": self.st.state, "tool": self.st.tool, "detail": self.st.detail,
             "usage": self.usage(), "log": log,
+            // unattended runs (STA-20): wall-clock ms; watch = a stall can be suspected (the source
+            // reports events — not an agent followed by its output)
+            "turn_at": self.st.turn_ms, "state_at": self.st.state_ms, "event_at": self.st.event_ms, "took": self.st.took_ms,
+            "watch": !matches!(self.kind, Kind::Activity) && !(matches!(self.kind, Kind::Hooks) && !self.any_event && Instant::now().saturating_duration_since(self.started) >= HOOKS_GRACE),
         })
     }
 

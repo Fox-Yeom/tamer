@@ -589,6 +589,41 @@ sleep 30
     ],
   },
   {
+    id: "unattended-stall", tags: ["smoke", "status"], what: "무인 실행: 새 이벤트 없이 기준 시간이 지나면 '⏳ 변화 없음'(탭·상단 바·오버레이), 새 이벤트면 사라짐, 실행(Bash) 중엔 안 뜸 (STA-20)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], timeoutMs: 90000, env: { CVIM_STALL_SECS: "8" },
+    files: { "fakebin/codex": `#!/bin/sh
+[ "$1" = "--version" ] && { echo 'codex-cli 9.9.9-lab'; exit 0; }
+d="$CODEX_HOME/sessions/$(date +%Y/%m/%d)"; mkdir -p "$d"; f="$d/rollout-lab.jsonl"
+w() { printf '%s\\n' "$1" >> "$f"; }
+sleep 2
+printf '{"type":"session_meta","payload":{"cwd":"%s"}}\\n' "$(pwd -P)" > "$f"
+w '{"type":"event_msg","payload":{"type":"task_started"}}'
+w '{"type":"response_item","payload":{"type":"function_call","call_id":"a","name":"exec_command","arguments":"{\\"cmd\\":\\"rg needle\\"}"}}'
+sleep 20
+w '{"type":"response_item","payload":{"type":"custom_tool_call","call_id":"b","name":"apply_patch","input":"*** Begin Patch\\n*** Update File: src/a.ts\\n"}}'
+sleep 1
+w '{"type":"response_item","payload":{"type":"function_call","call_id":"c","name":"exec_command","arguments":"{\\"cmd\\":\\"npm test\\"}"}}'
+sleep 16
+w '{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"ok"}}'
+sleep 30
+` },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "codex" }, { wait: 200 }, { key: "Enter" }, { wait: 6000 }, { probe: "early" },
+      { wait: 11000 }, { probe: "stall" }, { invoke: "overlay_payload_test", log: true },
+      { wait: 17000 }, { probe: "bash" }, { wait: 9000 }, { probe: "done" }],
+    check: ({ probe, log }) => {
+      const ov = JSON.parse(log.match(/^lab-invoke overlay_payload_test (.*)$/m)?.[1] || "{}");
+      return [
+        ok(probe.early?.astate === "reading" && !/변화 없음/.test(probe.early?.doing || ""), `처음 ${probe.early?.astate} "${probe.early?.doing}"`),
+        ok(/⏳ 변화 없음 0분 · 마지막 읽기 rg needle/.test(probe.stall?.doing || "") || /⏳ 변화 없음/.test(probe.stall?.doing || ""), `멈춤 의심 상단 바 "${probe.stall?.doing}"`),
+        ok(/새 이벤트 없음/.test(probe.stall?.tabTitle || ""), `탭 말풍선 "${probe.stall?.tabTitle}"`),
+        ok(ov.current?.times?.watch === true && ov.current?.times?.event_at > 0 && ov.stallMs === 8000, `오버레이 시각 ${JSON.stringify(ov.current?.times)} stallMs ${ov.stallMs}`),
+        ok(probe.bash?.astate === "bash" && !/변화 없음/.test(probe.bash?.doing || ""), `실행 중 ${probe.bash?.astate} "${probe.bash?.doing}" (멈춤 표시가 없어야)`),
+        ok(probe.done?.astate === "done" || probe.done?.astate === "idle", `끝 ${probe.done?.astate}`),
+      ];
+    },
+  },
+  {
     id: "claude-typed-unlinked", tags: ["smoke", "agents"], what: "연결 안 한 셸에서 친 Claude: 대화 기록 방식, 상단 바에 \"5h·7d ?\" 안내 (#45)",
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": "#!/bin/sh\n# an unlinked Claude never runs Tamer's status line\necho \"fake-claude args: $*\"\nsleep 30\n" },
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },

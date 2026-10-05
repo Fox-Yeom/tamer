@@ -417,6 +417,15 @@ function outputSeen(wsId) {
 // events from cvim-core
 // a tab's state for the overlay: the shell's agent while it sits in the big slot, otherwise the
 // most urgent of its sessions (needs you → failed → working → finished → idle → asleep)
+// unattended runs (STA-20): no new event for this long while working = a stall is suspected
+// (tests: CVIM_STALL_SECS)
+const STALL_MS = (TEST && Number(process.env.CVIM_STALL_SECS) * 1000) || 10 * 60 * 1000;
+const TIMES = (p) => ({ state: p.state, turn_at: p.turn_at, state_at: p.state_at, event_at: p.event_at, took: p.took, watch: p.watch });
+// the times of the state the overlay shows for a tab (shownState's pick)
+function shownTimes(ws) {
+  if (ws.shell && ws.swapped) return ws.shell.times || null;
+  return ws.sessions.map((x) => x.times).filter(Boolean).sort((a, b) => URGENCY(a.state) - URGENCY(b.state))[0] || null;
+}
 const URGENCY = (st) => (st === "waiting" ? 0 : st === "error" ? 1 : WORKING.includes(st) ? 2 : st === "done" ? 3 : st === "interrupted" ? 4 : st === "sleep" ? 6 : 5);
 function shownState(ws) {
   if (ws.shell && ws.swapped) return ws.shell.state || "idle";
@@ -433,12 +442,15 @@ function onCoreEvent(msg) {
     if (fromShell) {
       if (!ws.shell || ws.shell.id !== msg.ws) return;
       ws.shell.state = msg.payload.state;
+      ws.shell.times = TIMES(msg.payload);
       send("agent-state", { ws: ws.id, source: "shell", shellKey: ws.shell?.key, ...msg.payload });
     } else {
       sess.agentState = msg.payload.state;
+      sess.times = TIMES(msg.payload);
       send("agent-state", { ws: ws.id, session: sess.id, source: "agent", agent: agentInfo(sess), ...msg.payload });
     }
-    if (ws.state !== shownState(ws)) { ws.state = shownState(ws); overlayUpdate(); }
+    if (ws.state !== shownState(ws)) ws.state = shownState(ws);
+    overlayUpdate(); // the times move with every event (STA-20)
   }
   if (msg.event === "transition") {
     logLine(`transition ws=${msg.ws} agent=${fromShell ? ws.shell?.key : sess.agent} ${msg.from} -> ${msg.to}`); // diagnostics
@@ -745,6 +757,7 @@ function overlayPayload() {
     ws: ws.id, name: path.basename(ws.cwd), state: ws.state || "idle", active: ws.id === activeWs, sessions: ws.sessions?.length || 1,
     ended: ws.ended && now - ws.ended.at < 15000 ? ws.ended.how : null,
     endedN: ws.ended && now - ws.ended.at < 15000 ? ws.ended.n : null,
+    times: shownTimes(ws), // STA-20
     partner: ws.partner && { name: ws.partner.name, shiny: ws.partner.shiny, gif: ws.partner.gif, types: ws.partner.types },
   }));
   // big cards: the current tab + the one that needs you most (needs input → failed → just
@@ -761,7 +774,7 @@ function overlayPayload() {
     minis: overlayCollapsed ? [] : rest.slice(0, MINI_MAX), more: overlayCollapsed ? 0 : Math.max(0, rest.length - MINI_MAX),
     counts: { waiting: count((t) => t.state === "waiting"), working: count((t) => WORKING.includes(t.state)),
       done: count((t) => t.ended === "done"), error: count((t) => t.ended === "error") },
-    wild: wild.current(),
+    wild: wild.current(), stallMs: STALL_MS,
   };
 }
 
@@ -891,6 +904,7 @@ const commands = {
     const restored = sess?.tabs?.filter(isDir) || [];
     const open = [...new Set([...restored, ...handed])];
     return {
+      stallMs: STALL_MS, // STA-20
       home: (TEST && process.env.CVIM_DESKTOP_TEST_HOME) || HOME, shell: agents.userShell(), recent: recentDirs(), open,
       // in front: the folder handed in (dropped on the app to launch it), else last time's front tab
       front: handed.at(-1) || (restored.length ? sess.active : null),
@@ -1204,20 +1218,27 @@ const testCommands = {
   win_resize_test({ w, h }) { win.setContentSize(Math.max(200, Number(w) || 800), Math.max(200, Number(h) || 600)); },
   // a UI scene: this window as a picture in $CVIM_DESKTOP_SHOTS/<name>.png, and how much of it differs
   // from $CVIM_UI_BASELINE/<name>.png (share of pixels whose colour moved more than a little)
-  async ui_shot({ name }) {
+  async ui_shot({ name, target }) {
     const n = String(name).replace(/[^\w-]/g, "");
-    const img = await win.webContents.capturePage();
+    const img = await (target === "overlay" && overlay ? overlay : win).webContents.capturePage(); // the overlay's own page (STA-20)
     if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${n}.png`), img.toPNG());
     const basePath = process.env.CVIM_UI_BASELINE && path.join(process.env.CVIM_UI_BASELINE, `${n}.png`);
     if (!basePath || !fs.existsSync(basePath)) return { name: n, diff: null };
     const base = nativeImage.createFromPath(basePath), a = img.getSize(), b = base.getSize();
     if (a.width !== b.width || a.height !== b.height) return { name: n, diff: 1, note: `size ${b.width}x${b.height} → ${a.width}x${a.height}` };
     const x = img.toBitmap(), y = base.toBitmap();
+    // also where: a few changed words are a tiny share of the window but crowd one spot (2026-10-06:
+    // "· 4분째" in the top bar was 0.08 % — "same"). block = the most changed 24-pixel square's share
+    const B = 24, cols = Math.ceil(a.width / B), blocks = new Uint32Array(cols * Math.ceil(a.height / B));
     let changed = 0;
     for (let i = 0; i < x.length; i += 4) {
-      if (Math.max(Math.abs(x[i] - y[i]), Math.abs(x[i + 1] - y[i + 1]), Math.abs(x[i + 2] - y[i + 2])) > 24) changed++;
+      if (Math.max(Math.abs(x[i] - y[i]), Math.abs(x[i + 1] - y[i + 1]), Math.abs(x[i + 2] - y[i + 2])) > 24) {
+        changed++;
+        const p = i / 4;
+        blocks[Math.floor(Math.floor(p / a.width) / B) * cols + Math.floor((p % a.width) / B)]++;
+      }
     }
-    return { name: n, diff: changed / (x.length / 4) };
+    return { name: n, diff: changed / (x.length / 4), block: Math.max(...blocks) / (B * B) };
   },
   // the overlay's "도감에서 보기" (#25), as if pressed there
   wild_dex_test({ id }) { overlayCommands.wild_dex({ id }); },
@@ -1229,6 +1250,12 @@ const testCommands = {
     await new Promise((r) => setTimeout(r, 120)); // the link under the pointer is looked up on move
     await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, modifiers, button, clickCount: 1 });
     await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button, clickCount: 1 });
+  },
+  // the (test) pointer to a corner of the page: no :hover left on a scene by wherever the real mouse is
+  async mouse_park_test() {
+    const dbg = win.webContents.debugger;
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
   },
   // a mouse drag from (x1, y1) to (x2, y2) with the left button held — selecting text as a hand does (TRM-04)
   async drag_test({ x1, y1, x2, y2 }) {
@@ -1284,8 +1311,8 @@ const testCommands = {
   // #45: the opt-in shell line without its dialog (lab: the line goes into the sandbox shell's ZDOTDIR)
   claude_link_test({ on }) { const r = on ? agents.claudeLink() : agents.claudeUnlink(); relinkShown(); return r; },
   // an agent's state changes as the core would report it
-  agent_state_test({ ws, from, to }) {
-    onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to) } });
+  agent_state_test({ ws, from, to, times }) {
+    onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to), ...(times || {}) } });
     onCoreEvent({ event: "transition", ws: String(ws), from: String(from), to: String(to) });
   },
   // throws land as given: "caught" / "broke" / "fled" (random otherwise)

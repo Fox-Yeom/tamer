@@ -7,6 +7,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { SearchAddon } from "@xterm/addon-search";
 import { createWild, josa } from "./wild.js";
+import { timing, dur, MINUTE } from "./elapsed.js";
 import "./poke/poke.css";
 import { pkCard } from "./poke/card.js";
 
@@ -638,14 +639,16 @@ function renderTabs() {
 function renderTab(t, b = $(`#tabs .tab[data-ws="${t.id}"]`), i = tabs.indexOf(t)) {
   if (!b) return;
   const st = urgentOf(t); // several sessions: the one that needs you most
+  const tm = timing(urgentStateOf(t), { stallMs: info.stallMs }); // STA-20
   const many = t.sessions?.length > 1 ? `<span class="sess-count">×${t.sessions.length}</span>` : "";
   const waiting = st === "waiting";
   b.classList.toggle("active", t === active);
   b.classList.toggle("attention", waiting || st === "error");
-  const doing = waiting ? "❗ 입력 필요" : st && st !== "idle" && st !== "sleep" ? DOING[st] : "";
-  b.innerHTML = `<span class="num">${i < 9 ? i + 1 : ""}</span><span>${ICON[st] || "·"}</span>`
+  const doing = waiting ? "❗ 입력 필요" : tm.stall ? `변화 없음 ${tm.stall}` : st && st !== "idle" && st !== "sleep" ? DOING[st] : "";
+  b.innerHTML = `<span class="num">${i < 9 ? i + 1 : ""}</span><span>${tm.stall ? "⏳" : ICON[st] || "·"}</span>`
     + `<span class="name">${esc(base(t.cwd))}</span>${many}<span class="doing">${esc(doing)}</span><span class="close" title="닫기 (⌘W)">✕</span>`;
-  b.title = `${t.cwd}${t.agent ? ` — ${t.agent.label}` : ""}`;
+  const when = tm.stall ? ` · ${tm.stall} 동안 새 이벤트 없음(멈췄을 수 있어요)` : tm.run ? ` · 작업 ${tm.run}` : tm.wait ? ` · 입력 기다린 지 ${tm.wait}` : "";
+  b.title = `${t.cwd}${t.agent ? ` — ${t.agent.label}` : ""}${when}`;
 }
 
 $("#tabs").addEventListener("click", (e) => {
@@ -678,6 +681,12 @@ const URG = (st) => (st === "waiting" ? 0 : st === "error" ? 1 : WORKING.include
 const curSession = (tab) => tab.sessions?.find((x) => x.id === tab.sid);
 // a session's number = its place in the rail (closing 4 and opening one gives 4 again)
 const sessNo = (tab, x) => tab.sessions.indexOf(x) + 1;
+// the state object (times too) of the session urgentOf picks
+function urgentStateOf(t) {
+  if (!(t.sessions?.length > 1)) return t.state;
+  const own = t.sessions.map((x) => (x.id === t.sid ? t.state : x.state)).filter(Boolean);
+  return own.sort((a, b) => URG(a.state) - URG(b.state))[0] || null;
+}
 function urgentOf(t) {
   if (!(t.sessions?.length > 1)) return t.state?.state;
   const own = t.sessions.map((x) => (x.id === t.sid ? t.state?.state : x.state?.state));
@@ -762,10 +771,11 @@ function renderRail(tab) {
   tab.view.classList.toggle("multi", !!multi);
   if (!multi) { $(".agent-name", tab.view).innerHTML = titleHTML(paneTitle(tab, tab.agent), tab.hostAgent && curSession(tab)?.hostWhere); return; }
   rail.innerHTML = tab.sessions.map((x) => {
-    const st = x.id === tab.sid ? tab.state?.state : x.state?.state;
-    const dot = st === "waiting" || st === "error" ? "bad" : WORKING.includes(st) ? "work" : st === "done" ? "ok" : "idle";
+    const so = x.id === tab.sid ? tab.state : x.state, st = so?.state, tm = timing(so, { stallMs: info.stallMs });
+    const dot = st === "waiting" || st === "error" ? "bad" : tm.stall ? "stall" : WORKING.includes(st) ? "work" : st === "done" ? "ok" : "idle";
     const no = sessNo(tab, x);
-    return `<button class="sess${x.id === tab.sid ? " cur" : ""}" data-sid="${esc(x.id)}" title="셸 ${no} (⌃⌘${no}) — ${esc(x.host && !x.hostAgent ? "셸" : x.agent?.label || "")} · ${esc(DOING[st] || "대기")}">`
+    const when = tm.stall ? ` · ⏳ 변화 없음 ${tm.stall}` : tm.run ? ` · ${tm.run}` : tm.wait ? ` · ${tm.wait}째` : tm.took ? ` · ${tm.took} 걸림` : "";
+    return `<button class="sess${x.id === tab.sid ? " cur" : ""}" data-sid="${esc(x.id)}" title="셸 ${no} (⌃⌘${no}) — ${esc(x.host && !x.hostAgent ? "셸" : x.agent?.label || "")} · ${esc(DOING[st] || "대기")}${esc(when)}">`
       + `<span class="ic">${esc(x.host && !x.hostAgent ? "🐚" : x.agent?.icon || "▸")}</span><span class="n">${no}</span><i class="dot ${dot}"></i>`
       + `${x.id === tab.id ? "" : '<span class="x" title="셸 닫기">✕</span>'}</button>`;
   }).join("") + '<button class="sess-new" title="새 셸 (⌘⇧T)">＋</button>';
@@ -894,11 +904,16 @@ function renderBar(tab) {
   const doing = $("#doing");
   const what = DOING[st.state] || "";
   const detail = DETAIL_STATES.includes(st.state) ? ` ${short(st.detail).slice(0, 32)}` : "";
-  doing.className = st.state === "waiting" || st.state === "error" ? "bad" : "dim";
+  // unattended runs (STA-20): · 12분 working, · 4분째 waiting for you, 23분 걸림 when done, ⏳ no change
+  const tm = timing(st, { stallMs: info.stallMs });
+  const when = tm.run ? ` · ${tm.run}` : tm.wait ? ` · ${tm.wait}째` : tm.took ? ` · ${tm.took} 걸림` : "";
+  doing.className = st.state === "waiting" || st.state === "error" ? "bad" : tm.stall ? "stall" : "dim";
   // narrow windows keep the icon only (the tab shows the state too) (#38)
-  doing.innerHTML = st.state === "waiting" ? `❗<span class="doing-text"> ${esc(what)}</span>` : `${ICON[st.state] || ""}<span class="doing-text"> ${esc(what + detail)}</span>`;
-  doing.title = `${what}${detail}`;
-  document.title = `${ICON[st.state] || ""} ${base(tab.cwd)} — Tamer`;
+  doing.innerHTML = st.state === "waiting" ? `❗<span class="doing-text"> ${esc(what + when)}</span>`
+    : tm.stall ? `⏳<span class="doing-text"> 변화 없음 ${esc(tm.stall)} · 마지막 ${esc(what + detail)}${esc(when)}</span>`
+    : `${ICON[st.state] || ""}<span class="doing-text"> ${esc(what + detail + when)}</span>`;
+  doing.title = tm.stall ? `${tm.stall} 동안 새 이벤트가 없어요 — 멈췄을 수 있어요(추정). 마지막: ${what}${detail}${when}` : `${what}${detail}${when}`;
+  document.title = `${tm.stall ? "⏳" : ICON[st.state] || ""} ${base(tab.cwd)} — Tamer`;
   const u = withLast(st, tab), parts = [];
   const old = (k) => (u.stale?.includes(k) ? ' title="지난번 값 — 첫 응답 뒤에 새로 고쳐져요" style="opacity:.55"' : "");
   // gauges and the model name give way first on a narrow window: the numbers stay (#38)
@@ -975,11 +990,19 @@ function renderState(tab, st, { quiet = false } = {}) {
   }
   renderSummary();
   $(".state-line", tab.view).textContent = `${ICON[st.state] || ""} ${what}`;
-  $(".activity", tab.view).innerHTML = (st.log || []).slice().reverse().map((ev) => {
-    const t = new Date(ev.ts > 1e12 ? ev.ts : ev.ts * 1000).toTimeString().slice(0, 8);
+  const ms = (ev) => (ev.ts > 1e12 ? ev.ts : ev.ts * 1000);
+  const log = st.log || [];
+  $(".activity", tab.view).innerHTML = log.slice().reverse().map((ev, ri) => {
+    const t = new Date(ms(ev)).toTimeString().slice(0, 8);
     const icon = ev.event === "PreToolUse" ? TOOL_ICON[TOOL_STATE[ev.tool] || "tool"] : EVENT_ICON[ev.event] || "·";
     const label = ev.event === "PreToolUse" ? ev.tool : ev.event;
-    return `<li><span class="dim">${t}</span> ${icon} ${esc(label)} <span class="dim">${esc(short(ev.detail).slice(0, 60))}</span></li>`;
+    // how long the task took (STA-20): back to its prompt, when that's still in the list
+    let took = "";
+    if (["Stop", "Interrupted", "StopFailure"].includes(ev.event)) {
+      const i = log.length - 1 - ri, p = log.slice(0, i).findLast((x) => x.event === "UserPromptSubmit");
+      if (p && ms(ev) - ms(p) >= MINUTE) took = ` · ${dur(ms(ev) - ms(p))} 걸림`;
+    }
+    return `<li><span class="dim">${t}</span> ${icon} ${esc(label)} <span class="dim">${esc(short(ev.detail).slice(0, 60))}${esc(took)}</span></li>`;
   }).join("");
 }
 
@@ -2348,7 +2371,8 @@ listen("agent-state", (e) => {
       // a session in the background: its dot, the tab icon, the summary — and the partner reacts
       if (prev && prev !== e.payload.state && ["done", "waiting", "error"].includes(e.payload.state)) {
         if (e.payload.state === "done") react(t, "attack");
-        if (t === active) toast(`셸 ${sessNo(t, sess)}: ${e.payload.state === "done" ? "🎉 완료" : e.payload.state === "waiting" ? "❗ 입력 필요" : "💥 실패"}`);
+        const took = timing(e.payload).took; // STA-20
+        if (t === active) toast(`셸 ${sessNo(t, sess)}: ${e.payload.state === "done" ? `🎉 완료${took ? ` · ${took} 걸림` : ""}` : e.payload.state === "waiting" ? "❗ 입력 필요" : "💥 실패"}`);
       }
       renderRail(t); renderTab(t); renderSummary();
       return;
@@ -2667,6 +2691,8 @@ function labState() {
     usageRaw: (() => { const u = active && shownOf(active)?.usage; return u ? Object.keys(u).filter((k) => u[k] != null).join(",") : null; })(),
     sid: active?.sid ?? null,
     astate: active?.state?.state || null,
+    doing: $("#doing")?.textContent || "", // the top bar's state sentence (STA-20 times)
+    tabTitle: active ? $(`#tabs .tab[data-ws="${active.id}"]`)?.title || "" : null,
     recent: startOpen() ? [...document.querySelectorAll("#recent li:not(.dim) span:nth-child(2)")].map((x) => x.textContent) : null,
     startSel: startOpen() ? startSel : null,
     menuItems: $("#menu").hidden ? null : [...$("#menu").querySelectorAll("button")].map((b) => b.textContent),
@@ -2686,7 +2712,7 @@ function labState() {
 }
 // tests: the top bar as with an agent waiting, every usage item shown (ui:shots, lab)
 function fakeUsage(tab) {
-  tab.state = { state: "waiting", detail: "", agent: { key: "claude", short: "Claude" },
+  tab.state = { state: "waiting", detail: "", agent: { key: "claude", short: "Claude" }, state_at: Date.now() - 4 * 60000 - 5000, // waiting 4 min (STA-20)
     usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
   renderBar(tab);
 }
@@ -2795,7 +2821,7 @@ async function uiScenes(set) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line: `ui-scenes ${line}` });
   document.body.classList.add("ui-test"); // no animation, no blinking: same picture every run
-  const shot = async (name) => { await wait(700); const r = await invoke("ui_shot", { name }); await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)}${r.note ? ` ${r.note}` : ""}`); };
+  const shot = async (name) => { await invoke("mouse_park_test"); await wait(700); const r = await invoke("ui_shot", { name }); await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`); };
   const search = async (q) => { const b = $("#dex-search"); b.value = q; b.dispatchEvent(new Event("input", { bubbles: true })); await wait(200); };
   try {
     const tab = active;
@@ -2838,6 +2864,16 @@ async function uiScenes(set) {
       await showStart(false, ["dev/tamer", "dev/blog", "work/api-server", "Documents/notes"].map((d) => `${info.home}/${d}`));
       startSel = 1; markStart();
       await shot("start-screen"); hideStart();
+      // 무인 실행 (STA-20): working 32 min, no new event for 12 — the top bar and the overlay card
+      const now = Date.now(), times = { turn_at: now - 32 * 60000 - 5000, state_at: now - 12 * 60000 - 5000, event_at: now - 12 * 60000 - 5000, watch: true };
+      tab.state = { ...tab.state, state: "coding", detail: "src/app.ts", ...times };
+      renderBar(tab); renderTab(tab);
+      await shot("bar-stall");
+      await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "coding", times });
+      await invoke("overlay_show_test", { on: true }); await wait(1200);
+      const r = await invoke("ui_shot", { name: "overlay-stall", target: "overlay" });
+      await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
+      await invoke("overlay_show_test", { on: false });
     }
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("done");
@@ -3480,6 +3516,8 @@ async function a2Test() {
 // ── start ───────────────────────────────────────────────────────────────────
 async function main() {
   info = await invoke("app_info"); // doesn't wait for the shell environment (#31)
+  // the times move on their own (STA-20): the top bar, tabs and rail redraw now and then
+  setInterval(() => { if (active?.state) renderBar(active); tabs.forEach((t) => { renderTab(t); if (t === active) renderRail(t); }); }, Math.min(15000, Math.max(1000, info.stallMs / 3)));
   invoke("startup_mark", { what: "ui has app info" });
   if (info.test.lab) labRun(info.test.lab); // the lab watches the start itself
   invoke("wild_state").then((w) => { wildOn = w.enabled; if (w.current) wild.show(w.current); });

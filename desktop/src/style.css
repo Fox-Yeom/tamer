@@ -244,6 +244,7 @@ body.away #wild { visibility: hidden; }
 .sess:hover { background: #24242c; color: var(--fg); }
 .sess.cur { background: #24242c; border-color: var(--accent); color: var(--fg); }
 .sess .dot { position: absolute; right: 3px; top: 3px; width: 7px; height: 7px; border-radius: 50%; }
+.sess .dot.stall { background: #f0883e; } #doing.stall { color: #f0883e; } /* STA-20: no change for a while */
 .sess .dot.bad { background: #e5484d; } .sess .dot.work { background: #f5c542; } .sess .dot.ok { background: #3ddc84; } .sess .dot.idle { background: #4a4a58; }
 .sess .x { position: absolute; left: 1px; top: -2px; font-size: 9px; opacity: 0; }
 .sess:hover .x { opacity: .7; }

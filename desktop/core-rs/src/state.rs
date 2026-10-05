@@ -104,16 +104,43 @@ pub struct State {
     pub tool: Option<String>,
     pub detail: Option<String>,
     pub log: VecDeque<Event>,
+    /// unattended runs (STA-20), wall-clock ms for the screen: when this task began (prompt, or
+    /// work after a rest — waiting keeps it), when the state last changed, the last event
+    /// (stall suspicion), how long the last finished task took. Memory only
+    pub turn_ms: Option<u64>,
+    pub state_ms: u64,
+    pub event_ms: u64,
+    pub took_ms: Option<u64>,
+}
+
+pub fn epoch_ms() -> u64 {
+    SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 impl Default for State {
     fn default() -> Self {
-        State { state: "idle", since: Instant::now(), tool: None, detail: None, log: VecDeque::new() }
+        State { state: "idle", since: Instant::now(), tool: None, detail: None, log: VecDeque::new(), turn_ms: None, state_ms: epoch_ms(), event_ms: 0, took_ms: None }
     }
 }
 
 impl State {
     pub fn set(&mut self, state: &'static str, ev: Option<&Event>, now: Instant) {
+        let ms = epoch_ms();
+        if self.state != state {
+            self.state_ms = ms;
+        }
+        if WORKING.contains(&state) || state == "waiting" {
+            if self.turn_ms.is_none() {
+                self.turn_ms = Some(ms);
+                self.took_ms = None;
+            }
+        } else if matches!(state, "done" | "interrupted" | "error") {
+            if let Some(t) = self.turn_ms.take() {
+                self.took_ms = Some(ms.saturating_sub(t));
+            }
+        } else {
+            self.turn_ms = None;
+        }
         self.state = state;
         self.since = now;
         if let Some(ev) = ev {
@@ -127,6 +154,10 @@ impl State {
     /// Applies a normalized event; returns the previous state.
     pub fn apply(&mut self, ev: Event, now: Instant) -> &'static str {
         let prev = self.state;
+        self.event_ms = epoch_ms();
+        if ev.event == "UserPromptSubmit" {
+            self.turn_ms = None; // a new prompt is a new task, even mid-turn
+        }
         match ev.event.as_str() {
             "SessionStart" => self.set("idle", Some(&ev), now),
             "UserPromptSubmit" => self.set("thinking", Some(&ev), now),
@@ -209,6 +240,32 @@ mod tests {
 
     fn ev(e: &str, tool: Option<&str>) -> Event {
         Event::new(e, tool, None)
+    }
+
+    #[test]
+    fn task_time_runs_from_prompt_through_waiting_to_the_end() {
+        let t = Instant::now();
+        let mut s = State::default();
+        assert_eq!(s.turn_ms, None);
+        s.apply(ev("UserPromptSubmit", None), t);
+        let start = s.turn_ms.expect("a prompt starts the task");
+        assert!(s.event_ms >= start);
+        s.apply(ev("PreToolUse", Some("Edit")), t);
+        s.apply(Event::new("PermissionRequest", Some("Bash"), None), t);
+        assert_eq!(s.state, "waiting");
+        assert_eq!(s.turn_ms, Some(start), "waiting is still the same task");
+        let waited_from = s.state_ms;
+        s.apply(ev("PostToolUse", None), t);
+        assert_eq!(s.turn_ms, Some(start));
+        assert!(s.state_ms >= waited_from);
+        s.apply(ev("Stop", None), t);
+        assert_eq!(s.turn_ms, None);
+        assert!(s.took_ms.is_some(), "a finished task says how long it took");
+        s.tick(t + Duration::from_secs(7));
+        assert_eq!(s.state, "idle");
+        assert!(s.took_ms.is_some(), "kept until the next task starts");
+        s.apply(ev("UserPromptSubmit", None), t);
+        assert!(s.turn_ms.is_some() && s.took_ms.is_none());
     }
 
     #[test]
