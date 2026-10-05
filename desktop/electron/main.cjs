@@ -307,6 +307,16 @@ function shellEnv(id) {
 }
 
 // how CVIM follows an agent typed into a shell (no CVIM flags on its command line)
+// #49: a Claude typed in a shell that isn't linked is read from its conversation log — no "입력 필요"
+// (the log never says a permission dialog is open) and no 5h · 7d. Say how to get them, once per run
+let linkHinted = false;
+function hintClaudeLink(d, kind) {
+  if (linkHinted || d?.key !== "claude" || kind !== "claude_log" || !agents.claudeLinkFile() || agents.claudeLinked()) return;
+  linkHinted = true;
+  logLine("hint: shell claude not linked");
+  send("toast", { text: "셸에서 친 Claude는 '입력 필요'·한도를 알 수 없어요 — ⌘G → ⚙ 에이전트 연결 상태 → \"셸에서 친 Claude도 연결\"을 켜면 ⌘G처럼 보여요" });
+}
+
 function typedKind(d, args = "") {
   if (d.state === "codex_log") return "codex_log";
   // a Claude that came up with Tamer's --settings (the opt-in shell line, #45): hooks + status line like ⌘G
@@ -342,6 +352,7 @@ async function setHostAgent(s, d, cwd = null, args = "") {
   send("host-agent", { ws: tabOf(s).id, session: s.id, agent: d ? agentInfo(s) : null, where: d ? whereOf(tabOf(s), cwd) : null });
   if (d) {
     // its logs are where it runs (after a `cd`, not necessarily the tab's folder) — #3
+    hintClaudeLink(d, typedKind(d, args));
     const fresh = await core.request("restart", { ws: s.id, kind: typedKind(d, args), cwd: cwd || s.cwd }).catch(() => null);
     if (fresh) send("agent-state", { ws: tabOf(s).id, session: s.id, source: "agent", agent: agentInfo(s), ...fresh });
   }
@@ -691,6 +702,7 @@ function setShellAgent(ws, d, cwd = null, args = "") {
     // others: output
     // its logs are where it runs (after a `cd`, not necessarily the tab's folder) — #3
     // which adapter fits depends on the PATH (Gemini linked …): after the shell environment
+    hintClaudeLink(d, typedKind(d, args));
     Promise.resolve(ready).then(() => core.request("open", { ws: id, kind: typedKind(d, args), cwd: cwd || ws.cwd, tabs: TABS })).catch((e) => logLine(`shell core error ${e}`));
     agents.remember(ws.cwd, d.key); // ⌘G offers it first next time
   }

@@ -143,6 +143,10 @@ impl State {
             // turned a resting shell into "입력 필요" and hid other shells' "완료" (2026-10-02)
             "Notification" if is_idle_reminder(ev.detail.as_deref()) => {}
             "Notification" => self.set("waiting", Some(&ev), now),
+            // the permission dialog itself (#48): it comes the moment the dialog shows — Claude's
+            // permission Notification follows only a while later. The hook prints nothing, so it
+            // makes no decision and the dialog stays the user's
+            "PermissionRequest" => self.set("waiting", Some(&ev), now),
             "Stop" => self.set("done", None, now),
             // how a turn ended: done (EXP, wild encounters) / interrupted (Esc) / error (API error,
             // rate limit …) — the partner reacts to each, then all three settle to idle
@@ -205,6 +209,19 @@ mod tests {
 
     fn ev(e: &str, tool: Option<&str>) -> Event {
         Event::new(e, tool, None)
+    }
+
+    #[test]
+    fn permission_request_is_waiting_at_once() {
+        let mut st = State::default();
+        let t = Instant::now();
+        st.apply(Event::new("UserPromptSubmit", None, None), t);
+        st.apply(Event::new("PreToolUse", Some("Write"), None), t);
+        assert_eq!(st.state, "coding");
+        st.apply(Event::new("PermissionRequest", Some("Write"), None), t);
+        assert_eq!(st.state, "waiting");
+        st.apply(Event::new("PostToolUse", Some("Write"), None), t); // allowed: back to work
+        assert_eq!(st.state, "thinking");
     }
 
     #[test]

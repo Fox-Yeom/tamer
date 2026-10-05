@@ -909,7 +909,7 @@ function renderBar(tab) {
   if (u?.seven_day) parts.push(`<span class="${level(u.seven_day.pct)}"${old("seven_day")}>7d ${gauge(u.seven_day.pct)}${Math.round(u.seven_day.pct)}%</span>`);
   // a Claude typed in the shell without the opt-in line: no 5h · 7d (only its status line has them) (#45)
   const typedClaude = (st.shellKey || tab.hostAgent?.key) === "claude" && st.state !== "shell";
-  if (typedClaude && !u?.five_hour && !u?.seven_day) parts.push('<span class="dim u-hint" title="셸에서 직접 친 Claude는 한도를 알려 주지 않아요 — ⌘G → ⚙ 에이전트 연결 상태 → \'셸에서 친 Claude도 연결\'을 켜거나 ⌘G로 띄우면 보여요 (Pro·Max 구독, 첫 응답 뒤)">5h·7d ?</span>');
+  if (typedClaude && !u?.five_hour && !u?.seven_day) parts.push('<span class="dim u-hint" title="셸에서 직접 친 Claude는 한도와 \'입력 필요\'를 알려 주지 않아요 — ⌘G → ⚙ 에이전트 연결 상태 → \'셸에서 친 Claude도 연결\'을 켜거나 ⌘G로 띄우면 보여요 (Pro·Max 구독, 첫 응답 뒤)">5h·7d ?</span>');
   if (u?.cost != null) parts.push(`<span class="dim">$${u.cost.toFixed(2)}</span>`);
   else if (u?.tokens) { // no cost of its own (Claude typed in the shell, Codex): tokens × API prices (#23)
     const c = estCost(u.tokens);

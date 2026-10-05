@@ -345,6 +345,7 @@ module.exports = [
         ok(/host-agent \S+ claude kind=claude_log/.test(log), "셸 Claude가 대화 기록 방식으로 안 잡힘"),
         ok(/5h·7d \?/.test(probe.running?.usage || ""), `상단 바에 안내 없음 (${probe.running?.usage})`),
         ok(st.list?.find((a) => a.key === "claude")?.fix === "claude_link", "연결 창에 '셸에서 친 Claude도 연결'이 없음"),
+        ok(/^hint: shell claude not linked$/m.test(log), "연결 안내 알림이 안 뜸 (#49)"),
       ];
     },
   },
@@ -363,6 +364,7 @@ module.exports = [
         ok(/"key":"claude"[^}]*"fix":"claude_linked"/.test(log), "연결 뒤 상태가 claude_linked가 아님"),
         ok(/fake-claude args: --settings \S*claude\/settings\.json/.test(log) || /host-agent \S+ claude kind=hooks/.test(log), "새 셸의 claude에 --settings가 안 붙음"),
         ok(/host-agent \S+ claude kind=hooks/.test(log), "연결한 셸의 Claude가 hooks 방식으로 안 잡힘"),
+        ok(!/^hint: shell claude not linked$/m.test(log), "연결했는데 연결 안내 알림이 뜸"),
         ok(/ctx\D*21%/.test(probe.running?.usage || "") && /5h\D*30%/.test(probe.running?.usage || "") && !/5h·7d \?/.test(probe.running?.usage || ""), `상단 바 ${probe.running?.usage} (ctx 21% · 5h 30% · 7d 12% — 실시간 값)`),
         ok(/five_hour/.test(probe.running?.usageRaw || ""), `실시간 사용량이 아님(지난 값) — ${probe.running?.usageRaw}`),
         ok(!text.includes("Tamer: Claude 연결") && /PS1='lab\$ '/.test(text), "해제 뒤 블록이 남았거나 원래 줄이 사라짐"),

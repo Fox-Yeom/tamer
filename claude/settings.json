@@ -10,6 +10,7 @@
     "PreToolUse":       [{ "matcher": "*", "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" PreToolUse", "timeout": 3 }] }],
     "PostToolUse":      [{ "matcher": "*", "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" PostToolUse", "timeout": 3 }] }],
     "Notification":     [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" Notification", "timeout": 3 }] }],
+    "PermissionRequest": [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" PermissionRequest", "timeout": 3 }] }],
     "Stop":             [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" Stop", "timeout": 3 }] }],
     "StopFailure":      [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" StopFailure", "timeout": 3 }] }],
     "SubagentStop":     [{ "hooks": [{ "type": "command", "command": "bash \"$CVIM_ROOT/claude/hooks/event.sh\" SubagentStop", "timeout": 3 }] }],
