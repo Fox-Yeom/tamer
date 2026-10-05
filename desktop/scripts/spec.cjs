@@ -5,6 +5,8 @@
 //   npm run spec:impact -- <target>       what's linked to a card / policy / file / name / lab case / scene / #issue, both ways
 //   npm run spec:impact -- --diff [base]  the delta: changed files (uncommitted, or since <base>) → cards → policies,
 //                                         related cards, tests to run, docs to look at
+//   node scripts/spec.cjs gate <A..B> [version] [ids]  release gate: cards hit directly must name an issue
+//                                         of the range (or the version) in **이력** — release.cjs runs it
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
@@ -171,8 +173,12 @@ function impact(target) {
 }
 
 // the delta: changed files → cards → what to run and look at again
-function diff(base) {
-  const { cs, ps } = load();
+// A card is hit directly when a name it owns is *changed*: the function a hunk sits in (git's hunk
+// header), a definition on a changed line, or any other mention (a CSS class, a key). A changed line
+// that only *calls* the name (renderBar(t), logLine(…)) is a weak hit: those cards are listed apart
+// (a common helper otherwise pulls in every card that owns it — 2026-10-05: 12 cards for 2 fixes).
+function delta(base) {
+  const { cs } = load();
   const git = (a) => execFileSync("git", a, { cwd: REPO, encoding: "utf8" }).trim();
   // base: "v0.3.0-beta.28" (since then, plus uncommitted) or "A..B" (that range only)
   const range = base && base.includes("..") ? base : null;
@@ -181,43 +187,67 @@ function diff(base) {
     ...git(["diff", "--name-only", "HEAD"]).split("\n"),
     ...git(["ls-files", "--others", "--exclude-standard"]).split("\n"),
   ]).filter(Boolean));
-  // what changed in a file: its changed lines plus the function each hunk sits in (git's hunk header)
+  // what changed in a file: hunk headers (the function each hunk sits in) and the changed lines
   const changed = (f) => {
     let text = "";
-    try {
-      const args = ["diff", "-U0", ...(range ? [range] : base ? [base] : ["HEAD"]), "--", f];
-      text = git(args);
-    } catch {}
-    if (!text) { try { return fs.readFileSync(path.resolve(REPO, f), "utf8"); } catch { return ""; } } // new file: all of it
+    try { text = git(["diff", "-U0", ...(range ? [range] : base ? [base] : ["HEAD"]), "--", f]); } catch {}
+    if (!text) { try { return { heads: [], lines: fs.readFileSync(path.resolve(REPO, f), "utf8").split("\n") }; } catch { return { heads: [], lines: [] }; } } // new file: all of it
     // hunks inside the app's own test code (lab, UI scenes, *Test functions) don't count: they name many
     // features at once and would pull every card in
     const TEST_CODE = /function (lab\w*|uiScenes|fakeUsage|\w+Test)\b|LAB_CALLS|testCommands|lab-cases/;
-    return text.split(/\n(?=@@)/).filter((h) => !TEST_CODE.test(h.split("\n")[0]) && !/^\+.*(labState|labRun|LAB_CALLS)/m.test(h))
-      .map((h) => h.split("\n").filter((l) => /^[+-](?![+-])/.test(l) || l.startsWith("@@")).join("\n")).join("\n");
+    const hunks = text.split(/\n(?=@@)/).filter((h) => h.startsWith("@@") && !TEST_CODE.test(h.split("\n")[0]) && !/^\+.*(labState|labRun|LAB_CALLS)/m.test(h));
+    return {
+      heads: hunks.map((h) => h.split("\n")[0].replace(/^@@[^@]*@@/, "")),
+      lines: hunks.flatMap((h) => h.split("\n").filter((l) => /^[+-](?![+-])/.test(l)).map((l) => l.slice(1))),
+    };
   };
-  const toCards = new Map(), sameFile = new Map(), orphan = [];
+  const esc = (n) => n.replace(/\(\)$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // a name counts only as a whole word (`status` in "statusLine" is not a hit)
+  const word = (n) => new RegExp(`(^|[^\\w$])${esc(n)}([^\\w$]|$)`);
+  const how = (n, d) => {
+    if (d.heads.some((h) => word(n).test(h))) return "direct";
+    const ls = d.lines.filter((l) => word(n).test(l));
+    if (!ls.length) return null;
+    const def = new RegExp(`(function\\*?\\s+|fn\\s+|class\\s+)${esc(n)}\\b|^\\s*(async\\s+)?${esc(n)}\\s*\\([^)]*\\)\\s*\\{|(const|let|var)\\s+${esc(n)}\\b|^\\s*${esc(n)}\\s*:`);
+    const callOnly = (l) => [...l.matchAll(new RegExp(`(^|[^\\w$.])${esc(n)}(?=[^\\w$]|$)`, "g"))].every((m) => /^\s*\(/.test(l.slice(m.index + m[0].length)));
+    return ls.some((l) => def.test(l) || !callOnly(l)) ? "direct" : "call";
+  };
+  const direct = new Map(), weak = new Map(), sameFile = new Map(), orphan = [];
+  const add = (m, id, v) => m.set(id, [...(m.get(id) || []), v]);
   for (const f of files) {
     const abs = path.resolve(REPO, f), rel = path.relative(ROOT, abs);
     const inFile = cs.filter((c) => c.r.code.some((x) => { const p = path.relative(ROOT, path.resolve(ROOT, x.file)); return p === rel || rel.startsWith(p + "/"); }));
     if (!inFile.length) { orphan.push(f); continue; }
-    const delta = changed(f);
+    const d = changed(f);
+    if (!d.heads.length && !d.lines.length) continue;
     for (const c of inFile) {
       const names = c.r.code.filter((x) => path.relative(ROOT, path.resolve(ROOT, x.file)) === rel).flatMap((x) => x.names);
-      // a name counts only as a whole word (\`status\` in "statusLine" is not a hit)
-      const word = (n) => new RegExp(`(^|[^\\w$])${n.replace(/\(\)$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\w$]|$)`);
-      const touched = !names.length || names.some((n) => word(n).test(delta));
-      (touched ? toCards : sameFile).set(c.id, [...((touched ? toCards : sameFile).get(c.id) || []), f]);
+      if (!names.length) { add(direct, c.id, `${f} (이름 없음)`); continue; }
+      const hits = names.map((n) => [n, how(n, d)]);
+      const dn = hits.filter(([, h]) => h === "direct").map(([n]) => n), cn = hits.filter(([, h]) => h === "call").map(([n]) => n);
+      if (dn.length) add(direct, c.id, `${f} (${dn.join(" ")})`);
+      else if (cn.length) add(weak, c.id, `${f} (${cn.join(" ")} 부름)`);
+      else add(sameFile, c.id, f);
     }
   }
-  console.log(`변경 파일 ${files.size}${base ? ` (${base} 이후 + 커밋 전)` : " (커밋 전)"}`);
-  const hitCards = cs.filter((c) => toCards.has(c.id));
-  for (const c of hitCards) show(c, toCards.get(c.id).join(", "));
-  const rel = [...new Map(hitCards.flatMap((c) => relatedOf(cs, c)).filter((c) => !toCards.has(c.id)).map((c) => [c.id, c])).values()];
-  const near = cs.filter((c) => sameFile.has(c.id) && !toCards.has(c.id));
-  if (near.length) console.log(`\n── 같은 파일이지만 카드의 이름(함수)은 안 닿음 — 대개 무관: ${near.map((c) => c.id).join(", ")}`);
-  if (rel.length) { console.log("\n── 관련 카드 (영향 가능 — 규칙이 맞는지 볼 것)"); for (const c of rel) console.log(`  ${c.id} ${c.title}`); }
+  return { cs, files, direct, weak, sameFile, orphan, range };
+}
+
+function diff(base) {
+  const { ps } = load();
+  const { cs, files, direct, weak, sameFile, orphan, range } = delta(base);
+  console.log(`변경 파일 ${files.size}${range ? ` (${range})` : base ? ` (${base} 이후 + 커밋 전)` : " (커밋 전)"}`);
+  const hitCards = cs.filter((c) => direct.has(c.id));
+  console.log(`\n── 직접 닿은 카드 ${hitCards.length} — 기능·규칙·이력을 볼 것`);
+  for (const c of hitCards) show(c, direct.get(c.id).join(", "));
+  const weakCards = cs.filter((c) => weak.has(c.id) && !direct.has(c.id));
+  if (weakCards.length) { console.log(`\n── 부른 곳만 바뀜 (그 함수 자체는 그대로 — 대개 무관)`); for (const c of weakCards) console.log(`  ${c.id} ${c.title} ← ${weak.get(c.id).join(", ")}`); }
+  const near = cs.filter((c) => sameFile.has(c.id) && !direct.has(c.id) && !weak.has(c.id));
+  if (near.length) console.log(`\n── 같은 파일, 이름 안 닿음 (무관): ${near.length}개`);
+  const rel = [...new Map(hitCards.flatMap((c) => relatedOf(cs, c)).filter((c) => !direct.has(c.id)).map((c) => [c.id, c])).values()];
+  if (rel.length) console.log(`\n── 관련 카드 (규칙이 서로 맞는지만): ${rel.map((c) => c.id).join(", ")}`);
   const pols = [...new Set(hitCards.flatMap((c) => c.r.policies))];
-  const labs = [...new Set([...hitCards, ...rel].flatMap((c) => c.r.labs))], scenes = [...new Set(hitCards.flatMap((c) => c.r.scenes))];
+  const labs = [...new Set(hitCards.flatMap((c) => c.r.labs))], scenes = [...new Set(hitCards.flatMap((c) => c.r.scenes))];
   const tsl = [...new Set(hitCards.flatMap((c) => c.r.ts))];
   console.log("\n── 다시 확인할 것");
   if (labs.length) console.log(`  랩: npm run lab -- ${labs.map((l) => `--only ${l}`).join(" ")}  (또는 --tag smoke)`);
@@ -229,8 +259,30 @@ function diff(base) {
   if (code.length) console.log(`\n── 명세에 없는 코드 변경 (카드의 **코드**에 넣거나 새 카드): ${code.join(", ")}`);
 }
 
+// release gate (scripts/release.cjs): every card the release's code changes hit directly must show
+// it was looked at — its **이력** names an issue from the release's commits or the version. A card that
+// was checked and needs nothing goes in --ok (ids, comma-separated). docs/ isn't in git, so this is
+// the only place that ties a code change to its card.
+function gate(range, version, ok = []) {
+  const git = (a) => execFileSync("git", a, { cwd: REPO, encoding: "utf8" }).trim();
+  const { cs, direct } = delta(range);
+  if (!cs.length) { console.error("docs/spec 카드가 없음 — 이 맥의 docs/가 있어야 함"); process.exit(1); }
+  const issues = [...new Set(all(/#(\d+)/g, git(["log", "--format=%B", range])).map((n) => `#${n}`))];
+  const short = version ? version.replace(/^\d+\.\d+\.\d+-/, "") : null; // 0.3.0-beta.33 → beta.33
+  const missing = cs.filter((c) => direct.has(c.id) && !ok.includes(c.id)
+    && !c.r.issues.some((i) => issues.includes(i)) && !(short && (c.fields["이력"] || "").includes(short)));
+  const bad = ok.filter((id) => !CARD_ID.test(id) || !cs.some((c) => c.id === id));
+  if (bad.length) { console.error(`--spec-ok에 없는 카드: ${bad.join(", ")}`); process.exit(1); }
+  if (!missing.length) { console.log(`명세: 닿은 카드 ${direct.size}개 모두 이력 있음${ok.length ? ` (확인만: ${ok.join(", ")})` : ""}`); return; }
+  console.error(`명세: 이번 코드가 닿은 카드 중 이력에 ${issues.join(" ") || "이슈"}${short ? `·${short}` : ""}가 없는 카드 ${missing.length}개:`);
+  for (const c of missing) console.error(`  ${c.id} ${c.title} ← ${direct.get(c.id).join(", ")}  (docs/spec/${c.file}:${c.line})`);
+  console.error(`→ 카드의 기능·규칙을 보고 **이력**에 이슈 번호를 넣거나, 바꿀 게 없으면 --spec-ok ${missing.map((c) => c.id).join(",")}`);
+  process.exit(1);
+}
+
 const [cmd, ...args] = process.argv.slice(2);
 if (cmd === "check") check();
 else if (cmd === "impact" && args[0] === "--diff") diff(args[1]);
 else if (cmd === "impact" && args[0]) impact(args.join(" "));
-else { console.error("usage: node scripts/spec.cjs check | impact <target> | impact --diff [base]"); process.exit(1); }
+else if (cmd === "gate" && args[0]) gate(args[0], args[1], (args[2] || "").split(",").filter(Boolean));
+else { console.error("usage: node scripts/spec.cjs check | impact <target> | impact --diff [base] | gate <A..B> [version] [ok-ids]"); process.exit(1); }

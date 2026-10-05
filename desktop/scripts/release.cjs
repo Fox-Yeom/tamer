@@ -38,6 +38,21 @@ if (!lab || lab.head !== git(["rev-parse", "HEAD"]) || lab.dirty || !lab.smoke) 
   process.exit(1);
 }
 
+// the spec (docs/spec, rule 15): references intact, and every card this release's code changes hit
+// directly names one of its issues (or the version) in **이력** — a fix that changed a feature without
+// its card stops here. --spec-ok <ids>: those cards were looked at, nothing to change
+{
+  const node = (args) => { try { execFileSync(process.execPath, [path.join(ROOT, "scripts/spec.cjs"), ...args], { stdio: "inherit", cwd: ROOT }); return true; } catch { return false; } };
+  if (!node(["check"])) { console.error("spec:check failed — fix the broken references first"); process.exit(1); }
+  const last = (() => { try { return gh(["release", "list", "-R", REPO, "--limit", "1", "--json", "tagName", "-q", ".[0].tagName"]).trim(); } catch { return ""; } })();
+  if (last && last !== TAG) {
+    git(["fetch", "-q", "origin", "tag", last]);
+    const i = process.argv.indexOf("--spec-ok");
+    const ok = i > 0 ? process.argv[i + 1] || "" : "";
+    if (!node(["gate", `${last}..HEAD`, version, ok])) process.exit(1);
+  }
+}
+
 // README is the testers' feature guide (per-version notes live in the releases): a version with a
 // "새 기능:" line must come with a README change since the last release. --readme-ok: checked, nothing to add
 {
@@ -52,8 +67,8 @@ if (!lab || lab.head !== git(["rev-parse", "HEAD"]) || lab.dirty || !lab.smoke) 
   }
 }
 
-// --check: only the checks above (pushed, lab passed, README) — nothing is built, uploaded or edited
-if (process.argv.includes("--check")) { console.log(`ready to release ${TAG}: pushed, the lab passed on this commit`); process.exit(0); }
+// --check: only the checks above (pushed, lab passed, spec, README) — nothing is built, uploaded or edited
+if (process.argv.includes("--check")) { console.log(`ready to release ${TAG}: pushed, the lab passed on this commit, the spec is in step`); process.exit(0); }
 
 // a version is released once (docs/VERSIONING.md): its tag and DMGs are never replaced. A release
 // that already exists means the version wasn't bumped (2026-10-05: a failed bump went unnoticed and
