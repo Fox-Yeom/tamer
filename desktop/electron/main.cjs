@@ -2,12 +2,12 @@
 // cvim-core (Rust, desktop/core-rs), which owns the agent state machine, the adapters (Claude
 // hooks, Codex log, activity) and the path policy. Partner Pokémon data is still here (partner.cjs).
 // Data: ~/.cache/tamer (copied once from the Neovim CVIM's ~/.cache/cvim — core/paths.cjs).
-const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, powerMonitor, shell, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, powerMonitor, shell, nativeImage, Notification } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const pty = require("node-pty");
 const { execFile } = require("node:child_process");
-const { HOME, CACHE, STATE, TABS, ROOT, writeFile, mkdirPrivate, tighten, pruneTabs } = require("./core/paths.cjs");
+const { HOME, CACHE, STATE, TABS, ROOT, writeFile, mkdirPrivate, tighten, pruneTabs, readJson, updateJson } = require("./core/paths.cjs");
 const agents = require("./core/agents.cjs");
 const partner = require("./core/partner.cjs");
 const wild = require("./core/wild.cjs");
@@ -195,6 +195,8 @@ function closeWorkspace(id) {
   }
   setShellAgent(ws, null);
   workspaces.delete(id);
+  for (const x of ws.sessions) { busySince.delete(x.id); shown.get(x.id)?.close(); shown.delete(x.id); }
+  dockBadge();
   if (activeWs === id) activeWs = null;
   saveSession();
   overlayUpdate();
@@ -393,7 +395,11 @@ function onCoreEvent(msg) {
     }
     if (ws.state !== shownState(ws)) { ws.state = shownState(ws); overlayUpdate(); }
   }
-  if (msg.event === "transition") logLine(`transition ws=${msg.ws} agent=${fromShell ? ws.shell?.key : sess.agent} ${msg.from} -> ${msg.to}`); // diagnostics
+  if (msg.event === "state") dockBadge();
+  if (msg.event === "transition") {
+    logLine(`transition ws=${msg.ws} agent=${fromShell ? ws.shell?.key : sess.agent} ${msg.from} -> ${msg.to}`); // diagnostics
+    notifyTransition(msg, ws, sess, fromShell);
+  }
   // how a turn ended (done / interrupted / error): the overlay shows it for a while
   if (msg.event === "transition" && ["done", "interrupted", "error"].includes(msg.to) && msg.from !== msg.to) {
     // which shell (several in the folder): the bubble says "셸 2 완료" — another shell's "입력 필요"
@@ -421,6 +427,63 @@ function onCoreEvent(msg) {
       send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null });
     }).catch((e) => logLine(`exp error ${e}`));
   }
+}
+
+// ── notifications (#39): while Tamer isn't in front, macOS tells you when an agent needs input, or
+// finished / failed a task that took a while (not every short answer; not an interrupt you made).
+// One notification per shell — a newer one replaces it; clicking brings Tamer forward on that tab.
+// The Dock badge counts the shells waiting for input. Off: Tamer menu → 에이전트 알림.
+// Tests log what would be shown and never post to the user's Notification Center.
+const NOTIFY = path.join(CACHE, "ui", "notify.json");
+const NOTIFY_MIN_MS = Number(process.env.CVIM_NOTIFY_MIN_MS) || 20000; // a task this long is worth a "done"
+const notifyOn = () => readJson(NOTIFY, {}).enabled !== false;
+function setNotify(on) { updateJson(NOTIFY, (t) => { t.enabled = !!on; }); logLine(`notify ${on ? "on" : "off"}`); if (!on) for (const n of shown.values()) n.close?.(); }
+// Tamer in front = the active app (macOS did-become-active / did-resign-active) and its window
+// focused. win.isFocused() and the window's focus event alone also say yes for a window that was
+// never shown (a test run launched in the background)
+let winFront = false, appActive = false;
+app.on("did-become-active", () => { appActive = true; });
+app.on("did-resign-active", () => { appActive = false; });
+// tests: a background test app still gets did-become-active at launch (seen 2026-10-05) — the lab
+// says "behind" itself; whether Tamer is really in front is checked by hand (TEST_SCENARIOS #39)
+const inFront = () => !(TEST && process.env.CVIM_TEST_BACKGROUND) && winFront && appActive;
+const busySince = new Map(); // agent id → when its current task began
+const shown = new Map(); // agent id → its notification on screen
+function notifyTransition(msg, ws, sess, fromShell) {
+  const working = (s) => WORKING.includes(s);
+  if (working(msg.to) && !working(msg.from)) busySince.set(msg.ws, Date.now());
+  const took = busySince.has(msg.ws) ? Date.now() - busySince.get(msg.ws) : 0;
+  if (!working(msg.to)) busySince.delete(msg.ws);
+  if (msg.from === msg.to || msg.guess) return; // a guessed "done" (an agent without events) isn't sure enough
+  const kind = msg.to === "waiting" ? "waiting" : ["done", "error"].includes(msg.to) && took >= NOTIFY_MIN_MS ? msg.to : null;
+  if (!kind) return;
+  if (inFront()) return logLine(`notify skipped (front) ${kind} ws=${ws.id}`); // you're looking at Tamer: the tab shows it
+  if (!notifyOn()) return logLine(`notify skipped (off) ${kind} ws=${ws.id}`);
+  const n = sess && ws.sessions.length > 1 ? ws.sessions.indexOf(sess) + 1 : null;
+  const who = fromShell ? ws.shell?.key && agents.get(ws.shell.key).name : sess && agentInfo(sess).name;
+  const title = `${path.basename(ws.cwd)}${n ? ` · 셸 ${n}` : ""}`;
+  const body = { waiting: `❗ ${who || "에이전트"}가 입력을 기다려요`, done: `✅ ${who || "에이전트"}가 일을 마쳤어요 (${Math.round(took / 1000)}초)`, error: `💥 ${who || "에이전트"}가 실패했어요` }[kind];
+  logLine(`notify ${kind} ws=${ws.id}${n ? ` shell=${n}` : ""} took=${Math.round(took / 1000)}s`);
+  if (TEST || !Notification.isSupported()) return;
+  shown.get(msg.ws)?.close();
+  const note = new Notification({ title, body, silent: kind === "done" });
+  note.on("click", () => { focusMain(ws.id); shown.delete(msg.ws); });
+  note.on("close", () => { if (shown.get(msg.ws) === note) shown.delete(msg.ws); });
+  shown.set(msg.ws, note);
+  note.show();
+}
+// the Dock badge: how many shells wait for your input (none: no badge)
+let badgeN = 0;
+function dockBadge() {
+  let n = 0;
+  for (const w of workspaces.values()) {
+    n += (w.sessions || []).filter((x) => x.agentState === "waiting").length;
+    if (w.shell?.state === "waiting") n++;
+  }
+  if (n === badgeN) return;
+  badgeN = n;
+  logLine(`badge ${n}`);
+  app.dock?.setBadge(n ? String(n) : "");
 }
 
 // ── session restore (E1): the open tabs, reopened on the next launch with their agents resuming
@@ -1194,6 +1257,12 @@ const testCommands = {
   },
   // a task finished (as if the agent said Stop) — EXP / evolution without a real agent
   partner_done_test({ ws }) { onCoreEvent({ event: "transition", ws, from: "thinking", to: "done" }); },
+  // an agent's state changes as the core would report it (notifications, badge: #39)
+  agent_state_test({ ws, from, to }) {
+    onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to) } });
+    onCoreEvent({ event: "transition", ws: String(ws), from: String(from), to: String(to) });
+  },
+  notify_set_test({ on }) { setNotify(!!on); },
   // throws land as given: "caught" / "broke" / "fled" (random otherwise)
   wild_rig_test({ result }) {
     const seq = { caught: [0, 0, 0, 0], broke: [0, 0.999, 0.999], fled: [0.999, 0] }[result];
@@ -1260,6 +1329,8 @@ function diagnostics() {
 }
 
 const helpItems = [
+  { label: "에이전트 알림 (창이 뒤에 있을 때)", type: "checkbox", checked: notifyOn(), click: (item) => setNotify(item.checked) },
+  { type: "separator" },
   { label: "진단 정보 복사", click: () => {
     clipboard.writeText(diagnostics());
     dialog.showMessageBox(win, { type: "info", message: "진단 정보를 복사했어요", detail: `피드백 메일(${FEEDBACK})에 붙여넣어 주세요. 버전·macOS·에이전트 연결 상태·최근 앱 기록이 들어 있고, 대화 내용·명령어·파일 이름은 없으며 폴더 이름은 "폴더1"처럼 가려져 있어요. 보내기 전에 내용을 확인할 수 있어요.` });
@@ -1322,6 +1393,8 @@ app.whenReady().then(() => {
       devTools: TEST, // debugger-driven tests need it; regular runs don't
     },
   });
+  win.on("focus", () => { winFront = true; for (const n of shown.values()) n.close?.(); shown.clear(); }); // looking now: old notifications go
+  win.on("blur", () => { winFront = false; });
   if (QUIET_TEST) win.showInactive(); // a test window never takes the keyboard from the user's apps
   // the window only ever shows our page: no navigation, no new windows
   win.webContents.on("will-navigate", (e) => e.preventDefault());

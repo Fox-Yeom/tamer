@@ -210,4 +210,38 @@ module.exports = [
       ok(probe.box?.pokeFits === true, "내 포켓몬 창이 창 밖으로 나감"),
     ],
   },
+  // ── notifications · Dock badge (#39) ──
+  {
+    id: "notify", tags: ["smoke", "notify"], what: "창이 뒤에 있을 때: 입력 필요는 바로, 완료는 오래 걸린 것만 알림, 배지 = 입력 필요 셸 수, 끄면 알림 없음 (#39)",
+    data: "owner", mode: "direct", folders: ["proj"], env: { CVIM_NOTIFY_MIN_MS: "1500", CVIM_TEST_BACKGROUND: "1" },
+    steps: [{ until: "tabs.0" }, { wait: 500 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { wait: 300 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, // short: no notification
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "done", to: "thinking" } }, { wait: 1800 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, // long: "done"
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "done", to: "waiting" } }, { wait: 200 }, // "waiting" + badge 1
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "waiting", to: "thinking" } }, { wait: 200 }, // badge 0
+      { invoke: "notify_set_test", args: { on: false } },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "waiting" } }, { wait: 200 }, // off: badge only
+      { invoke: "notify_set_test", args: { on: true } }, { probe: "end" }],
+    // Tamer in front (the default in a test run): nothing is shown — see notify-front
+    check: ({ log }) => {
+      const lines = log.split("\n"), count = (re) => lines.filter((l) => re.test(l)).length;
+      return [
+        ok(count(/^notify done /) === 1, `완료 알림 ${count(/^notify done /)}번 (짧은 작업 제외하고 1번이어야)`),
+        ok(/^notify done .*took=[12]s/m.test(log), "완료 알림에 걸린 시간이 없음"),
+        ok(count(/^notify waiting /) === 1, `입력 필요 알림 ${count(/^notify waiting /)}번`),
+        ok(/^notify skipped \(off\) waiting/m.test(log), "끈 뒤에도 알림"),
+        ok(/^badge 1$/m.test(log) && /^badge 0$/m.test(log), "Dock 배지가 1 → 0으로 안 바뀜"),
+        ok(lines.filter((l) => /^badge /.test(l)).at(-1) === "badge 1", "끈 뒤에도 배지는 세야 함"),
+      ];
+    },
+  },
+  {
+    id: "notify-front", tags: ["smoke", "notify"], what: "Tamer를 보고 있을 때는 알림 없음(탭이 보여 줌), 배지는 셈 (#39)",
+    data: "owner", mode: "direct", folders: ["proj"], env: { CVIM_NOTIFY_MIN_MS: "500" },
+    steps: [{ until: "tabs.0" }, { wait: 500 }, { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { wait: 700 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "waiting" } }, { wait: 200 }, { probe: "end" }],
+    check: ({ log }) => [ok(/^notify skipped \(front\) waiting/m.test(log), "앞에 있는데도 알림"), ok(/^badge 1$/m.test(log), "배지 없음")],
+  },
 ];
