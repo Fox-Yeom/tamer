@@ -33,8 +33,11 @@ if (git(["rev-parse", "HEAD"]) !== git(["rev-parse", "origin/main"])) {
 
 // the test lab passed on exactly this commit (docs/TESTING.md): every smoke case, real data untouched
 const lab = (() => { try { return JSON.parse(fs.readFileSync(path.join(require("node:os").homedir(), ".cache/tamer-dev/lab-last.json"), "utf8")); } catch { return null; } })();
-if (!lab || lab.head !== git(["rev-parse", "HEAD"]) || lab.dirty || !lab.smoke) {
-  console.error(`the test lab hasn't passed on this commit — cd desktop && npm run lab -- --tag smoke (last: ${lab ? `${lab.head.slice(0, 7)}${lab.dirty ? " with uncommitted changes" : ""}, smoke ${lab.smoke ? "pass" : "not met"}` : "none"})`);
+// — or on exactly this commit's desktop/ content before it was committed (the run records the tree it built)
+const commitTree = git(["rev-parse", "HEAD:desktop"]);
+const labOk = lab?.smoke && ((lab.head === git(["rev-parse", "HEAD"]) && !lab.dirty) || (lab.tree && lab.tree === commitTree));
+if (!labOk) {
+  console.error(`the test lab hasn't passed on this commit's content — cd desktop && npm run lab -- --tag smoke (last: ${lab ? `${lab.head.slice(0, 7)}${lab.dirty ? " with uncommitted changes" : ""}, content ${lab.tree?.slice(0, 10) || "?"} vs commit ${commitTree.slice(0, 10)}, smoke ${lab.smoke ? "pass" : "not met"}` : "none"})`);
   process.exit(1);
 }
 
@@ -108,3 +111,25 @@ if (exists) {
 }
 const url = gh(["release", "view", TAG, "-R", REPO, "--json", "url", "-q", ".url"]).trim();
 console.log(`\n${exists ? "updated" : "published"}: ${url}`);
+
+// after a new release (docs/VERSIONING.md — was done by hand each time): every issue its notes name
+// gets "v<version>에 반영" and the label `수정됨-확인 대기` (closing waits for the user), and this Mac's
+// docs say the version where they said "다음 버전" (test scenarios' headings, spec cards)
+if (!exists) {
+  const issues = [...new Set([...changes.matchAll(/#(\d+)/g)].map((m) => m[1]))];
+  for (const n of issues) {
+    try {
+      if (gh(["issue", "view", n, "-R", REPO, "--json", "state", "-q", ".state"]).trim() !== "OPEN") { console.log(`issue #${n}: closed — left as is`); continue; }
+      gh(["issue", "comment", n, "-R", REPO, "--body", `v${version}에 반영`]);
+      gh(["issue", "edit", n, "-R", REPO, "--add-label", "수정됨-확인 대기"]);
+      console.log(`issue #${n}: v${version}에 반영 · 수정됨-확인 대기`);
+    } catch (e) { console.error(`issue #${n}: not updated (${String(e.message).split("\n")[0]}) — do it by hand`); }
+  }
+  const short = version.replace(/^\d+\.\d+\.\d+-/, ""); // beta.35
+  const docs = path.join(ROOT, "..", "docs");
+  const stamp = (file, edit) => { try { const s = fs.readFileSync(file, "utf8"), t = edit(s); if (t !== s) { fs.writeFileSync(file, t); console.log(`stamped ${path.relative(path.join(ROOT, ".."), file)}`); } } catch {} };
+  stamp(path.join(docs, "TEST_SCENARIOS.md"), (s) => s.replace(/^(## .*)\(다음 버전\)$/gm, `$1(${version})`));
+  for (const f of fs.existsSync(path.join(docs, "spec")) ? fs.readdirSync(path.join(docs, "spec")) : []) {
+    if (f.endsWith(".md")) stamp(path.join(docs, "spec", f), (s) => s.replace(/✅ 다음 버전/g, `✅ ${short}`).replace(/\(다음 버전\)/g, `(${short})`));
+  }
+}

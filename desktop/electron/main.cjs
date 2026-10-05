@@ -25,6 +25,19 @@ if (TEST) app.setPath("userData", process.env.CVIM_DESKTOP_USERDATA || path.join
 // test instances show their window without activating it, so keys typed in the user's own apps
 // never land in a test terminal (seen 2026-10-02); CVIM_DESKTOP_TEST_FOCUS=1 for IME tests that need focus
 const QUIET_TEST = TEST && process.env.CVIM_DESKTOP_TEST_FOCUS !== "1";
+// …and the app itself never becomes the front app: macOS activates a launched app even when its
+// window shows inactive (2026-10-06: a smoke run took the front ~30 times in 5 min). An accessory
+// app (no Dock icon, no menu bar of its own) isn't activated at launch
+if (QUIET_TEST && process.platform === "darwin") {
+  app.setActivationPolicy("accessory");
+  // a folder handed in by LaunchServices (`open -g … folder`, a drop) still activates it: give the
+  // front back at once (hide = the previous app comes back), and show the window again, inactive
+  app.on("did-become-active", () => {
+    logLine("test: became active -> yield");
+    app.hide();
+    setTimeout(() => { if (win && !win.isDestroyed()) win.showInactive(); overlaySync(); }, 60);
+  });
+}
 const linksOpened = []; // tests: links ⌘-clicked (never opened)
 // UI scenes (npm run ui:shots, docs/UI_SYSTEM.md): captures compared with $CVIM_UI_BASELINE/<scene>.png
 // (the page stills its sprites and hides the terminals itself)

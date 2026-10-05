@@ -73,8 +73,12 @@ if (!picked.length) { console.error("no case matches"); process.exit(1); }
   // the release gate (scripts/release.cjs): every smoke case ran here and passed, real data unchanged
   const smokeIds = CASES.filter((c) => c.tags.includes("smoke")).map((c) => c.id);
   const smoke = !moved.length && smokeIds.every((id) => results.some((r) => r.id === id)) && results.filter((r) => r.tags.includes("smoke")).every((r) => r.ok);
-  console.log(`release gate (smoke): ${smoke ? "pass" : "not met"}${dirty ? " — but there are uncommitted changes: commit, then run the lab again" : ""}`);
-  fs.writeFileSync(path.join(T.DEV, "lab-last.json"), JSON.stringify({ at: new Date().toISOString(), head, dirty, args, guard, passed, smoke,
+  // which content was tested: the test build's (made from desktop/ as it was then); the release gate
+  // takes this run if the commit holds exactly that — no second run after committing
+  const tree = T.BUILT_TREE(), now = T.contentTree();
+  const moving = tree && now && tree !== now; // desktop/ changed since the build: the run is about older content
+  console.log(`release gate (smoke): ${smoke ? "pass" : "not met"} · tested content ${tree ? tree.slice(0, 10) : "unknown (build again)"}${moving ? " — desktop/ has changed since the test build: build again (no --no-build) before relying on it" : dirty ? " — not committed yet: committing exactly this is enough for the release" : ""}`);
+  fs.writeFileSync(path.join(T.DEV, "lab-last.json"), JSON.stringify({ at: new Date().toISOString(), head, dirty, tree, args, guard, passed, smoke,
     results: results.map(({ dir, ...r }) => r) }, null, 2));
   const gateFails = results.filter((r) => !r.ok && !r.tags.includes("explore"));
   process.exit(gateFails.length || moved.length ? 1 : 0);
