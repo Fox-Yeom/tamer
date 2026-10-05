@@ -12,6 +12,7 @@ const agents = require("./core/agents.cjs");
 const partner = require("./core/partner.cjs");
 const wild = require("./core/wild.cjs");
 const prices = require("./core/prices.cjs");
+const stats = require("./core/stats.cjs");
 const { RustCore } = require("./core/rust.cjs");
 
 const ptys = new Map(); // pane id "<ws>:<agent|shell>" -> IPty
@@ -66,6 +67,20 @@ function logLine(line) {
 }
 
 // the user's own Claude statusLine, chained after cvim's (as v1 did)
+// #45: ask, then add the shell line (agents.claudeLink) — shows the exact lines and the file first
+async function claudeLinkAsk() {
+  const f = agents.claudeLinkFile();
+  if (!f) return { ok: false, msg: "이 셸은 아직 자동 연결을 지원하지 않아요(zsh·bash·fish만)" };
+  const r = await dialog.showMessageBox(win, {
+    type: "question", buttons: ["연결", "취소"], defaultId: 0, cancelId: 1,
+    message: "셸에서 직접 친 Claude도 Tamer에 연결할까요?",
+    detail: `⌘G로 띄운 Claude처럼 5시간·주간 한도, ctx %, 생각 중·도구·입력 필요가 보여요.\n\n${f.file.replace(HOME, "~")} 끝에 아래 블록을 넣어요:\n\n${f.lines.join("\n")}\n\nTamer 셸 안에서만 동작해요(그 밖의 터미널에선 CVIM_CLAUDE_SETTINGS가 없어 아무 일도 안 함). ~/.claude/settings.json은 건드리지 않아요. 넣기 전 파일 사본을 ~/.cache/tamer/backup/shell-rc에 두고, 에이전트 연결 창에서 언제든 해제할 수 있어요. 새로 여는 셸부터 적용돼요.`,
+  });
+  if (r.response !== 0) return { ok: false, cancelled: true };
+  try { const l = agents.claudeLink(); logLine(`claude link ${l.already ? "already" : "ok"}`); return { ok: true, msg: "연결했어요 — 새로 여는 셸(⌘⇧T 또는 새 탭)부터 적용돼요" }; }
+  catch (e) { logLine(`claude link error ${e.code || e.message}`); return { ok: false, msg: `연결하지 못했어요: ${e.message}` }; }
+}
+
 function userStatusline() {
   try {
     const cmd = JSON.parse(fs.readFileSync(path.join(HOME, ".claude/settings.json"), "utf8"))?.statusLine?.command;
@@ -280,14 +295,22 @@ async function startAgent(s, { cols, rows, resume = false }) {
 // read from their own logs.
 function shellEnv(id) {
   const env = { CVIM_TAB_ID: id, CVIM_STATE_DIR: STATE, ...agents.agentEnv("opencode") };
-  if (ROOT) env.CVIM_ROOT = ROOT;
+  if (ROOT) {
+    env.CVIM_ROOT = ROOT;
+    // #45: what the opt-in shell line gives a `claude` typed here (--settings: status line, hooks);
+    // the user's own status line still shows, chained after Tamer's
+    env.CVIM_CLAUDE_SETTINGS = path.join(ROOT, "claude/settings.json");
+    const chain = userStatusline();
+    if (chain) env.CVIM_CHAIN_STATUSLINE = chain;
+  }
   return env;
 }
 
 // how CVIM follows an agent typed into a shell (no CVIM flags on its command line)
-function typedKind(d) {
+function typedKind(d, args = "") {
   if (d.state === "codex_log") return "codex_log";
-  if (d.key === "claude") return "claude_log";
+  // a Claude that came up with Tamer's --settings (the opt-in shell line, #45): hooks + status line like ⌘G
+  if (d.key === "claude") return ROOT && String(args).includes(path.join(ROOT, "claude/settings.json")) ? "hooks" : "claude_log";
   if (d.key === "gemini" || d.key === "opencode") return agents.stateOf(d.key) === "hooks" ? "hooks" : "activity";
   return "activity";
 }
@@ -306,7 +329,7 @@ function startHost(s, { cols, rows }) {
 }
 
 // an agent typed into the host shell (or it ended): it is this session's agent now
-async function setHostAgent(s, d, cwd = null) {
+async function setHostAgent(s, d, cwd = null, args = "") {
   if (d && ready) await ready; // which adapter fits (Gemini linked or not …) depends on the PATH
   s.hostKey = d?.key || null;
   s.running = !!d;
@@ -314,12 +337,12 @@ async function setHostAgent(s, d, cwd = null) {
     s.agent = d.key;
     agents.remember(s.cwd, d.key);
   }
-  logLine(`host-agent ws=${s.id} ${d?.key || "-"}${cwd && cwd !== s.cwd ? ` cwd=${cwd}` : ""}`);
+  logLine(`host-agent ws=${s.id} ${d?.key || "-"}${d ? ` kind=${typedKind(d, args)}` : ""}${cwd && cwd !== s.cwd ? ` cwd=${cwd}` : ""}`);
   saveSession();
   send("host-agent", { ws: tabOf(s).id, session: s.id, agent: d ? agentInfo(s) : null, where: d ? whereOf(tabOf(s), cwd) : null });
   if (d) {
     // its logs are where it runs (after a `cd`, not necessarily the tab's folder) — #3
-    const fresh = await core.request("restart", { ws: s.id, kind: typedKind(d), cwd: cwd || s.cwd }).catch(() => null);
+    const fresh = await core.request("restart", { ws: s.id, kind: typedKind(d, args), cwd: cwd || s.cwd }).catch(() => null);
     if (fresh) send("agent-state", { ws: tabOf(s).id, session: s.id, source: "agent", agent: agentInfo(s), ...fresh });
   }
 }
@@ -405,6 +428,7 @@ function onCoreEvent(msg) {
     setTimeout(overlayUpdate, 15100); // the bubble goes away
   }
   if (msg.event === "transition" && msg.to === "done" && msg.from !== "done") {
+    stats.recordDone(); // Home: today's count, the streak (#44) — every finished task, guessed ones too
     // an agent without events (any CLI, or one whose events never came): "done" was guessed from its
     // output — it still raises the partner, at half the pace (every other one), and brings no wild
     if (msg.guess) {
@@ -413,7 +437,8 @@ function onCoreEvent(msg) {
       if (ws.guessed % 2) return;
     }
     // sometimes a wild Pokémon comes out (PLAN 3.6)
-    const w = msg.guess ? null : wild.onDone(ws.id, { empty: !ws.partner });
+    // where and during whose task it showed up: kept with the individual if it's caught (#44)
+    const w = msg.guess ? null : wild.onDone(ws.id, { empty: !ws.partner, folder: ws.cwd, agent: fromShell ? ws.shell?.key : sess?.agent });
     if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ws=${ws.id}`); broadcast("wild", w); overlayUpdate(); }
     // a finished task: EXP for the folder's partner, maybe an evolution
     const t0 = Date.now();
@@ -637,7 +662,7 @@ async function scanAll() {
     const p = ptys.get(`${ws.id}:shell`);
     const fg = p ? await foreground(p) : null;
     const d = fg ? agentOf(fg.args) : null;
-    if ((d?.key || null) !== (ws.shell?.key || null) && workspaces.has(ws.id)) setShellAgent(ws, d, d && (await procCwd(fg.pid)));
+    if ((d?.key || null) !== (ws.shell?.key || null) && workspaces.has(ws.id)) setShellAgent(ws, d, d && (await procCwd(fg.pid)), fg?.args);
   }
   // S2: agent panes running a shell
   for (const s of [...sessions.values()]) {
@@ -645,14 +670,14 @@ async function scanAll() {
     const p = ptys.get(`${s.id}:agent`);
     const fg = p ? await foreground(p) : null;
     const d = fg ? agentOf(fg.args) : null;
-    if ((d?.key || null) !== (s.hostKey || null) && s.host && sessions.has(s.id)) await setHostAgent(s, d, d && (await procCwd(fg.pid)));
+    if ((d?.key || null) !== (s.hostKey || null) && s.host && sessions.has(s.id)) await setHostAgent(s, d, d && (await procCwd(fg.pid)), fg?.args);
   }
 }
 
 // its state is tracked like the agent pane's, as "<ws>~shell" in the core: Codex by its session
 // log, Claude by its conversation log (A2), others by output
 const shellOf = new Map(); // "<ws>~shell" -> ws id
-function setShellAgent(ws, d, cwd = null) {
+function setShellAgent(ws, d, cwd = null, args = "") {
   if (ws.shell) {
     core.request("close", { ws: ws.shell.id }).catch(() => {});
     shellOf.delete(ws.shell.id);
@@ -666,7 +691,7 @@ function setShellAgent(ws, d, cwd = null) {
     // others: output
     // its logs are where it runs (after a `cd`, not necessarily the tab's folder) — #3
     // which adapter fits depends on the PATH (Gemini linked …): after the shell environment
-    Promise.resolve(ready).then(() => core.request("open", { ws: id, kind: typedKind(d), cwd: cwd || ws.cwd, tabs: TABS })).catch((e) => logLine(`shell core error ${e}`));
+    Promise.resolve(ready).then(() => core.request("open", { ws: id, kind: typedKind(d, args), cwd: cwd || ws.cwd, tabs: TABS })).catch((e) => logLine(`shell core error ${e}`));
     agents.remember(ws.cwd, d.key); // ⌘G offers it first next time
   }
   logLine(`shell-agent ws=${ws.id} ${d?.key || "-"}${cwd && cwd !== ws.cwd ? ` cwd=${cwd}` : ""}`);
@@ -951,6 +976,7 @@ const commands = {
   // Gemini: link CVIM's extension (asks first; `gemini extensions link --consent` — an older link
   // to another copy is replaced)
   async agent_fix({ key }) {
+    if (key === "claude") return claudeLinkAsk(); // #45
     if (key !== "gemini") throw new Error("nothing to fix");
     const ext = ROOT && path.join(ROOT, "agents", "gemini-extension");
     const gem = agents.where("gemini");
@@ -967,6 +993,16 @@ const commands = {
     const res = await run(["extensions", "link", "--consent", ext]);
     logLine(`gemini link ok=${res.ok}`);
     return { ok: res.ok && agents.geminiLinked(), msg: res.ok ? "연결했어요 — 다음에 띄우는 Gemini부터 적용" : res.out.trim().split("\n").slice(-2).join(" ") };
+  },
+  // #45: undo the opt-in shell line (the marked block only; a copy of the file is kept first)
+  async agent_unfix({ key }) {
+    if (key !== "claude") throw new Error("nothing to undo");
+    const f = agents.claudeLinkFile();
+    const r = await dialog.showMessageBox(win, { type: "question", buttons: ["해제", "취소"], defaultId: 0, cancelId: 1,
+      message: "셸에서 친 Claude 연결을 해제할까요?", detail: `${f?.file?.replace(HOME, "~")}에서 Tamer가 넣은 블록만 지워요(지우기 전 파일 사본: ~/.cache/tamer/backup/shell-rc). 새로 여는 셸부터 적용돼요.` });
+    if (r.response !== 0) return { ok: false, cancelled: true };
+    try { const u = agents.claudeUnlink(); logLine(`claude unlink ${u.absent ? "absent" : "ok"}`); return { ok: true, msg: "해제했어요 — 새로 여는 셸부터" }; }
+    catch (e) { logLine(`claude unlink error ${e.code || e.message}`); return { ok: false, msg: `해제하지 못했어요: ${e.message}` }; }
   },
   // #3: an agent typed after `cd` into another folder moves — still running — into that folder's tab
   // (`to`, its session `toSession`): the terminal process is handed over, the source shell/session
@@ -1097,7 +1133,10 @@ const commands = {
   // model prices for an estimated cost (#23), fetched only when asked (an agent without its own cost)
   prices: () => prices.get(),
   dex_viewed: ({ id }) => partner.viewed(id),
-  box_list: ({ ws }) => partner.boxList(ws && workspaces.has(ws) ? wsOf(ws).cwd : null), // "내 포켓몬" (#27)
+  box_list: ({ ws }) => partner.boxList(ws && workspaces.has(ws) ? wsOf(ws).cwd : null) // "내 포켓몬" (#27)
+    .map((m) => (m.caughtBy ? { ...m, caughtBy: agents.all()[m.caughtBy]?.name || m.caughtBy } : m)), // the agent's name (#44)
+  // 🏠 Home (#44): tasks finished today, the streak, the last 7 days
+  home_state: () => stats.summary(),
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
   pane_swap({ ws: id, on }) {
@@ -1196,6 +1235,8 @@ const testCommands = {
   },
   // a task finished (as if the agent said Stop) — EXP / evolution without a real agent
   partner_done_test({ ws }) { onCoreEvent({ event: "transition", ws, from: "thinking", to: "done" }); },
+  // #45: the opt-in shell line without its dialog (lab: the line goes into the sandbox shell's ZDOTDIR)
+  claude_link_test({ on }) { return on ? agents.claudeLink() : agents.claudeUnlink(); },
   // an agent's state changes as the core would report it
   agent_state_test({ ws, from, to }) {
     onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to) } });
@@ -1282,7 +1323,7 @@ app.setAboutPanelOptions({
 // only agent work waits for the shell environment (up to 15 s with a heavy ~/.zshrc): finding an
 // agent (its PATH), starting one (its variables) — the window, tabs, shells and the core don't
 // (#31 #34 #35). startAgent waits too, for every other way an agent starts.
-const NEEDS_ENV = new Set(["agents_status", "agents_list", "agent_pick", "agent_start", "agent_fix", "diag_test"]);
+const NEEDS_ENV = new Set(["agents_status", "agents_list", "agent_pick", "agent_start", "agent_fix", "agent_unfix", "diag_test"]);
 ipcMain.handle("host-invoke", async (e, cmd, args) => {
   if (ready && NEEDS_ENV.has(cmd)) await ready; // agents get the terminal's environment
   // only our own pages may call in: the main window (dist/index.html, every command) and the

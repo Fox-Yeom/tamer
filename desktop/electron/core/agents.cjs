@@ -197,7 +197,8 @@ function status() {
   return Object.values(all()).map((d) => {
     const at = where(d.key);
     const level = !at ? "none" : stateOf(d.key) === "activity" ? "basic" : "full";
-    const fix = d.key === "gemini" && at && !geminiLinked() ? "gemini_link" : null;
+    const fix = d.key === "gemini" && at && !geminiLinked() ? "gemini_link"
+      : d.key === "claude" && at && claudeLinkFile() ? (claudeLinked() ? "claude_linked" : "claude_link") : null; // #45
     return { key: d.key, name: d.name, icon: d.icon, color: d.color, path: at, level, fix, install: INSTALL[d.key] || null };
   });
 }
@@ -239,4 +240,67 @@ function next(key) {
 
 const label = (key) => `${get(key).icon} ${get(key).name}`;
 
-module.exports = { envFailed: () => envFailed, all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };
+// ── Claude typed in a Tamer shell (#45, opt-in): one marked block in the user's shell startup file
+// that only acts inside Tamer — Tamer's shells carry CVIM_CLAUDE_SETTINGS, so there `claude` gets
+// Tamer's --settings (status line: 5h · 7d · ctx; hooks), like ⌘G. Anywhere else the variable is
+// unset and the block does nothing. Added only after the user agrees; "연결 해제" removes exactly
+// that block (a copy of the file is kept first). The global ~/.claude/settings.json is not touched.
+const LINK_BEGIN = "# >>> Tamer: Claude 연결 (Tamer 셸 안에서만 동작 — 지우려면 Tamer의 에이전트 연결 창에서 해제) >>>";
+const LINK_END = "# <<< Tamer: Claude 연결 <<<";
+// the startup file a login shell of that kind reads, and the lines for it (null: not supported)
+function claudeLinkFile(shell = userShell()) {
+  const name = path.basename(shell);
+  if (name === "zsh") return { file: path.join(loginEnv().ZDOTDIR || HOME, ".zshrc"), lines: ['[ -n "$CVIM_CLAUDE_SETTINGS" ] && alias claude=\'claude --settings "$CVIM_CLAUDE_SETTINGS"\''] };
+  if (name === "bash") {
+    // a login bash reads the first of these that exists (and only that one)
+    const file = [".bash_profile", ".bash_login", ".profile"].map((f) => path.join(HOME, f)).find((f) => fs.existsSync(f)) || path.join(HOME, ".bash_profile");
+    return { file, lines: ['[ -n "$CVIM_CLAUDE_SETTINGS" ] && alias claude=\'claude --settings "$CVIM_CLAUDE_SETTINGS"\''] };
+  }
+  if (name === "fish") return { file: path.join(HOME, ".config/fish/config.fish"), lines: ["if set -q CVIM_CLAUDE_SETTINGS", "    alias claude 'claude --settings $CVIM_CLAUDE_SETTINGS'", "end"] };
+  return null;
+}
+const linkBlock = (lines) => [LINK_BEGIN, ...lines, LINK_END].join("\n");
+function claudeLinked() {
+  const f = claudeLinkFile();
+  try { return !!f && fs.readFileSync(f.file, "utf8").includes(LINK_BEGIN); } catch { return false; }
+}
+// the file's real path (a dotfiles symlink: the file it points to), its text and mode
+function readRc(file) {
+  let real = file, text = "", mode = 0o644;
+  try { real = fs.realpathSync(file); } catch {}
+  try { text = fs.readFileSync(real, "utf8"); mode = fs.statSync(real).mode & 0o777; } catch {}
+  return { real, text, mode };
+}
+function backupRc(real, text) {
+  const dir = path.join(CACHE, "backup", "shell-rc");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const to = path.join(dir, `${path.basename(real).replace(/^\./, "")}.${new Date().toISOString().replace(/[:.]/g, "-")}`); // not hidden
+  fs.writeFileSync(to, text, { mode: 0o600 });
+  return to;
+}
+function claudeLink() {
+  const f = claudeLinkFile();
+  if (!f) throw new Error("unsupported shell");
+  const { real, text, mode } = readRc(f.file);
+  if (text.includes(LINK_BEGIN)) return { file: f.file, already: true };
+  const backup = text ? backupRc(real, text) : null;
+  fs.mkdirSync(path.dirname(real), { recursive: true });
+  // a blank line before the block (and the newline the file may have lacked)
+  fs.writeFileSync(real, `${text}${text && !text.endsWith("\n") ? "\n\n" : "\n"}${linkBlock(f.lines)}\n`, { mode });
+  return { file: f.file, backup };
+}
+function claudeUnlink() {
+  const f = claudeLinkFile();
+  if (!f) return { file: null };
+  const { real, text, mode } = readRc(f.file);
+  const a = text.indexOf(LINK_BEGIN), b = text.indexOf(LINK_END, a);
+  if (a < 0 || b < 0) return { file: f.file, absent: true };
+  const backup = backupRc(real, text);
+  // the file as it was (ending in a newline): the blank line before the block goes with it; anything
+  // the user wrote after the block stays
+  const before = text.slice(0, a).replace(/\n$/, ""), after = text.slice(b + LINK_END.length).replace(/^\n/, "");
+  fs.writeFileSync(real, before + after, { mode });
+  return { file: f.file, backup };
+}
+
+module.exports = { claudeLinkFile, claudeLinked, claudeLink, claudeUnlink, LINK_BEGIN, envFailed: () => envFailed, all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };

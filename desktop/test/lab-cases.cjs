@@ -16,6 +16,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 // every file under a folder (none: []) whose text contains `needle` (was something kept?)
 const filesWith = (dir, needle) => { const out = []; if (!fs.existsSync(dir)) return out; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else { try { if (fs.readFileSync(f, "utf8").includes(needle)) out.push(path.relative(dir, f)); } catch {} } } }; walk(dir); return out; };
+// #45: a stand-in Claude for the shell (prints its arguments, feeds a status line through Tamer's script)
+const FAKE_CLAUDE = "#!/bin/sh\n# a stand-in Claude: says what it was started with, then — like the real one, which redraws its status line all the time — reports a status line through Tamer's script every second\necho \"fake-claude args: $*\"\nfor i in $(seq 30); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":12}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $((now+3600)) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n";
 const envMs = (log) => { const m = log.match(/env ready .*?\+(\d+)ms/); return m ? Number(m[1]) : null; };
 
 module.exports = [
@@ -283,5 +285,77 @@ module.exports = [
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
       { text: "env | sort > env.txt" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { probe: "done" }],
     check: ({ box }) => [ok(fs.existsSync(path.join(box.folder("proj"), "env.txt")), "env.txt가 안 생김")],
+  },
+  // ── 🏠 홈 · 포획 기록 (#44) ──
+  {
+    id: "home", tags: ["smoke", "poke"], what: "⌘P → 홈: 오늘 끝낸 작업·연속 일수, 끝낼 때마다 오늘 수가 늘고 stats.json엔 날짜별 수만 (#44)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 300 },
+      { key: "p", mods: 4 }, { wait: 800 }, { probe: "home" }, { invoke: "home_state", log: true }, { key: "m" }, { wait: 500 }, { probe: "box" }],
+    check: ({ probe, log, box }) => {
+      const st = JSON.parse(log.match(/^lab-invoke home_state (.*)$/m)?.[1] || "{}");
+      const file = JSON.parse(fs.readFileSync(path.join(box.data, "stats.json"), "utf8"));
+      return [
+        ok(probe.home?.poke === "home", `⌘P에 홈이 안 열림 (${probe.home?.poke})`),
+        ok(probe.home?.pokeTab === "home", `강조된 탭이 ${probe.home?.pokeTab} (홈이어야)`),
+        ok(st.today === 7, `오늘 ${st.today} (심은 6 + 끝낸 1 = 7)`),
+        ok(st.streak === 5, `연속 ${st.streak}일 (심은 값 6일 전부터 3·0·5·2·7·4·6 → 오늘부터 0을 만나기 전까지 5)`),
+        ok(Object.keys(file).join() === "days" && Object.values(file.days).every((n) => Number.isInteger(n)), "stats.json에 날짜별 수 말고 다른 것이 있음"),
+        ok(probe.box?.poke === "box", "M으로 내 포켓몬에 안 감"),
+      ];
+    },
+  },
+  {
+    id: "catch-log", tags: ["smoke", "poke"], what: "내 포켓몬 상세: 잡은 폴더·에이전트·진화 이력, 기록 없는 옛 개체는 그 줄 없음 (#44)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { call: "box" }, { wait: 300 }, { call: "openDex" }, { call: "box" }, { wait: 800 },
+      { probe: "first" }, { key: "ArrowRight" }, { wait: 300 }, { probe: "second" }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
+    check: ({ probe, log }) => {
+      const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]");
+      const vz = list.find((m) => m.id === 418), sh = list.find((m) => m.id === 134), pk = list.find((m) => m.id === 25);
+      return [
+        ok(vz?.caughtIn === "proj" && vz?.caughtBy === "Codex", `418 기록 ${JSON.stringify({ i: vz?.caughtIn, b: vz?.caughtBy })} (폴더 이름만·에이전트 이름)`),
+        ok(sh?.evo?.length === 1 && sh.evo[0].to === "샤미드", `134 진화 이력 ${JSON.stringify(sh?.evo)}`),
+        ok(pk && !pk.caughtIn && !pk.evo?.length, "기록 없는 개체에 기록이 생김"),
+        ok(/proj에서 Codex 작업 중/.test(probe.first?.preview || ""), `첫 카드(최근 잡은 브이젤) 상세 ${JSON.stringify(probe.first?.preview)}`),
+      ];
+    },
+  },
+  // ── a Claude typed in the shell: the opt-in line (#45) — fake claude, sandbox ZDOTDIR, never ~/.zshrc ──
+  {
+    id: "claude-typed-unlinked", tags: ["smoke", "agents"], what: "연결 안 한 셸에서 친 Claude: 대화 기록 방식, 상단 바에 \"5h·7d ?\" 안내 (#45)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": FAKE_CLAUDE },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "claude" }, { wait: 200 }, { key: "Enter" }, { wait: 3500 }, { probe: "running" }, { invoke: "agents_status", log: true }],
+    check: ({ probe, log }) => {
+      const st = JSON.parse(log.match(/^lab-invoke agents_status (.*)$/m)?.[1] || "{}");
+      return [
+        ok(/host-agent \S+ claude kind=claude_log/.test(log), "셸 Claude가 대화 기록 방식으로 안 잡힘"),
+        ok(/5h·7d \?/.test(probe.running?.usage || ""), `상단 바에 안내 없음 (${probe.running?.usage})`),
+        ok(st.list?.find((a) => a.key === "claude")?.fix === "claude_link", "연결 창에 '셸에서 친 Claude도 연결'이 없음"),
+      ];
+    },
+  },
+  {
+    id: "claude-typed-linked", tags: ["smoke", "agents"], what: "연결한 뒤 새 셸에서 친 Claude: --settings가 붙고 hooks 방식, 상단 바에 5h·7d, 해제하면 블록만 빠짐 (#45)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": FAKE_CLAUDE },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 },
+      { invoke: "claude_link_test", args: { on: true }, log: true }, { invoke: "agents_status", log: true },
+      { key: "t", mods: 12 }, { wait: 3500 }, // ⌘⇧T: a new shell reads the line
+      { text: "claude" }, { wait: 200 }, { key: "Enter" }, { wait: 4000 }, { probe: "running" },
+      { invoke: "claude_link_test", args: { on: false }, log: true }],
+    check: ({ probe, log, box }) => {
+      const rc = path.join(box.dir, "zdot", ".zshrc"), text = fs.existsSync(rc) ? fs.readFileSync(rc, "utf8") : "";
+      return [
+        ok(/claude_link_test \{"file":"[^"]*zdot\/\.zshrc"/.test(log), "연결 파일이 시험 폴더의 .zshrc가 아님"),
+        ok(/"key":"claude"[^}]*"fix":"claude_linked"/.test(log), "연결 뒤 상태가 claude_linked가 아님"),
+        ok(/fake-claude args: --settings \S*claude\/settings\.json/.test(log) || /host-agent \S+ claude kind=hooks/.test(log), "새 셸의 claude에 --settings가 안 붙음"),
+        ok(/host-agent \S+ claude kind=hooks/.test(log), "연결한 셸의 Claude가 hooks 방식으로 안 잡힘"),
+        ok(/ctx\D*21%/.test(probe.running?.usage || "") && /5h\D*30%/.test(probe.running?.usage || "") && !/5h·7d \?/.test(probe.running?.usage || ""), `상단 바 ${probe.running?.usage} (ctx 21% · 5h 30% · 7d 12% — 실시간 값)`),
+        ok(/five_hour/.test(probe.running?.usageRaw || ""), `실시간 사용량이 아님(지난 값) — ${probe.running?.usageRaw}`),
+        ok(!text.includes("Tamer: Claude 연결") && /PS1='lab\$ '/.test(text), "해제 뒤 블록이 남았거나 원래 줄이 사라짐"),
+      ];
+    },
   },
 ];

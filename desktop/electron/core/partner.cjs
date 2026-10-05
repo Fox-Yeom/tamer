@@ -252,7 +252,8 @@ function take(cwd, { starter: starterId, uid }) {
 // the Pokédex (#10)
 function addCaught(sprite) {
   migrate();
-  updateBox((b) => { addMon(b, sprite, "wild").new = true; });
+  // the catch log (#44): the folder it showed up in and whose task it was (from now on; older ones have none)
+  updateBox((b) => { Object.assign(addMon(b, sprite, "wild"), { new: true, ...(sprite.caughtIn ? { caught_in: sprite.caughtIn } : {}), ...(sprite.caughtBy ? { caught_by: sprite.caughtBy } : {}) }); });
   recordCaught(sprite);
 }
 
@@ -264,6 +265,7 @@ function viewed(id) {
 }
 
 // "내 포켓몬" (#27): every individual — in the box or a folder's partner — with its EXP and where it is
+const dexName = (id) => readJson(DEX, {})[id]?.name || `#${id}`;
 function boxList(cwd) {
   migrate();
   const folders = readJson(FOLDERS, {});
@@ -271,6 +273,8 @@ function boxList(cwd) {
     const v = monView(m);
     return { uid: m.uid, id: m.id, shiny: !!m.shiny, name: v.name, gif: v.gif, types: v.types || [], xp: m.xp || 0,
       toEvolve: v.toEvolve, how: m.how || null, at: m.at || null, new: !!m.new,
+      caughtIn: m.caught_in ? path.basename(m.caught_in) : null, caughtBy: m.caught_by || null,
+      evo: (m.evo || []).map((e) => ({ from: dexName(e.from), to: dexName(e.to), at: e.at })),
       folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder] };
   });
 }
@@ -348,7 +352,10 @@ async function onDone(cwd) {
         if (!x) return;
         if (x.id === m.id && (x.since_evo || 0) >= EVOLVE_EVERY) {
           if (!nextId) x.final = true;
-          else if (next) { x.id = next.id; x.since_evo -= EVOLVE_EVERY; to = next; again = x.since_evo >= EVOLVE_EVERY; }
+          else if (next) {
+            (x.evo ||= []).push({ from: x.id, to: next.id, at: now() }); // evolution history (#44)
+            x.id = next.id; x.since_evo -= EVOLVE_EVERY; to = next; again = x.since_evo >= EVOLVE_EVERY;
+          }
         }
         m = x;
       });

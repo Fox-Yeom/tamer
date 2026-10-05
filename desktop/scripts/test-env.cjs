@@ -102,14 +102,17 @@ function seed(data, dir, folder) {
   if (data !== "owner") throw new Error(`unknown data set ${data}`);
   const other = path.join(dir, "other");
   put("box.json", { next: 7, mons: [
-    { uid: 1, id: 134, shiny: false, xp: 12, since_evo: 4, how: "starter", at: now - 5 * 24 * h, folder: null },
+    { uid: 1, id: 134, shiny: false, xp: 12, since_evo: 4, how: "starter", at: now - 5 * 24 * h, folder: null, evo: [{ from: 133, to: 134, at: now - 2 * 24 * h }] },
     { uid: 2, id: 37, shiny: false, xp: 0, since_evo: 0, how: "wild", at: now - 2 * h, folder: null, new: true },
     { uid: 3, id: 222, shiny: false, xp: 3, since_evo: 3, how: "wild", at: now - 30 * h, folder: other },
-    { uid: 4, id: 418, shiny: false, xp: 0, since_evo: 0, how: "wild", at: now - 1 * h, folder: null },
+    { uid: 4, id: 418, shiny: false, xp: 0, since_evo: 0, how: "wild", at: now - 1 * h, folder: null, caught_in: path.join(dir, "proj"), caught_by: "codex" },
     { uid: 5, id: 422, shiny: true, xp: 0, since_evo: 0, how: "wild", at: now - 3 * h, folder: null },
     { uid: 6, id: 25, shiny: false, xp: 7, since_evo: 7, how: "legacy", at: now - 10 * 24 * h, folder: null },
   ] });
   put("folders.json", { [other]: { id: 222, uid: 3, pinned: true } });
+  // 🏠 홈 (#44): tasks finished in the last 7 days (today last)
+  const day = (n) => { const t = new Date(); t.setDate(t.getDate() - n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
+  put("stats.json", { days: Object.fromEntries([3, 0, 5, 2, 7, 4, 6].map((n, i) => [day(6 - i), n]).filter(([, n]) => n)) });
   put("pokedex.json", { 134: entry(134), 37: entry(37), 222: entry(222), 418: entry(418), 422: entry(422, true), 25: entry(25), 16: entry(16, false, { caught: false }) });
 }
 
@@ -117,8 +120,10 @@ function seed(data, dir, folder) {
 // a test instance killed while that rc was starting left pyenv's rehash lock behind, and every
 // new zsh of the user's waited 60 s (2026-10-05). Also makes the prompt the same on every Mac.
 function testShell(dir) {
-  const z = path.join(dir, "zdot"), p = path.join(dir, "test-shell");
+  // named zsh (in its own folder): Tamer treats it as zsh — the #45 shell line lands in this ZDOTDIR's .zshrc
+  const z = path.join(dir, "zdot"), p = path.join(dir, "shellbin", "zsh");
   fs.mkdirSync(z, { recursive: true });
+  fs.mkdirSync(path.dirname(p), { recursive: true });
   fs.writeFileSync(path.join(z, ".zshrc"), "PS1='lab$ '\n");
   fs.writeFileSync(p, `#!/bin/sh\nexport ZDOTDIR=${JSON.stringify(z)}\nexec /bin/zsh "$@"\n`, { mode: 0o755 });
   return p;
@@ -136,6 +141,8 @@ const REAL = [
   path.join(HOME, ".cache/tamer/pokedex.json"), path.join(HOME, ".cache/tamer/recent_dirs"), path.join(HOME, ".cache/tamer/ui"),
   path.join(HOME, "Library/Application Support/Tamer"), path.join(HOME, "Library/Application Support/Tamer/Local Storage/leveldb"),
   path.join(HOME, ".cache/cvim"), path.join(HOME, ".claude/settings.json"),
+  // the shell startup files the #45 opt-in line goes into
+  path.join(HOME, ".zshrc"), path.join(HOME, ".bash_profile"), path.join(HOME, ".profile"), path.join(HOME, ".config/fish/config.fish"),
 ];
 function realSnapshot() {
   return Object.fromEntries(REAL.map((p) => { try { const s = fs.statSync(p); return [p, `${s.mtimeMs}:${s.size}`]; } catch { return [p, "-"]; } }));

@@ -47,6 +47,13 @@
         "bar-720",
         "term-search"
       ]
+    },
+    "home": {
+      "what": "🏠 홈 (⌘P · 포켓몬 창 첫 탭): 지금 탭 파트너(미리보기) · 오늘 끝낸 작업·연속 일수·최근 7일 · 에이전트별 5시간·주간 남은 비율 (#44)",
+      "entry": "dexView(\"home\")",
+      "scenes": [
+        "home"
+      ]
     }
   },
   "components": {
@@ -96,7 +103,8 @@
       "screens": [
         "choose",
         "dex",
-        "box"
+        "box",
+        "home"
       ]
     },
     "pk-card": {
@@ -293,6 +301,29 @@
       ],
       "screens": [
         "main"
+      ]
+    },
+    "pk-home": {
+      "what": "홈 본문: 오늘·연속 카드, 7일 막대, 에이전트 한도 막대 (#44)",
+      "files": [
+        "src/poke/poke.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".pk-home",
+        ".pk-today",
+        ".pk-week",
+        ".pk-day",
+        ".pk-agent",
+        ".pk-meter",
+        ".pk-bar",
+        "#dex.homeview"
+      ],
+      "functions": [
+        "homeRender"
+      ],
+      "screens": [
+        "home"
       ]
     }
   },

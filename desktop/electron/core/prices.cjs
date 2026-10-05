@@ -22,11 +22,17 @@ function pick(all) {
   }
   return models;
 }
+// each model's context window (max input tokens) — ctx % for a Claude typed in the shell, an estimate (#45)
+function windowsOf(all, models) {
+  const w = {};
+  for (const id of Object.keys(models)) if (typeof all[id]?.max_input_tokens === "number") w[id] = all[id].max_input_tokens;
+  return w;
+}
 
 // { at, models } — the cached list while it's fresh; else fetched (the old one if offline)
 function get() {
   const cur = readJson(FILE, null);
-  if (cur?.models && Date.now() - cur.at < DAY) return Promise.resolve(cur);
+  if (cur?.models && cur.windows && Date.now() - cur.at < DAY) return Promise.resolve(cur); // (a list from before #45 has no windows: fetch again)
   if (!loading) {
     // tests: a local copy of the list instead of the network
     const source = process.env.CVIM_PRICES_JSON
@@ -36,7 +42,7 @@ function get() {
     loading = source.then((all) => {
       const models = pick(all);
       if (!Object.keys(models).length) return cur;
-      const t = { at: Date.now(), models };
+      const t = { at: Date.now(), models, windows: windowsOf(all, models) };
       writeJson(FILE, t);
       return t;
     }).catch(() => cur).finally(() => { loading = null; });
@@ -44,4 +50,4 @@ function get() {
   return loading;
 }
 
-module.exports = { get, pick };
+module.exports = { get, pick, windowsOf };

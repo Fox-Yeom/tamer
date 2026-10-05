@@ -63,7 +63,7 @@ function arm(c, ms) {
 
 // a task finished in workspace `ws`: maybe a wild Pokémon appears (returns it, or null).
 // empty: that folder has no partner (higher chance, shorter wait)
-function onDone(ws, { empty = false } = {}) {
+function onDone(ws, { empty = false, folder = null, agent = null } = {}) {
   if (!enabled() || current) return null;
   const st = state();
   if (Date.now() - (st.last || 0) * 1000 < (empty ? COOLDOWN_EMPTY : COOLDOWN)) return null;
@@ -71,7 +71,7 @@ function onDone(ws, { empty = false } = {}) {
   const sprite = st.next && partner.loadSprite(st.next.id, st.next.shiny);
   if (!sprite?.gif) { prefetch(); return null; } // not downloaded yet: skip this one
   updateJson(FILE, (t) => { t.last = Math.floor(Date.now() / 1000); delete t.next; });
-  current = { ...sprite, ws, token: crypto.randomBytes(8).toString("hex"), throws: 0 };
+  current = { ...sprite, ws, caughtIn: folder, caughtBy: agent, token: crypto.randomBytes(8).toString("hex"), throws: 0 };
   arm(current, STAY);
   partner.recordSeen(sprite);
   prefetch();

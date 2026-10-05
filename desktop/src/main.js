@@ -444,11 +444,14 @@ async function openAgents() {
   ul.innerHTML = "";
   for (const a of list) {
     const li = document.createElement("li");
-    const note = a.level === "none" ? "설치 안 됨" : a.fix === "gemini_link" ? "확장을 연결하면 전체" : a.path;
+    const note = a.level === "none" ? "설치 안 됨" : a.fix === "gemini_link" ? "확장을 연결하면 전체"
+      : a.fix === "claude_link" ? "⌘G는 전체 · 셸에서 친 Claude는 연결하면 전체" : a.fix === "claude_linked" ? `${a.path} · 셸에서 친 Claude도 연결됨` : a.path;
     li.innerHTML = `<span>${esc(a.icon)}</span><b>${esc(a.name)}</b><span class="lv">${LEVEL[a.level]}</span><span class="where" title="${esc(a.path || "")}">${esc(note || "")}</span><span class="act"></span>`;
     const act = li.querySelector(".act");
     const button = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.addEventListener("click", fn); act.appendChild(b); };
     if (a.fix === "gemini_link") button("확장 연결", async () => { const r = await invoke("agent_fix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); });
+    if (a.fix === "claude_link") button("셸에서 친 Claude도 연결", async () => { const r = await invoke("agent_fix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); }); // #45
+    if (a.fix === "claude_linked") button("연결 해제", async () => { const r = await invoke("agent_unfix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); });
     if (a.level === "none" && a.install) {
       button("설치 명령 복사", () => invoke("copy_text", { text: a.install.cmd }).then(() => toast(`복사됨 — 터미널에 붙여넣어 실행: ${a.install.cmd}`)));
       button("공식 안내", () => invoke("open_url", { url: a.install.url }));
@@ -865,12 +868,12 @@ function untilReset(epoch) {
 }
 
 // prices for "≈$" (#23): asked for once a day, only when an agent shows tokens without a cost
-let PRICES = null, pricesAt = 0;
+let PRICES = null, WINDOWS = {}, pricesAt = 0; // WINDOWS: each model's context window (#45)
 function estCost(tokens) {
   if (Date.now() - pricesAt > 24 * 3600 * 1000) {
     pricesAt = Date.now();
     const again = () => { pricesAt = Date.now() - 23.5 * 3600 * 1000; }; // offline: try again in 30 min
-    invoke("prices").then((p) => { if (p?.models) { PRICES = p.models; if (active) renderBar(active); } else again(); }).catch(again);
+    invoke("prices").then((p) => { if (p?.models) { PRICES = p.models; WINDOWS = p.windows || {}; if (active) renderBar(active); } else again(); }).catch(again);
   }
   if (!PRICES) return null;
   let sum = 0, priced = false;
@@ -900,10 +903,13 @@ function renderBar(tab) {
   // gauges and the model name give way first on a narrow window: the numbers stay (#38)
   const gauge = (p) => `<span class="gauge">${bar(p)} </span>`;
   if (u?.model) parts.push(`<span class="dim u-model"${old("model")}>${esc(u.model)}</span>`);
-  if (u?.ctx != null) parts.push(`<span class="${level(u.ctx)}">ctx ${gauge(u.ctx)}${Math.round(u.ctx)}%</span>`);
+  if (u?.ctx != null) parts.push(`<span class="${level(u.ctx)}"${u.ctxEst ? ' title="모델의 최대 입력 크기로 계산한 추정치"' : ""}>ctx ${gauge(u.ctx)}${u.ctxEst ? "≈" : ""}${Math.round(u.ctx)}%</span>`);
   else if (u?.ctx_tokens != null) parts.push(`<span class="dim">ctx ${Math.round(u.ctx_tokens / 1000)}k</span>`);
   if (u?.five_hour) parts.push(`<span class="${level(u.five_hour.pct)}"${old("five_hour")}>5h ${gauge(u.five_hour.pct)}${Math.round(u.five_hour.pct)}%${untilReset(u.five_hour.resets_at)}</span>`);
   if (u?.seven_day) parts.push(`<span class="${level(u.seven_day.pct)}"${old("seven_day")}>7d ${gauge(u.seven_day.pct)}${Math.round(u.seven_day.pct)}%</span>`);
+  // a Claude typed in the shell without the opt-in line: no 5h · 7d (only its status line has them) (#45)
+  const typedClaude = (st.shellKey || tab.hostAgent?.key) === "claude" && st.state !== "shell";
+  if (typedClaude && !u?.five_hour && !u?.seven_day) parts.push('<span class="dim u-hint" title="셸에서 직접 친 Claude는 한도를 알려 주지 않아요 — ⌘G → ⚙ 에이전트 연결 상태 → \'셸에서 친 Claude도 연결\'을 켜거나 ⌘G로 띄우면 보여요 (Pro·Max 구독, 첫 응답 뒤)">5h·7d ?</span>');
   if (u?.cost != null) parts.push(`<span class="dim">$${u.cost.toFixed(2)}</span>`);
   else if (u?.tokens) { // no cost of its own (Claude typed in the shell, Codex): tokens × API prices (#23)
     const c = estCost(u.tokens);
@@ -934,6 +940,13 @@ function withLast(st, tab) {
   if (!key || st.state === "shell") return st.usage || {};
   const u = { ...(st.usage || {}) }, l = lastUsage(key), stale = [];
   if (u.ctx == null && u.ctx_tokens != null && l.windows?.[u.model_id]) u.ctx = (u.ctx_tokens / l.windows[u.model_id]) * 100;
+  // no window learned from a status line yet (a Claude only ever typed in the shell): the price list's
+  // max input for that model — an estimate, shown with ≈ (#45)
+  else if (u.ctx == null && u.ctx_tokens != null) {
+    if (!PRICES) estCost({}); // loads the list (and its windows) once
+    const w = WINDOWS[u.model_id] || WINDOWS[String(u.model_id || "").replace(/-\d{8}$/, "")];
+    if (w) { u.ctx = (u.ctx_tokens / w) * 100; u.ctxEst = true; }
+  }
   if (!u.model && l.model) { u.model = l.model; stale.push("model"); }
   for (const k of ["five_hour", "seven_day"]) if (!u[k] && live(l[k])) { u[k] = l[k]; stale.push(k); }
   u.stale = stale;
@@ -1555,7 +1568,7 @@ function dexTitle() {
   const n = d.box ? d.box.length : owned, view = d.view || "dex";
   const tab = chooseFor || active, on = (v) => (view === v ? ' class="on"' : "");
   const cur = d.chooseOpts?.current;
-  $("#dex-title").innerHTML = `<span class="pk-tabs">${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
+  $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button>${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
     + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button></span>`
     + (view === "choose" && tab ? `<span class="pk-sub">${esc(base(tab.cwd))}의 파트너 — ${cur ? `지금 ${cur.shiny ? "✨" : ""}${esc(cur.name)} · EXP ${cur.xp}` : "아직 없어요"}</span>`
       + '<button class="pk-close" title="닫기 (Esc)">✕</button>' : `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
@@ -1574,12 +1587,16 @@ const HELP = {
   choose: "←→↑↓ 고르기 · 1·2·3 첫 파트너 · Enter 이 탭의 파트너로 · / 검색 · 한 마리는 한 폴더에만, EXP는 포켓몬을 따라가요 · Esc 닫기",
   dex: "←→↑↓ 이동 · / 검색 · Tab 다음 만난 포켓몬 · Enter 이 탭의 파트너로(박스에 있으면) · M 내 포켓몬 · Esc 닫기",
   box: "←→↑↓ 이동 · / 검색 · Enter 이 탭의 파트너로 · M 도감 · Esc 닫기",
+  home: "⌘P 홈 · M 내 포켓몬 · Esc 닫기 — 한도는 각 에이전트가 마지막으로 알려 준 값이에요",
 };
 // the frame for a view: which list shows, the tool row, the hints
 function viewChrome(v) {
   const w = $("#dex");
   w.classList.toggle("cardview", v !== "dex");
   w.classList.toggle("chooseview", v === "choose");
+  w.classList.toggle("homeview", v === "home");
+  $("#dex-take").hidden = v === "home";
+  $("#dex-pos").textContent = "";
   $("#dex-grid").hidden = v !== "dex";
   $("#box-grid").hidden = v === "dex";
   $("#dex-help").textContent = HELP[v];
@@ -1592,6 +1609,7 @@ async function dexView(v) {
   d.view = v;
   if (v !== "choose") dexLastView = v; // 파트너 고르기 opens for a reason; the window remembers the other two
   viewChrome(v);
+  if (v === "home") { dexTitle(); return homeRender(); }
   if (v === "dex") {
     $(".dex-preview").style.visibility = "";
     dexFilter();
@@ -1609,6 +1627,46 @@ async function dexView(v) {
     boxRender();
   }
   dexTitle();
+}
+
+// ── 🏠 홈 (#44): this tab's partner (the preview), tasks finished today and in a row, the last 7
+// days, and each agent's 5-hour / weekly limit as last reported (nothing new is measured here) ──
+const HOME_AGENTS = [["claude", "✻ Claude Code"], ["codex", "◎ Codex"]];
+async function homeRender() {
+  const d = dexState;
+  const [st, box] = await Promise.all([invoke("home_state").catch(() => null), d.box ? d.box : invoke("box_list", { ws: active?.id }).catch(() => [])]);
+  if (dexState !== d || d.view !== "home") return;
+  d.box = box;
+  const mine = box.find((m) => m.folder === "here");
+  const max = Math.max(1, ...(st?.week || []).map((x) => x.n));
+  const wd = ["일", "월", "화", "수", "목", "금", "토"];
+  const week = (st?.week || []).map((x, i, a) => `<div class="pk-day${i === a.length - 1 ? " today" : ""}" title="${x.day} · ${x.n}번"><i style="height:${Math.round((x.n / max) * 100)}%"></i><span>${wd[new Date(`${x.day}T12:00`).getDay()]}</span></div>`).join("");
+  const left = (w) => (w && live(w) ? Math.max(0, 100 - Math.round(w.pct)) : null);
+  const meter = (label, w) => {
+    const p = left(w);
+    if (p == null) return `<div class="pk-meter none"><b>${label}</b><span class="dim">아직 값 없음</span></div>`;
+    const lv = p <= 20 ? "low" : p <= 50 ? "mid" : "ok";
+    return `<div class="pk-meter ${lv}"><b>${label}</b><span class="pk-bar"><i style="width:${p}%"></i></span><span>${p}% 남음</span><span class="dim">${untilReset(w.resets_at).replace(/^\s*↻/, "") ? `${untilReset(w.resets_at).replace(/^\s*↻/, "")} 뒤 회복` : ""}</span></div>`;
+  };
+  const agentsHtml = HOME_AGENTS.map(([k, name]) => { const l = lastUsage(k); return (l.five_hour || l.seven_day) ? `<div class="pk-agent"><h5>${name}${l.model ? ` <span class="dim">${esc(l.model)}</span>` : ""}</h5>${meter("5시간", l.five_hour)}${meter("주간", l.seven_day)}</div>` : ""; }).join("");
+  $("#box-grid").innerHTML = `<div class="pk-home">
+    <section class="pk-today"><div><b>${st?.today ?? 0}</b><span>오늘 끝낸 작업</span></div><div><b>${st?.streak ? `🔥 ${st.streak}` : "0"}</b><span>일 연속</span></div>
+      <div class="pk-week" title="최근 7일 끝낸 작업">${week}</div></section>
+    <section><h4 class="pk-group">사용 한도<span class="dim">남은 비율 · 마지막으로 알려 준 값</span></h4>${agentsHtml || '<p class="pk-note">아직 한도 정보가 없어요 — Claude Code나 Codex가 한 번 응답하면 보여요</p>'}</section>
+  </div>`;
+  $("#dex-found").textContent = "";
+  // the preview: this tab's partner
+  const img = $("#dex-img");
+  $(".dex-preview").style.visibility = "";
+  if (!mine) {
+    img.removeAttribute("src");
+    $("#dex-name").textContent = active ? "파트너가 없어요" : "열린 탭이 없어요";
+    $("#dex-meta").innerHTML = active ? "🌟 파트너 고르기에서 데려오거나, 작업을 끝내면 나타나는 야생 포켓몬을 잡아요" : "폴더를 열면 그 폴더의 파트너가 여기 보여요";
+    return;
+  }
+  if (mine.gif) spriteUrl(mine.gif).then(async (u) => { if (!u || dexState?.view !== "home") return; img.src = u; await img.decode().catch(() => {}); img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`; });
+  $("#dex-name").textContent = `#${String(mine.id).padStart(3, "0")} ${mine.shiny ? "✨" : ""}${mine.name}`;
+  $("#dex-meta").innerHTML = `${esc(base(active.cwd))}의 파트너<br>EXP ${mine.xp} · ${mine.toEvolve == null ? "최종 진화" : `진화까지 ${mine.toEvolve}`}`;
 }
 
 function boxMatch(q, m) {
@@ -1691,7 +1749,10 @@ function boxSelect(i) {
   else {
     const where = m.folder === "here" ? "이 탭의 파트너" : m.folder ? `📁 ${esc(m.folder)}의 파트너${m.folderGone ? " (닫힌 폴더)" : ""}` : "박스에서 쉬는 중";
     $("#dex-meta").innerHTML = `${types}<br>EXP ${m.xp || 0} · ${m.toEvolve == null ? "최종 진화" : `진화까지 ${m.toEvolve}`}<br>${where}`
-      + (m.how || m.at ? `<br>${HOW[m.how] || ""}${m.at ? ` · ${ago(m.at)}` : ""}` : "");
+      + (m.how || m.at ? `<br>${HOW[m.how] || ""}${m.at ? ` · ${ago(m.at)}` : ""}` : "")
+      // the catch log (#44): where and during whose task (recorded from beta.29 on), evolutions
+      + (m.caughtIn || m.caughtBy ? `<br><span class="dim">${m.caughtIn ? `📁 ${esc(m.caughtIn)}에서` : ""}${m.caughtBy ? ` ${esc(m.caughtBy)} 작업 중` : ""}</span>` : "")
+      + (m.evo?.length ? `<br><span class="dim">진화: ${m.evo.map((e) => `${esc(e.from)} → ${esc(e.to)} (${ago(e.at)})`).join(", ")}</span>` : "");
   }
   $("#dex-from").innerHTML = "";
   boxButton();
@@ -1889,6 +1950,7 @@ function dexKey(e) {
   const k = e.key, cols = dexCols();
   if (k === "Escape" || k === "q") dexEsc();
   else if (k === "m" || k === "M") dexView(d.view === "box" ? "dex" : "box");
+  else if (d.view === "home") return true; // nothing to move on 홈 — keys stay in the window
   else if (d.view !== "dex") return boxKey(k);
   else if (k === "Enter") dexChoose();
   else if (d.hits && dexKeyFiltered(k, e)) { /* searching: shown cells only */ }
@@ -2065,6 +2127,7 @@ window.addEventListener("keydown", (e) => {
   if (e.altKey && e.code === "Digit2") return hit(() => $(".changes li[data-i]", active?.view)?.focus());
   if (e.altKey && e.code === "Digit3") return hit(() => active?.panes.shell.term.focus());
   if (e.altKey && e.code === "Enter") return hit(() => { if (active) { active.autoSwapped = false; swapPanes(active, !active.swapped); } });
+  if (e.code === "KeyP" && !e.shiftKey && !e.altKey) return hit(() => (dexOpen() ? dexView("home") : openDex(null, "home"))); // 🏠 홈 (#44)
   if (e.code === "KeyG" || (e.code === "KeyA" && e.shiftKey)) return hit(() => switchAgent());
   if (e.code === "KeyT" && e.shiftKey) return hit(() => newSession(active)); // S2: a new session is a shell
   if (e.code === "KeyT") return hit(() => showStart(false));
@@ -2585,10 +2648,15 @@ function labState() {
       return lineText(p.term, b.baseY + b.cursorY + 1).text.trimEnd();
     })(),
     width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth,
+    usage: $("#usage")?.textContent || "",
+    usageRaw: (() => { const u = active && shownOf(active)?.usage; return u ? Object.keys(u).filter((k) => u[k] != null).join(",") : null; })(),
+    sid: active?.sid ?? null,
     tsearch: $("#tsearch").hidden ? null : { q: $("#tsearch-q").value, n: $("#tsearch-n").textContent, pane: tsearchPane?.kind || null, alt: !$("#tsearch-alt").hidden },
     // the top bar and the hint line stay one line, nothing pushed out (#38)
     barFits: (() => { const b = $("#bar"); return b.scrollWidth <= b.clientWidth + 1 && [...b.children].every((c) => c.hidden || c.offsetHeight <= b.clientHeight); })(),
     hintFits: (() => { const h = $("#hint"); return h.scrollHeight <= h.clientHeight + 1; })(),
+    preview: dexOpen() ? $("#dex-meta")?.textContent || null : null,
+    pokeTab: dexOpen() ? $("#dex .pk-tabs button.on")?.dataset.view || null : null,
     pokeFits: dexOpen() ? (() => { const r = $("#dex .pk-window")?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() : null,
   };
 }
@@ -2598,7 +2666,7 @@ function fakeUsage(tab) {
     usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
   renderBar(tab);
 }
-const LAB_CALLS = { fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
+const LAB_CALLS = { home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
@@ -2699,6 +2767,10 @@ async function uiScenes(set) {
       await search("불꽃,물"); await shot("dex-search");
       await search("불꽃&전설"); await shot("dex-empty");
       await search("");
+      // 🏠 홈 (#44): partner, today, limits — the limits as Claude last reported them (the top bar untouched)
+      const soon = Math.floor(Date.now() / 1000);
+      rememberUsage("claude", { model: "Opus 5.5", five_hour: { pct: 35, resets_at: soon + 5430 }, seven_day: { pct: 86, resets_at: soon + 3 * 86400 + 7200 } });
+      await dexView("home"); await shot("home");
       await dexView("box"); await shot("box-cards");
       await search("age0"); await shot("box-search");
       await search("zzz"); await shot("box-empty");
