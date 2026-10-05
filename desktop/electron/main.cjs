@@ -56,6 +56,9 @@ function broadcast(event, payload) {
 // kept in memory (never written) for "진단 정보 복사"
 const RECENT_LOG = [];
 const RECENT_LOG_MAX = 300;
+// startup timing, ms since the process began (in the log and the diagnostics)
+const BOOT = Date.now() - Math.round(process.uptime() * 1000);
+const since = () => Date.now() - BOOT;
 function logLine(line) {
   if (process.env.CVIM_DESKTOP_LOG) fs.appendFileSync(process.env.CVIM_DESKTOP_LOG, line + "\n");
   RECENT_LOG.push(`${new Date().toTimeString().slice(0, 8)} ${line}`);
@@ -818,6 +821,7 @@ const overlayCommands = {
 // What the UI may ask for. The UI never names a program: the main process decides what runs in
 // each pane, and folders must be real directories (POLICY.md 11). A compromised page can't do more.
 const commands = {
+  startup_mark({ what }) { logLine(`startup ${String(what).slice(0, 40)} +${since()}ms`); },
   app_info() {
     uiReady = true;
     const start = TEST && process.env.CVIM_DESKTOP_DIRS ? process.env.CVIM_DESKTOP_DIRS.split(":")
@@ -1256,8 +1260,11 @@ app.setAboutPanelOptions({
   credits: "AI 코딩 에이전트와 함께 쓰는 터미널 · 피드백: " + FEEDBACK + "\n오픈소스 고지: Tamer 메뉴 → 오픈소스 고지\nPokémon은 비공식 팬 기능이며 권리는 Nintendo / Creatures / GAME FREAK / The Pokémon Company에 있습니다.",
 });
 
+// what the first screen needs doesn't wait for the shell environment (1–3 s with a heavy ~/.zshrc,
+// #31); everything that runs a shell or an agent, or talks to the core, does
+const NO_ENV = new Set(["app_info", "startup_mark", "log_line"]);
 ipcMain.handle("host-invoke", async (e, cmd, args) => {
-  if (ready) await ready; // the core runs and agents have the terminal's environment
+  if (ready && !NO_ENV.has(cmd)) await ready; // the core runs and agents have the terminal's environment
   // only our own pages may call in: the main window (dist/index.html, every command) and the
   // overlay (dist/overlay.html, its own short list)
   const url = e.senderFrame?.url || "";
@@ -1276,10 +1283,13 @@ app.on("open-file", (e, file) => { e.preventDefault(); requestOpen(file); });
 // the terminal environment is read in the background (#4); the core starts with it, and every
 // command from the page waits for that — the window itself never waits
 let ready = null;
+logLine(`startup main loaded +${since()}ms`);
 app.whenReady().then(() => {
+  logLine(`startup app ready +${since()}ms`);
+  const envT0 = since();
   ready = agents.prepareEnv().then(() => {
     core = new RustCore({ onEvent: onCoreEvent, log: logLine });
-    logLine(`env ready (${Object.keys(agents.loginEnv()).length} vars)`);
+    logLine(`env ready (${Object.keys(agents.loginEnv()).length} vars) +${since()}ms (shell env took ${since() - envT0}ms)`);
   });
   appMenu();
   powerMonitor.on("shutdown", () => { systemShutdown = true; logLine("system shutdown: keeping the session"); });
@@ -1300,6 +1310,8 @@ app.whenReady().then(() => {
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.loadFile(path.join(DIST, "index.html"));
+  logLine(`startup window created +${since()}ms`);
+  win.webContents.once("did-finish-load", () => logLine(`startup page loaded +${since()}ms`));
   win.on("focus", overlaySync);
   win.on("blur", () => setTimeout(overlaySync, 250)); // focus may be moving to our own dialog
   createOverlay();

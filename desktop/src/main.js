@@ -3192,7 +3192,8 @@ async function a2Test() {
 
 // ── start ───────────────────────────────────────────────────────────────────
 async function main() {
-  info = await invoke("app_info");
+  info = await invoke("app_info"); // waits for the shell environment (host-invoke awaits it)
+  invoke("startup_mark", { what: "ui has app info" });
   invoke("wild_state").then((w) => { wildOn = w.enabled; if (w.current) wild.show(w.current); });
   if (info.test.sec_test) secTest();
   // session restore: last time's tabs (agents resume their conversations), then the last active one
@@ -3205,6 +3206,7 @@ async function main() {
   if (info.restored?.active) { const t = tabs.find((x) => x.cwd === info.restored.active); if (t) selectTab(t); }
   if (info.restored) toast(`지난번 탭 ${info.restored.tabs.length}개를 다시 열었어요 (대화 이어서)`);
   if (!tabs.length) showStart(true);
+  invoke("startup_mark", { what: tabs.length ? "ui first tab shown" : "ui start screen shown" });
   // first launch: which agents CVIM sees (once)
   // not in tests (first_run: a first launch as it is)
   invoke("agents_status").then((st) => { if (!st.seen && (!Object.keys(info.test).length || info.test.first_run)) openAgents(); });

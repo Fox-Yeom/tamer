@@ -55,7 +55,7 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 1. 받은 링크의 **Releases**에서 내 맥에 맞는 DMG를 받습니다.
    - Apple Silicon(M1~): `Tamer-<버전>-arm64.dmg` · Intel: `Tamer-<버전>-x64.dmg` (메뉴 → 이 Mac에 관하여 → "칩"으로 확인)
    - 비공개 저장소라 **초대받은 GitHub 계정으로 로그인**해야 받을 수 있어요.
-2. DMG를 열고 **Tamer**를 **Applications**로 끌어 놓습니다.
+2. DMG를 열고 **Tamer**를 **Applications**로 끌어 놓은 뒤, **Applications에서** 엽니다(DMG 창에서 바로 열면 압축된 이미지에서 읽느라 매번 느려요).
 3. **처음 한 번만**: Apple 공증 전 베타라 macOS가 한 번 막습니다. 둘 중 하나로 여세요.
    - **시스템 설정 → 개인정보 보호 및 보안** 맨 아래 "Tamer이(가) 차단되었습니다" 옆 **그래도 열기**
    - 또는 터미널: `xattr -dr com.apple.quarantine /Applications/Tamer.app`
@@ -90,6 +90,7 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 - 적어 주시면 좋은 것: 무엇을 했고 → 무엇을 기대했고 → 무엇이 보였는지, 스크린샷(Tamer 창만)
 
 ## 알려진 문제
+- 새 버전을 **처음** 열 때 macOS가 앱을 검사해서 10~20초 걸릴 수 있어요(Apple 공증 전 베타라서). 두 번째부터는 1~2초예요.
 - 셸 설정(`~/.zshrc`)이 오래 걸리면 처음 ⌘G 목록이 최대 3초 늦게 뜰 수 있어요.
 - 셸을 연 직후(3초 안)에 에이전트로 바꾸면 시작이 조금 늦어요(셸 시작이 끝난 뒤 바꿈).
 - 셸에서 직접 띄운 Claude·Codex의 비용은 토큰 수 × API 가격으로 계산한 추정치(`≈$`)예요(5h·7d는 지난 값).
