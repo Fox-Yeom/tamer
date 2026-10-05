@@ -31,8 +31,17 @@ if (git(["rev-parse", "HEAD"]) !== git(["rev-parse", "origin/main"])) {
   process.exit(1);
 }
 
+// a version is released once (docs/VERSIONING.md): its tag and DMGs are never replaced. A release
+// that already exists means the version wasn't bumped (2026-10-05: a failed bump went unnoticed and
+// the release step re-uploaded the previous version) — stop. Only notes: --notes-only
+const already = (() => { try { gh(["release", "view", TAG, "-R", REPO]); return true; } catch { return false; } })();
+if (already && !process.argv.includes("--notes-only")) {
+  console.error(`${TAG} is already released — bump the version first (npm run bump), or --notes-only to rewrite its notes`);
+  process.exit(1);
+}
+
 const dmgs = ["arm64", "x64"].map((a) => path.join(OUT, `Tamer-${version}-${a}.dmg`));
-if (!dmgs.every((f) => fs.existsSync(f))) execFileSync("npm", ["run", "beta"], { stdio: "inherit", cwd: ROOT });
+if (!already && !dmgs.every((f) => fs.existsSync(f))) execFileSync("npm", ["run", "beta"], { stdio: "inherit", cwd: ROOT });
 
 // this version's notes: its section in docs/CHANGELOG.md, plus how to install
 const changelog = fs.readFileSync(path.join(ROOT, "..", "docs", "CHANGELOG.md"), "utf8");
@@ -54,8 +63,7 @@ const exists = (() => { try { gh(["release", "view", TAG, "-R", REPO]); return t
 const notesFile = path.join(OUT, `notes-${version}.md`);
 fs.writeFileSync(notesFile, notes);
 if (exists) {
-  gh(["release", "upload", TAG, ...dmgs, "-R", REPO, "--clobber"]);
-  gh(["release", "edit", TAG, "-R", REPO, "--notes-file", notesFile]);
+  gh(["release", "edit", TAG, "-R", REPO, "--notes-file", notesFile]); // --notes-only: never the DMGs
 } else {
   gh(["release", "create", TAG, ...dmgs, "-R", REPO, "--prerelease", "--title", `Tamer ${version}`, "--notes-file", notesFile, "--target", "main"]);
 }
