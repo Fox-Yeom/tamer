@@ -3,8 +3,6 @@ node_modules/
 desktop/out/
 desktop/dist/
 desktop/core-rs/target/
-desktop/src-tauri/target/
-desktop/src-tauri/gen/
 # generated at build time (desktop/build/make_icon.py, desktop/scripts/notices.cjs)
 desktop/build/icon.icns
 desktop/build/icon.png

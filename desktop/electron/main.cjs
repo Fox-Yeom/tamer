@@ -65,7 +65,7 @@ function logLine(line) {
   if (RECENT_LOG.length > RECENT_LOG_MAX) RECENT_LOG.shift();
 }
 
-// the user's own Claude statusLine, chained after cvim's (same as nvim/lua/cvim/init.lua)
+// the user's own Claude statusLine, chained after cvim's (as v1 did)
 function userStatusline() {
   try {
     const cmd = JSON.parse(fs.readFileSync(path.join(HOME, ".claude/settings.json"), "utf8"))?.statusLine?.command;
@@ -1355,7 +1355,7 @@ app.whenReady().then(() => {
 // closing the main window ends the app (the overlay alone doesn't keep it running)
 app.on("browser-window-created", (_e, w) => w.on("closed", () => { if (w === win && overlay && !overlay.isDestroyed()) overlay.destroy(); }));
 
-// same escaping iTerm2 uses for dropped paths (nvim/lua/cvim/drop.lua)
+// same escaping iTerm2 uses for dropped paths (as v1 did)
 function shellEscape(p) { return p.replace(/([\s!"#$&'()*,;<=>?[\]\\^`{|}~])/g, "\\$1"); }
 
 // the app menu: Edit (copy / paste for the terminals and text fields), Window, Quit. No Reload,

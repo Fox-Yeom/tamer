@@ -1,9 +1,8 @@
 // Pokémon sprites + names from PokéAPI, in the app itself (no Python / Pillow on the user's Mac).
-// Same picks and cache files as pokemon/fetch.py (the Neovim CVIM's), minus its pixel conversion:
-// the desktop app shows the original animated GIF.
+// Same picks and cache files as the v1 (Neovim CVIM, removed 2026-10-05) fetch.py, minus its pixel
+// conversion: the desktop app shows the original animated GIF.
 //   $CVIM_CACHE_DIR/pokemon/<id>[s].json  { id, shiny, name_ko, name_en, legendary, capture_rate, types }
 //   $CVIM_CACHE_DIR/pokemon/<id>[s].gif   Gen-V animated sprite
-// fetch.py fills in the pixel frames (`frames`) when the Neovim CVIM reads one of these later.
 // Pokémon assets are fetched at runtime and cached locally only (unofficial fan feature, POLICY 4.1).
 const fs = require("node:fs");
 const path = require("node:path");
@@ -103,7 +102,7 @@ async function fetchOne(id, shiny, info = null) {
 
 const shinyRoll = () => Math.floor(rng() * SHINY_ODDS) === 0;
 
-// fetch.py's command line, in process: ["random"] ["wild"] ["starter", …types] ["<id>", "shiny"?]
+// the commands (v1 fetch.py's command line): ["random"] ["wild"] ["starter", …types] ["<id>", "shiny"?]
 // ["evolve", "<id>"] → a JSON path / the next id as text / "" (offline, not found)
 async function run(args) {
   try {

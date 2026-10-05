@@ -18,6 +18,7 @@ const SPRITES = path.join(DEV, "ui-sprites");
 function buildTestApp() {
   const pack = require(path.join(ROOT, "package.json")).scripts["electron:pack"]
     .replace("--out=out", `--out=${path.join(WORK, "build")}`)
+    .replace("node scripts/prune-locales.cjs out/Tamer-darwin-arm64/Tamer.app", `node scripts/prune-locales.cjs "${APP}"`)
     .replace("node scripts/fuses.cjs", `node scripts/fuses.cjs "${APP}"`)
     .replace(/node scripts\/sign\.cjs \S+/, `node scripts/sign.cjs "${APP}"`);
   execSync(pack, { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, PATH: `${ROOT}/node_modules/.bin:${process.env.PATH}` } });
@@ -149,12 +150,12 @@ function userTamerRunning() {
 // mode "direct": the binary (folders via CVIM_DESKTOP_DIRS) · "open": like dropping the folders on
 // the app to launch it (LaunchServices, in the background) · "late": launched empty, the folders
 // handed in `lateMs` after the app logged its first line (a drop on the Dock icon while it starts)
-function launch({ env, mode = "direct", folders = [], lateMs = 300, until = "lab-done", timeoutMs = 60000 }) {
+function launch({ env, mode = "direct", folders = [], lateMs = 300, until = "lab-done", timeoutMs = 60000, args = [] }) {
   const log = env.CVIM_DESKTOP_LOG;
   const kill = () => { try { execFileSync("pkill", ["-f", `${BIN}$`]); } catch {} };
   kill(); // a leftover test instance (ours only: matched by the test build's path)
   if (mode === "direct") {
-    spawn(BIN, [], { env: { ...process.env, ...env, ...(folders.length ? { CVIM_DESKTOP_DIRS: folders.join(":") } : {}) }, stdio: "ignore", detached: true }).unref();
+    spawn(BIN, args, { env: { ...process.env, ...env, ...(folders.length ? { CVIM_DESKTOP_DIRS: folders.join(":") } : {}) }, stdio: "ignore", detached: true }).unref();
   } else {
     const args = ["-g", "-n", "-a", APP, ...Object.entries(env).flatMap(([k, v]) => ["--env", `${k}=${v}`])];
     execFileSync("open", mode === "open" ? [...args, ...folders] : args);

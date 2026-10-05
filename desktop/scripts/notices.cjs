@@ -33,7 +33,7 @@ function npm(name) {
   for (const dep of Object.keys(pkg.dependencies || {})) npm(dep);
 }
 const app = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8"));
-for (const dep of Object.keys(app.dependencies || {}).filter((d) => !d.startsWith("@tauri-apps/"))) npm(dep); // tauri: not in the Electron app
+for (const dep of Object.keys(app.dependencies || {})) npm(dep);
 const electron = JSON.parse(fs.readFileSync(path.join(ROOT, "node_modules/electron/package.json"), "utf8"));
 parts.push({ name: `electron@${electron.version}`, license: "MIT", text: fs.readFileSync(path.join(ROOT, "node_modules/electron/dist/LICENSE"), "utf8").trim() + "\n\n(Chromium and its components: see LICENSES.chromium.html next to this file)" });
 

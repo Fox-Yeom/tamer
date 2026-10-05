@@ -247,4 +247,41 @@ module.exports = [
       { key: "f", mods: 4 }, { wait: 300 }, { text: "ALTMARK" }, { wait: 500 }, { probe: "alt" }, { grep: "ALTMARK" }],
     check: ({ probe }) => [ok(probe.alt?.tsearch?.alt === true, `대체 화면인데 안내가 없음 (${JSON.stringify(probe.alt?.tsearch)})`), ok(/^1\/1$/.test(probe.alt?.tsearch?.n || ""), `보이는 단어 결과 ${probe.alt?.tsearch?.n}`)],
   },
+  // ── app size (D1): only en / ko language files are shipped ──
+  {
+    id: "locale-fallback", tags: ["smoke", "launch"], what: "지운 언어(일본어)로 설정된 맥: 영어로 대체해 정상 실행, 폴더 탭·한글 화면 그대로 (D1)",
+    data: "owner", mode: "direct", folders: ["proj"], args: ["--lang=ja"],
+    steps: [{ until: "tabs.0" }, { wait: 800 }, { probe: "after" }],
+    check: ({ probe, log }) => [ok(probe.after?.tabs?.[0] === "proj", "탭이 안 열림"), ok(!/lab-error/.test(log), "오류")],
+  },
+  // ── which agent program runs (#42) ──
+  {
+    id: "codex-path-first", tags: ["smoke", "agents"], what: "Codex는 터미널과 같은 PATH의 codex를 먼저(--version에 답하면) — Codex 앱 안의 구버전보다 (#42)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
+    files: { "fakebin/codex": "#!/bin/sh\necho 'codex-cli 9.9.9-lab'\n" },
+    steps: [{ until: "tabs.0" }, { invoke: "agents_status", log: true }],
+    check: ({ log, box }) => {
+      const st = JSON.parse(log.match(/^lab-invoke agents_status (.*)$/m)?.[1] || "{}");
+      const at = st.list?.find((a) => a.key === "codex")?.path;
+      return [ok(at === path.join(box.dir, "fakebin/codex"), `Codex 경로 ${at}`)];
+    },
+  },
+  {
+    id: "codex-broken-wrapper", tags: ["smoke", "agents"], what: "PATH의 codex가 실행되지 않으면(실행 파일 빠진 npm 설치) 건너뜀 (#42)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
+    files: { "fakebin/codex": "#!/bin/sh\necho 'missing optional dependency' >&2\nexit 1\n" },
+    steps: [{ until: "tabs.0" }, { invoke: "agents_status", log: true }],
+    check: ({ log, box }) => {
+      const st = JSON.parse(log.match(/^lab-invoke agents_status (.*)$/m)?.[1] || "{}");
+      const at = st.list?.find((a) => a.key === "codex")?.path;
+      return [ok(at !== path.join(box.dir, "fakebin/codex"), `실행 안 되는 codex를 고름 (${at})`)];
+    },
+  },
+  {
+    id: "shell-env-dump", tags: ["explore", "agents"], what: "Dock에서 켠 것처럼(open) 실행한 Tamer 셸의 환경 변수 — 터미널과 다른 것을 보기 위한 기록 (#42)",
+    data: "owner", mode: "open", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "env | sort > env.txt" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { probe: "done" }],
+    check: ({ box }) => [ok(fs.existsSync(path.join(box.folder("proj"), "env.txt")), "env.txt가 안 생김")],
+  },
 ];

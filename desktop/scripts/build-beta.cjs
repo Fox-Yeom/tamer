@@ -43,11 +43,12 @@ async function build(arch, id) {
       path.join(ROOT, "build", "THIRD_PARTY_NOTICES.txt"), path.join(ROOT, "node_modules", "electron", "dist", "LICENSES.chromium.html")],
     asar: { unpack: "**/node_modules/node-pty/**" },
     // the arm64 build/Release/pty.node would be tried first on Intel: x64 uses node-pty's prebuild
-    ignore: [/^\/src-tauri/, /^\/src$/, /^\/out/, /^\/core-rs/, /^\/scripts/, /^\/test/, /^\/build/, ...(arch === "x64" ? [/^\/node_modules\/node-pty\/build/] : []),
+    ignore: [/^\/src$/, /^\/out/, /^\/core-rs/, /^\/scripts/, /^\/test/, /^\/build/, ...(arch === "x64" ? [/^\/node_modules\/node-pty\/build/] : []),
       // other platforms' node-pty binaries
       new RegExp(`^/node_modules/node-pty/prebuilds/(?!darwin-${arch})`)],
   });
   const app = path.join(dir, "Tamer.app");
+  require("./prune-locales.cjs").prune(app); // only en / ko (D1) — before the fuses and the signature
   await flipFuses(app, {
     version: FuseVersion.V1, resetAdHocDarwinSignature: !id,
     [FuseV1Options.RunAsNode]: false,

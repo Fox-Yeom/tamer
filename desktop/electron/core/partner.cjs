@@ -7,7 +7,7 @@
 // A folder without a partner shows an empty state (2026-10-02 decision).
 // box.json holds the individuals; folders.json keeps a mirror (id, shiny, xp …, uid) so the
 // Neovim CVIM still shows and levels the partner (it can't change partners any more).
-// Sprites come from PokéAPI (pokeapi.cjs, same picks as pokemon/fetch.py; local cache only).
+// Sprites come from PokéAPI (pokeapi.cjs; local cache only).
 const fs = require("node:fs");
 const path = require("node:path");
 const { CACHE, readJson, writeJson, updateJson } = require("./paths.cjs");
@@ -24,7 +24,7 @@ const RECENT_HOURS = 24; // the dex "새로 잡은" row
 
 const spriteBase = (id, shiny) => path.join(SPRITES, `${id}${shiny ? "s" : ""}`);
 
-// fetch.py's commands, run in the app (pokeapi.cjs): a cached JSON path / next id / "" (offline)
+// pokeapi.cjs commands: a cached JSON path / next id / "" (offline)
 const fetchPy = (args) => pokeapi.run(args);
 
 function loadSprite(id, shiny) {
@@ -36,7 +36,7 @@ function loadSprite(id, shiny) {
     gif: fs.existsSync(base + ".gif") ? base + ".gif" : null };
 }
 
-// Pokédex record, same shape as nvim/lua/cvim/pokemon.lua record_dex (shiny only when true).
+// Pokédex record, same shape as v1's record_dex (shiny only when true).
 // `caught: false` = seen in the wild but not caught; no field (older records, partners) = caught.
 // Only caught ones can become a partner, and ✨ counts only when a shiny one was caught.
 function recordDex(sprite, caught = true) {
@@ -161,7 +161,7 @@ function progress(cwd) {
   return m ? { xp: m.xp || 0, toEvolve: m.final ? null : Math.max(0, EVOLVE_EVERY - (m.since_evo || 0)), uid: m.uid } : { xp: 0, toEvolve: null };
 }
 
-// ── the first partner: 3 starters (different first types, unevolved, not legendary — fetch.py
+// ── the first partner: 3 starters (different first types, unevolved, not legendary — pokeapi.cjs
 // starter), offered once while the box is empty ─────────────────────────────────────────────
 const boxEmpty = () => readBox().mons.length === 0;
 const starterSet = () => ({ set: readJson(STARTER, {}).set || [] });

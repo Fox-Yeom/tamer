@@ -2620,7 +2620,10 @@ async function labRun(steps) {
       else if (s.shot) await invoke("shot_test", { name: s.shot });
       else if (s.ime != null) await invoke("ime_compose", { text: s.ime }); // Hangul being composed
       else if (s.text != null) await invoke("ime_commit", { text: s.text }); // text committed (typed / IME done)
-      else if (s.invoke) await invoke(s.invoke, JSON.parse(JSON.stringify(s.args || {}).replaceAll('"$ws"', JSON.stringify(active?.id || "")))); // a test command; "$ws" = the current tab
+      else if (s.invoke) { // a command (test commands too); "$ws" = the current tab; log: its answer into the log
+        const r = await invoke(s.invoke, JSON.parse(JSON.stringify(s.args || {}).replaceAll('"$ws"', JSON.stringify(active?.id || ""))));
+        if (s.log) await log(`lab-invoke ${s.invoke} ${JSON.stringify(r)}`);
+      }
       else if (s.grep) { // the lines of the big pane's whole buffer (scrollback included) that contain it
         const t = bigPane(active).term, b = t.buffer.active, rows = [];
         for (let y = 0; y < b.length; y++) { const l = b.getLine(y)?.translateToString(true) || ""; if (l.includes(s.grep)) rows.push(y); }

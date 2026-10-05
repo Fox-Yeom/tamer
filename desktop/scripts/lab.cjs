@@ -40,8 +40,12 @@ if (!picked.length) { console.error("no case matches"); process.exit(1); }
     const env = { ...box.env, ...(c.env || {}), CVIM_LAB_STEPS: JSON.stringify(c.steps) };
     if (c.offline) env.CVIM_TEST_OFFLINE = "1";
     if (c.slowShell) env.SHELL = T.slowShell(box.dir, c.slowShell);
+    // files the case puts in its sandbox ({ "fakebin/codex": "#!/bin/sh …" }, made executable) and
+    // folders put first on PATH (a fake program shadowing the real one)
+    for (const [f, text] of Object.entries(c.files || {})) { const p = path.join(box.dir, f); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text, { mode: 0o755 }); }
+    if (c.pathFirst) env.PATH = [...c.pathFirst.map((d) => path.join(box.dir, d)), process.env.PATH].join(":");
     const t0 = Date.now();
-    const { log, timedOut } = await T.launch({ env, mode: c.mode, folders: (c.folders || []).map((f) => box.folder(f)), lateMs: v.lateMs ?? 300, timeoutMs: (c.timeoutMs || 60000) + (c.slowShell || 0) * 1000 });
+    const { log, timedOut } = await T.launch({ env, mode: c.mode, folders: (c.folders || []).map((f) => box.folder(f)), lateMs: v.lateMs ?? 300, args: c.args || [], timeoutMs: (c.timeoutMs || 60000) + (c.slowShell || 0) * 1000 });
     const probe = {};
     for (const m of log.matchAll(/^lab-probe (\S+) \+(\d+)ms (\{.*\})$/gm)) { try { probe[m[1]] = { ...JSON.parse(m[3]), _ms: Number(m[2]) }; } catch {} }
     let fails = [];

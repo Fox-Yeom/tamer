@@ -1,4 +1,4 @@
-// Agent registry (port of nvim/lua/cvim/agents.lua). Choice file ~/.cache/tamer/agents.json (same
+// Agent registry (ported from v1). Choice file ~/.cache/tamer/agents.json (same
 // format as the Neovim CVIM's). User additions: ~/.cvim/agents.json (JSON; the Lua file can't be read here)
 //   { "aider": { "name": "Aider", "icon": "⌘", "cmd": ["aider"], "state": "activity" } }
 //   state: "hooks" (Claude) | "codex_log" (Codex) | "activity" (anything else: working/idle only)
@@ -14,8 +14,10 @@ const DEFS = {
   claude: { name: "Claude Code", short: "Claude", icon: "✻", color: "#D97757", cmd: ["claude"], state: "hooks" },
   codex: {
     name: "Codex", short: "Codex", icon: "◎", color: "#10A37F", state: "codex_log",
-    // the npm wrapper can be installed without its native binary; the app's copy always works
-    cmd: ["/Applications/Codex.app/Contents/Resources/codex", "codex"],
+    // the user's own `codex` first — the one their terminal runs (#42: the Codex app's copy can be
+    // older, 0.152 vs 0.160 here, and it showed "Update available"). Only one that answers --version:
+    // the npm wrapper can be installed without its native binary — then the app's copy
+    cmd: ["codex", "/Applications/Codex.app/Contents/Resources/codex"], check: ["--version"],
   },
   // A2: official events, injected for CVIM's run only (agentEnv) — Gemini hooks, an OpenCode plugin
   gemini: { name: "Gemini CLI", short: "Gemini", icon: "✦", color: "#4F8DF7", cmd: ["gemini"], state: "hooks" },
@@ -120,13 +122,25 @@ function findExe(exe) {
   return null;
 }
 
-// first runnable candidate of the agent's command (with its arguments)
+// first runnable candidate of the agent's command (with its arguments). With `check`, the candidate
+// must also answer it (exit 0, within 4 s) — remembered per file and its modification time
+const answers = new Map();
+function answersCheck(p, check) {
+  let key;
+  try { key = `${p}:${fs.statSync(p).mtimeMs}`; } catch { return false; }
+  if (!answers.has(key)) {
+    let ok = false;
+    try { execFileSync(p, check, { timeout: 4000, stdio: "ignore", env: { ...process.env, PATH: shellPath() } }); ok = true; } catch {}
+    answers.set(key, ok);
+  }
+  return answers.get(key);
+}
 function bin(key) {
   const d = all()[key];
   if (!d) return null;
   for (const c of d.cmd || []) {
-    const exe = c.split(/\s+/)[0];
-    if (findExe(exe)) return c;
+    const p = findExe(c.split(/\s+/)[0]);
+    if (p && (!d.check || answersCheck(p, d.check))) return c;
   }
   return null;
 }
