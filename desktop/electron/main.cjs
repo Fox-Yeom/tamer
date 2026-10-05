@@ -251,6 +251,8 @@ function settleKill(p) {
 const shellSettled = (s) => new Promise((r) => setTimeout(r, s?.host && s.hostAt ? Math.max(0, SHELL_SETTLE - (Date.now() - s.hostAt)) : 0));
 
 async function startAgent(s, { cols, rows, resume = false }) {
+  if (ready) await ready; // the terminal's environment (PATH, API keys …) — read once, up to 15 s
+  if (agents.envFailed() && !envWarned) { envWarned = true; send("toast", { text: "셸 설정(~/.zshrc 등)을 15초 안에 읽지 못해, 에이전트가 일부 환경 변수 없이 실행될 수 있어요" }); }
   await s.opened;
   await shellSettled(s); // replacing the shell in the agent pane
   const fresh = await core.request("restart", { ws: s.id, kind: agents.stateOf(s.agent), cwd: s.cwd }); // the tab's folder again
@@ -305,6 +307,7 @@ function startHost(s, { cols, rows }) {
 
 // an agent typed into the host shell (or it ended): it is this session's agent now
 async function setHostAgent(s, d, cwd = null) {
+  if (d && ready) await ready; // which adapter fits (Gemini linked or not …) depends on the PATH
   s.hostKey = d?.key || null;
   s.running = !!d;
   if (d) {
@@ -456,6 +459,7 @@ function requestOpen(dir) {
   else pendingOpen.push(dir);
 }
 let uiReady = false;
+let envWarned = false;
 
 // ── changes panel (E1b): git status / diff / revert of the folder ─────────────
 // git runs with an argument list (no shell); only paths from the folder's current change list
@@ -659,7 +663,8 @@ function setShellAgent(ws, d, cwd = null) {
     // Codex: its session log; Claude (started by hand, no CVIM hooks): its conversation log (A2);
     // others: output
     // its logs are where it runs (after a `cd`, not necessarily the tab's folder) — #3
-    core.request("open", { ws: id, kind: typedKind(d), cwd: cwd || ws.cwd, tabs: TABS }).catch((e) => logLine(`shell core error ${e}`));
+    // which adapter fits depends on the PATH (Gemini linked …): after the shell environment
+    Promise.resolve(ready).then(() => core.request("open", { ws: id, kind: typedKind(d), cwd: cwd || ws.cwd, tabs: TABS })).catch((e) => logLine(`shell core error ${e}`));
     agents.remember(ws.cwd, d.key); // ⌘G offers it first next time
   }
   logLine(`shell-agent ws=${ws.id} ${d?.key || "-"}${cwd && cwd !== ws.cwd ? ` cwd=${cwd}` : ""}`);
@@ -1263,11 +1268,12 @@ app.setAboutPanelOptions({
   credits: "AI 코딩 에이전트와 함께 쓰는 터미널 · 피드백: " + FEEDBACK + "\n오픈소스 고지: Tamer 메뉴 → 오픈소스 고지\nPokémon은 비공식 팬 기능이며 권리는 Nintendo / Creatures / GAME FREAK / The Pokémon Company에 있습니다.",
 });
 
-// what the first screen needs doesn't wait for the shell environment (1–3 s with a heavy ~/.zshrc,
-// #31); everything that runs a shell or an agent, or talks to the core, does
-const NO_ENV = new Set(["app_info", "startup_mark", "log_line", "recent_dirs"]);
+// only agent work waits for the shell environment (up to 15 s with a heavy ~/.zshrc): finding an
+// agent (its PATH), starting one (its variables) — the window, tabs, shells and the core don't
+// (#31 #34 #35). startAgent waits too, for every other way an agent starts.
+const NEEDS_ENV = new Set(["agents_status", "agents_list", "agent_pick", "agent_start", "agent_fix", "diag_test"]);
 ipcMain.handle("host-invoke", async (e, cmd, args) => {
-  if (ready && !NO_ENV.has(cmd)) await ready; // the core runs and agents have the terminal's environment
+  if (ready && NEEDS_ENV.has(cmd)) await ready; // agents get the terminal's environment
   // only our own pages may call in: the main window (dist/index.html, every command) and the
   // overlay (dist/overlay.html, its own short list)
   const url = e.senderFrame?.url || "";
@@ -1289,10 +1295,14 @@ let ready = null;
 logLine(`startup main loaded +${since()}ms`);
 app.whenReady().then(() => {
   logLine(`startup app ready +${since()}ms`);
+  // the core starts at once (tabs and shells don't wait for the shell environment, #35); the
+  // agents' log folders follow when the environment has been read
+  core = new RustCore({ onEvent: onCoreEvent, log: logLine });
   const envT0 = since();
-  ready = agents.prepareEnv().then(() => {
-    core = new RustCore({ onEvent: onCoreEvent, log: logLine });
-    logLine(`env ready (${Object.keys(agents.loginEnv()).length} vars) +${since()}ms (shell env took ${since() - envT0}ms)`);
+  ready = agents.prepareEnv().then((env) => {
+    const homes = Object.fromEntries(["CODEX_HOME", "CLAUDE_CONFIG_DIR"].filter((k) => env[k] && !process.env[k]).map((k) => [k, env[k]]));
+    if (Object.keys(homes).length) core.request("set_env", homes).catch((e) => logLine(`core set_env error ${e}`));
+    logLine(`env ready (${Object.keys(agents.loginEnv()).length} vars) +${since()}ms (shell env took ${since() - envT0}ms)${agents.envFailed() ? " — READ FAILED: agents get PATH only" : ""}`);
   });
   appMenu();
   powerMonitor.on("shutdown", () => { systemShutdown = true; logLine("system shutdown: keeping the session"); });

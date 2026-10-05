@@ -2236,6 +2236,7 @@ listen("partner-progress", (e) => {
   else showProgress(t, e.payload);
 });
 listen("open-folder", (e) => openFolder(e.payload.cwd));
+listen("toast", (e) => toast(e.payload.text)); // from the main process (a shell environment that couldn't be read …)
 listen("select-tab", (e) => selectTab(byId.get(e.payload.ws))); // overlay click
 // a resumed agent that had nothing to continue: started fresh
 listen("agent-restarted", (e) => {

@@ -53,6 +53,17 @@ const STATES: [&str; 14] = [
 impl Core {
     fn handle(&mut self, method: &str, p: &Value) -> Result<Value, String> {
         match method {
+            // where the agents keep their logs, as the user's shell sets it (CODEX_HOME,
+            // CLAUDE_CONFIG_DIR in their rc files): the app starts the core at once and tells it
+            // these when the shell environment has been read (#35). Only these two names.
+            "set_env" => {
+                for k in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
+                    if let Some(v) = p[k].as_str().filter(|v| !v.is_empty()) {
+                        std::env::set_var(k, v);
+                    }
+                }
+                Ok(Value::Null)
+            }
             "open" => {
                 let id = str_param(p, "ws")?;
                 let ws = Workspace::new(id, kind_param(p)?, Path::new(str_param(p, "cwd")?), Path::new(str_param(p, "tabs")?));

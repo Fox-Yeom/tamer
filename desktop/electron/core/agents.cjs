@@ -74,20 +74,26 @@ function userShell() {
 // how an interactive terminal starts it: a login shell where the shell allows it
 const shellArgs = (sh = userShell()) => (isCsh(sh) ? [] : ["-l"]);
 
+const ENV_WAIT = Number(process.env.CVIM_ENV_WAIT_MS) || 15000;
+let envFailed = false;
 function prepareEnv() {
   if (preparing) return preparing;
   const shell = userShell();
   // absolute paths: the shell's own syntax (fish, nu, csh …) doesn't matter
   const script = `/usr/bin/printf '\\n${MARK}\\n'; /usr/bin/env -0`;
   preparing = (async () => {
-    const out = await run(shell, isCsh(shell) ? ["-c", script] : ["-l", "-i", "-c", script], 3000);
+    // up to 15 s: a heavy ~/.zshrc (nvm, pyenv, conda …) can take long, and since #34/#35 nothing on
+    // screen waits for this — only starting an agent does. 3 s cut slow shells off and agents then
+    // ran with PATH alone (their API keys, proxies … from the rc files missing)
+    const out = await run(shell, isCsh(shell) ? ["-c", script] : ["-l", "-i", "-c", script], ENV_WAIT);
     if (out != null && out.includes(`${MARK}\n`)) {
       const body = out.slice(out.lastIndexOf(`${MARK}\n`) + MARK.length + 1); // rc files may print first
       const env = Object.fromEntries(body.split("\0").filter((kv) => kv.includes("=")).map((kv) => [kv.slice(0, kv.indexOf("=")), kv.slice(kv.indexOf("=") + 1)]));
       // plus the usual places after it (an agent installed where this shell's config doesn't look)
       if (env.PATH) return (termEnv = { ...env, PATH: [...new Set(usualPath(env.PATH).split(":"))].join(":") });
     }
-    const login = isCsh(shell) ? null : await run(shell, ["-l", "-c", "/usr/bin/printenv PATH"], 2000);
+    const login = isCsh(shell) ? null : await run(shell, ["-l", "-c", "/usr/bin/printenv PATH"], 5000);
+    envFailed = true; // the rc files' variables are missing: say so (log, diagnostics, a toast when an agent starts)
     return (termEnv = { PATH: usualPath(login || "") });
   })();
   return preparing;
@@ -217,4 +223,4 @@ function next(key) {
 
 const label = (key) => `${get(key).icon} ${get(key).name}`;
 
-module.exports = { all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };
+module.exports = { envFailed: () => envFailed, all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };

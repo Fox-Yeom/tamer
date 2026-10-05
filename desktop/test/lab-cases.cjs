@@ -81,13 +81,13 @@ module.exports = [
     check: ({ probe, log }) => [ok(probe.at1s?.start, "1초 때 시작 화면이 없음"), ok((startup(log, "start screen on screen") ?? 1e9) < 1000, `시작 화면이 보인 시각 ${startup(log, "start screen on screen")}ms`), ok((envMs(log) ?? 0) >= 3000, `셸 환경 ${envMs(log)}ms (느린 셸이 안 걸림)`)],
   },
   {
-    id: "slow-shell-env", tags: ["explore", "slow-shell"], what: "셸 시작이 3초 넘게 걸리면 에이전트가 받는 환경 변수(PATH·API 키 …)가 온전한가",
+    id: "slow-shell-env", tags: ["smoke", "slow-shell"], what: "셸 시작이 4초 걸려도 에이전트가 받을 환경 변수(PATH·API 키 …)가 온전 (#34)",
     data: "empty", slowShell: 4, mode: "direct", folders: [],
     steps: [{ wait: 8000 }, { probe: "later" }],
     check: ({ log }) => { const n = Number(log.match(/env ready \((\d+) vars\)/)?.[1] || 0); return [ok(n > 10, `환경 변수 ${n}개만 받음 (셸 환경 읽기 시간 초과)`)]; },
   },
   {
-    id: "slow-shell-folder", tags: ["explore", "slow-shell"], what: "셸 시작이 3초 걸리는 맥에 폴더를 넘겨 실행 — 기다리는 동안 무엇이 보이나",
+    id: "slow-shell-folder", tags: ["smoke", "slow-shell"], what: "셸 시작이 3초 걸리는 맥에 폴더를 넘겨 실행 → 셸 준비 전에도 탭이 보임 (#35)",
     data: "owner", slowShell: 3, mode: "direct", folders: ["proj"],
     steps: [{ wait: 1000 }, { probe: "at1s" }, { until: "tabs.0", timeout: 20000 }, { wait: 500 }, { probe: "tab" }],
     check: ({ probe }) => [
@@ -95,6 +95,12 @@ module.exports = [
       ok(probe.tab?.tabs?.[0] === "proj", "탭이 안 열림"),
       ok(probe.at1s?.tabs?.length > 0, "기다리는 동안 빈 창(탭도 안내도 없음)"),
     ],
+  },
+  {
+    id: "env-read-fails", tags: ["smoke", "slow-shell"], what: "셸 환경을 끝내 못 읽으면(시간 초과) 기록에 남기고 앱은 정상 (#34)",
+    data: "owner", slowShell: 6, env: { CVIM_ENV_WAIT_MS: "2000" }, mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0", timeout: 15000 }, { wait: 9000 }, { probe: "after" }],
+    check: ({ probe, log }) => [ok(/READ FAILED/.test(log), "읽기 실패가 기록에 없음"), ok(probe.after?.tabs?.[0] === "proj", "탭이 안 열림")],
   },
   {
     id: "slow-shell-late-drop", tags: ["explore", "slow-shell", "timing"], what: "느린 셸 + 켜지는 중에 폴더",
