@@ -38,7 +38,21 @@ if (!lab || lab.head !== git(["rev-parse", "HEAD"]) || lab.dirty || !lab.smoke) 
   process.exit(1);
 }
 
-// --check: only the checks above (pushed, lab passed) — nothing is built, uploaded or edited
+// README is the testers' feature guide (per-version notes live in the releases): a version with a
+// "새 기능:" line must come with a README change since the last release. --readme-ok: checked, nothing to add
+{
+  const notesOf = (v) => (fs.readFileSync(path.join(ROOT, "..", "docs", "CHANGELOG.md"), "utf8").split(/^## /m).find((s) => s.startsWith(v + " ")) || "");
+  const last = (() => { try { return gh(["release", "list", "-R", REPO, "--limit", "1", "--json", "tagName", "-q", ".[0].tagName"]).trim(); } catch { return ""; } })();
+  if (last && last !== TAG && /^- 새 기능:/m.test(notesOf(version)) && !process.argv.includes("--readme-ok")) {
+    git(["fetch", "-q", "origin", "tag", last]);
+    if (!git(["diff", "--name-only", last, "HEAD", "--", "README.md"])) {
+      console.error(`${TAG} has new features but README.md hasn't changed since ${last} — add them to the README (features, shortcuts, data, known issues), or --readme-ok if nothing belongs there`);
+      process.exit(1);
+    }
+  }
+}
+
+// --check: only the checks above (pushed, lab passed, README) — nothing is built, uploaded or edited
 if (process.argv.includes("--check")) { console.log(`ready to release ${TAG}: pushed, the lab passed on this commit`); process.exit(0); }
 
 // a version is released once (docs/VERSIONING.md): its tag and DMGs are never replaced. A release
