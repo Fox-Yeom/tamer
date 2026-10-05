@@ -18,7 +18,8 @@
     "release": "node scripts/release.cjs",
     "bump": "node scripts/bump.cjs",
     "ui:shots": "node scripts/ui-shots.cjs",
-    "ui:impact": "node scripts/ui-impact.cjs"
+    "ui:impact": "node scripts/ui-impact.cjs",
+    "firstrun": "node scripts/first-run.cjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
