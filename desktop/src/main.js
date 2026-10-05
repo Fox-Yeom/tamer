@@ -489,8 +489,13 @@ async function startHost(tab, sess = curSession(tab)) {
 const agentOn = (tab) => !!tab && ((tab.swapped && !!tab.shellAgent) || !!curSession(tab)?.running);
 
 // resume: session restore — the agent picks up the folder's last conversation
+let opening = 0; // folders being opened (the start screen mustn't come up over them)
 async function openFolder(cwd, { resume = false } = {}) {
   hideStart();
+  opening++;
+  try { return await openFolderNow(cwd, { resume }); } finally { opening--; }
+}
+async function openFolderNow(cwd, { resume }) {
   const ws = await invoke("workspace_open", { cwd });
   if (ws.existing && byId.has(ws.id)) {
     selectTab(byId.get(ws.id));
@@ -1904,6 +1909,8 @@ let recentCount = 0;
 
 async function showStart(required) {
   const recent = await invoke("recent_dirs");
+  // a folder handed to the app (dropped on it to launch it) may be opening meanwhile: not over it
+  if (required && (tabs.length || opening)) return void invoke("startup_mark", { what: "start screen skipped (folder opening)" });
   recentCount = recent.length;
   const ol = $("#recent");
   ol.innerHTML = recent.length ? "" : '<li class="dim">아직 최근 폴더가 없어요</li>';
@@ -3209,7 +3216,7 @@ async function main() {
   invoke("startup_mark", { what: tabs.length ? "ui first tab shown" : "ui start screen shown" });
   // first launch: which agents CVIM sees (once)
   // not in tests (first_run: a first launch as it is)
-  invoke("agents_status").then((st) => { if (!st.seen && (!Object.keys(info.test).length || info.test.first_run)) openAgents(); });
+  invoke("agents_status").then((st) => { if (!st.seen && (!Object.keys(info.test).length || info.test.first_run || info.test.first_launch)) openAgents(); });
   if (info.test.switch_test && active) switchTest(active);
   if (info.test.tabs_test) tabsTest();
   if (info.test.poke_test) pokemonTest();
@@ -3496,6 +3503,12 @@ async function main() {
   }, 6000);
   if (info.test.ui_scenes) uiScenes(info.test.ui_scenes);
   if (info.test.first_run) firstRunTest();
+  // a folder dropped on the app to launch it (#31 follow-up): after the dust settles, what's on screen
+  if (info.test.drop_check) setTimeout(async () => {
+    await invoke("log_line", { line: `drop-check tabs=${tabs.map((t) => base(t.cwd)).join(",")} start=${startOpen()} choose=${chooseOpen()} agents=${agentsOpen()} active=${active ? base(active.cwd) : "-"}` });
+    await invoke("shot_test", { name: "drop" });
+    invoke("log_line", { line: "autotype done" });
+  }, 7000);
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();

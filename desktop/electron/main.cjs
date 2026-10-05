@@ -866,6 +866,8 @@ const commands = {
         cost_test: !!process.env.CVIM_DESKTOP_COST_TEST, // ≈$ for a Claude typed in the shell (#23)
         box_test: !!process.env.CVIM_DESKTOP_BOX_TEST, // "내 포켓몬" (#27)
         choose_shot: !!process.env.CVIM_DESKTOP_CHOOSE_SHOT, // the partner dialog, captured (UI checks)
+        first_launch: !!process.env.CVIM_DESKTOP_FIRST_LAUNCH, // as a first launch (the agents dialog), nothing scripted
+        drop_check: !!process.env.CVIM_DESKTOP_DROP_CHECK, // a folder dropped on the app to launch it
         first_run: !!process.env.CVIM_DESKTOP_FIRST_RUN, // a new user's first launch (agents dialog + first partner)
         ui_scenes: UI_SCENES, // npm run ui:shots: "newuser" / "owner" scene sets
         keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
