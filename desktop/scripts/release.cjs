@@ -45,7 +45,7 @@ if (!lab || lab.head !== git(["rev-parse", "HEAD"]) || lab.dirty || !lab.smoke) 
   const last = (() => { try { return gh(["release", "list", "-R", REPO, "--limit", "1", "--json", "tagName", "-q", ".[0].tagName"]).trim(); } catch { return ""; } })();
   if (last && last !== TAG && /^- 새 기능:/m.test(notesOf(version)) && !process.argv.includes("--readme-ok")) {
     git(["fetch", "-q", "origin", "tag", last]);
-    if (!git(["diff", "--name-only", last, "HEAD", "--", "README.md"])) {
+    if (!git(["diff", "--name-only", last, "HEAD", "--", ":(top)README.md"])) { // the repo's README, not desktop/README.md
       console.error(`${TAG} has new features but README.md hasn't changed since ${last} — add them to the README (features, shortcuts, data, known issues), or --readme-ok if nothing belongs there`);
       process.exit(1);
     }
