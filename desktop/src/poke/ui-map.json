@@ -35,7 +35,16 @@
     "agents": {
       "what": "에이전트 연결 창 (첫 실행 자동 · ⌘G → ⚙) — 포켓몬 창 위(z 26)",
       "entry": "openAgents",
-      "scenes": []
+      "scenes": [
+        "agents-window"
+      ]
+    },
+    "start": {
+      "what": "시작 화면 (폴더 없이 열 때 · 마지막 탭을 닫을 때 · ⌘T) — 최근 폴더·다른 폴더·홈",
+      "entry": "showStart",
+      "scenes": [
+        "start-screen"
+      ]
     },
     "main": {
       "what": "메인 창 상단 바(에이전트·폴더·상태·사용량)와 아래 단축키 줄 — 창 폭에 따라 줄어듦 (#38)",

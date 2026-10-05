@@ -63,6 +63,7 @@ function sandbox(name, { data = "empty", folders = ["proj"], session = null } = 
     // "legacy": the real-path layout (data under a fake home), so the first-run copy runs
     ...(legacy ? { CVIM_TEST_DATA_ROOT: path.join(dir, "home") } : { CVIM_CACHE_DIR: path.join(dir, "cache"), CVIM_STATE_DIR: path.join(dir, "state") }),
     CODEX_HOME: path.join(dir, "codex"), SHELL: testShell(dir),
+    CVIM_AGENTS_JSON: path.join(dir, "agents-user.json"), // the user's own registered agents (~/.cvim/agents.json): not read in tests
     CLAUDE_CONFIG_DIR: path.join(dir, "claudecfg"), CVIM_DESKTOP_USERDATA: path.join(dir, "profile"),
     CVIM_DESKTOP_SHOTS: path.join(dir, "shots"), CVIM_DESKTOP_LOG: path.join(dir, "log.txt"), CVIM_DESKTOP_QUIT_AFTER: "120000",
   };

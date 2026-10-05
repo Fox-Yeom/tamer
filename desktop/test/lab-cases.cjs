@@ -3,7 +3,8 @@
 // steps (src/main.js labRun) and the check. `vary` multiplies a case over values (timings …).
 //   data: "empty" | "newuser" | "owner"      mode: "direct" | "open" (dropped on the app) | "late"
 //   slowShell: seconds · offline: true · env: { … } · vary: { lateMs: [ … ] }
-//   steps: { wait } { until: "path" } { key } { click } { probe: "name" } { shot } { call }
+//   steps: { wait } { until: "path", match? } { key, code? } { click, button? } { probe: "name" } { shot } { call }
+//   { select: "text" } mouse-drags over that text in the big pane · { confirm: true | false } answers confirm()
 //   make: folders created but not handed in · session: last time's tabs (test-env sandbox)
 //   steps also: { ime: "하" } composing · { text } committed text · { key, mods: 4 (⌘) | 8 (⇧), commands } · { resize: [w, h] }
 //   check({ probe, log, v, box }) → a list: true = ok, a string = what went wrong (box.dir, box.data: the sandbox)
@@ -356,6 +357,235 @@ sleep 30
       ok(/host-agent \S+ codex kind=codex_log/.test(log), "셸 Codex가 세션 로그 방식으로 안 잡힘"),
       ok(probe.asking?.astate === "waiting", `승인 대기 중 상태 ${probe.asking?.astate} (입력 필요여야)`),
       ok(probe.answered?.astate === "thinking", `결과 뒤 상태 ${probe.answered?.astate} (생각 중이어야)`),
+    ],
+  },
+  {
+    id: "start-keys", tags: ["smoke", "tabs"], what: "시작 화면 키: 꼭 필요한 시작 화면은 Esc로 안 닫힘, ↑↓·Enter·숫자·h·o로 열기, ⌘T로 연 시작 화면은 Esc로 닫힘 (TAB-03)",
+    data: "owner", mode: "direct", folders: [], make: ["a", "b", "c", "home", "picked"],
+    env: { CVIM_DESKTOP_TEST_HOME: (box) => box.folder("home"), CVIM_DESKTOP_TEST_CHOOSE: (box) => box.folder("picked") },
+    setup: (box) => fs.writeFileSync(path.join(box.data, "recent_dirs"), [box.folder("c"), box.folder("b"), path.join(box.dir, "gone"), box.folder("a")].join("\n") + "\n"),
+    steps: [{ until: "start" }, { wait: 400 }, { probe: "first" }, { key: "Escape" }, { wait: 300 }, { probe: "esc0" },
+      { key: "ArrowDown" }, { key: "ArrowDown" }, { wait: 100 }, { probe: "sel" }, { key: "ArrowUp" }, { key: "j" }, { wait: 100 }, { probe: "selj" }, { key: "Enter" },
+      { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 500 },
+      { key: "t", mods: 4 }, { wait: 400 }, { probe: "t1" }, { key: "Escape" }, { wait: 300 }, { probe: "esc1" },
+      { key: "t", mods: 4 }, { wait: 400 }, { probe: "t2" }, { key: "2" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 500 },
+      { key: "t", mods: 4 }, { wait: 400 }, { key: "h" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 500 },
+      { key: "t", mods: 4 }, { wait: 400 }, { key: "o" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 }, { probe: "end" }],
+    check: ({ probe }) => [
+      ok(JSON.stringify(probe.first?.recent) === JSON.stringify(["c", "b", "a"]), `최근 폴더 ${JSON.stringify(probe.first?.recent)} (없는 폴더는 빠져야)`),
+      ok(probe.esc0?.start === true, "꼭 필요한 시작 화면이 Esc로 닫힘"),
+      ok(probe.sel?.startSel === 2 && probe.selj?.startSel === 2, `↓↓ ${probe.sel?.startSel} (2여야), ↑j ${probe.selj?.startSel} (2여야)`),
+      ok(probe.t1?.start === true && probe.esc1?.start === false && JSON.stringify(probe.esc1?.tabs) === '["a"]', `⌘T 시작 화면 ${probe.t1?.start}, Esc 뒤 ${probe.esc1?.start} 탭 ${JSON.stringify(probe.esc1?.tabs)}`),
+      ok(JSON.stringify(probe.t2?.recent) === JSON.stringify(["a", "c", "b"]), `연 폴더가 맨 앞으로 안 옴 ${JSON.stringify(probe.t2?.recent)}`),
+      ok(JSON.stringify(probe.end?.tabs) === JSON.stringify(["a", "c", "home", "picked"]), `탭 ${JSON.stringify(probe.end?.tabs)} (Enter→a, 2→c, h→홈, o→고른 폴더)`),
+      ok(probe.end?.start === false, "마지막에 시작 화면이 남음"),
+    ],
+  },
+  {
+    id: "recent-dirs", tags: ["smoke", "tabs", "data"], what: "최근 폴더: 10개까지, 없는 폴더 빠짐, 연 폴더는 맨 앞에 한 번만, last_dir (TAB-04)",
+    data: "owner", mode: "direct", folders: [], make: Array.from({ length: 12 }, (_, i) => `f${String(i + 1).padStart(2, "0")}`),
+    setup: (box) => fs.writeFileSync(path.join(box.data, "recent_dirs"), [...Array.from({ length: 11 }, (_, i) => box.folder(`f${String(i + 1).padStart(2, "0")}`)), path.join(box.dir, "gone")].join("\n") + "\n"),
+    steps: [{ until: "start" }, { wait: 400 }, { probe: "first" }, { key: "3" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 }],
+    check: ({ probe, box }) => {
+      const list = fs.readFileSync(path.join(box.data, "recent_dirs"), "utf8").split("\n").filter(Boolean).map((d) => path.basename(d));
+      const last = path.basename(fs.readFileSync(path.join(box.data, "last_dir"), "utf8").trim());
+      return [
+        ok(probe.first?.recent?.length === 10 && probe.first.recent[0] === "f01", `시작 화면 목록 ${JSON.stringify(probe.first?.recent)} (f01부터 10개)`),
+        ok(list[0] === "f03" && list.length === 10 && new Set(list).size === 10 && !list.includes("gone"), `recent_dirs ${JSON.stringify(list)}`),
+        ok(last === "f03", `last_dir ${last}`),
+      ];
+    },
+  },
+  {
+    id: "tab-keys", tags: ["smoke", "tabs"], what: "탭 키: ⌘1·⌘9(마지막)·⌘[ ⌘](끝에서 돌아감)·⌘W(같은 자리 탭으로, 마지막이면 시작 화면) (TAB-05)",
+    data: "owner", mode: "direct", folders: ["a", "b", "c"],
+    steps: [{ until: "tabs.2" }, { wait: 1500 }, { call: "closeDex" }, { wait: 300 },
+      { key: "1", mods: 4 }, { wait: 200 }, { probe: "k1" }, { key: "9", mods: 4 }, { wait: 200 }, { probe: "k9" },
+      { key: "[", mods: 4 }, { wait: 200 }, { probe: "prev" }, { key: "]", mods: 4 }, { key: "]", mods: 4 }, { wait: 200 }, { probe: "wrap" },
+      { call: "closeDex" }, { key: "w", mods: 4 }, { wait: 600 }, { probe: "w1" }, { call: "closeDex" }, { key: "w", mods: 4 }, { wait: 600 }, { call: "closeDex" }, { key: "w", mods: 4 }, { wait: 800 }, { probe: "w3" }],
+    check: ({ probe }) => [
+      ok(probe.k1?.active === "a" && probe.k9?.active === "c", `⌘1 ${probe.k1?.active} ⌘9 ${probe.k9?.active}`),
+      ok(probe.prev?.active === "b", `⌘[ ${probe.prev?.active}`),
+      ok(probe.wrap?.active === "a", `⌘] ⌘] ${probe.wrap?.active} (끝에서 처음으로)`),
+      ok(JSON.stringify(probe.w1?.tabs) === '["b","c"]' && probe.w1?.active === "b", `⌘W 뒤 탭 ${JSON.stringify(probe.w1?.tabs)} 현재 ${probe.w1?.active}`),
+      ok(probe.w3?.tabs?.length === 0 && probe.w3?.start === true, `마지막 탭을 닫은 뒤 ${JSON.stringify(probe.w3?.tabs)} 시작 화면 ${probe.w3?.start}`),
+    ],
+  },
+  {
+    id: "select-copy", tags: ["smoke", "terminal"], what: "터미널 글을 마우스로 끌어 고르면 복사·'복사됨' 알림 — 시험은 시스템 클립보드를 건드리지 않음 (TRM-04)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "echo lab-pick-4821" }, { wait: 200 }, { key: "Enter" }, { wait: 1000 }, { select: "lab-pick-4821" }, { wait: 300 }, { probe: "picked" }],
+    check: ({ probe, log }) => [
+      ok(/^copy_text "lab-pick-4821"$/m.test(log), `복사한 글 ${log.match(/^copy_text (.*)$/m)?.[1]}`),
+      ok(/복사됨 \(13자\)/.test(probe.picked?.toast || ""), `알림 ${probe.picked?.toast}`),
+    ],
+  },
+  {
+    id: "hand-pick", tags: ["smoke", "terminal"], what: "셸 1에서 고른 글을 레일에서 셸 2 우클릭 → 보내기: 출처 한 줄과 함께 셸 2에 입력·실행 (TRM-11)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 },
+      { key: "t", mods: 12 }, { wait: 2500 }, { key: "1", mods: 6 }, { wait: 500 }, { call: "focusShell" }, // ⌃⌘1: back to shell 1
+      { text: "echo lab-hand-7390" }, { wait: 200 }, { key: "Enter" }, { wait: 1000 }, { select: "lab-hand-7390" }, { wait: 300 },
+      { click: ".rail .sess:nth-of-type(2)", button: "right" }, { wait: 300 }, { probe: "menu" },
+      { key: "2" }, { wait: 1200 }, { probe: "sent" }, { key: "2", mods: 6 }, { wait: 500 }, { grep: "가져온 내용]" }, { grep: "lab-hand-7390" }],
+    check: ({ probe, log }) => [
+      ok((probe.menu?.menuItems || []).some((t) => /선택한 글 보내기 \(셸 1.*13자\)/.test(t)), `메뉴 ${JSON.stringify(probe.menu?.menuItems)}`),
+      ok(/셸 1.*→ 셸 2.*13자 보냄/.test(probe.sent?.toast || ""), `알림 ${probe.sent?.toast}`),
+      ok(/lab-grep 가져온 내용\] rows=\[\d.*text=".*\[셸 1/.test(log), "셸 2에 출처 줄이 없음"),
+      ok(/lab-grep lab-hand-7390 rows=\[\d/.test(log), "셸 2에 넘긴 글이 없음"),
+    ],
+  },
+  {
+    id: "activity-log", tags: ["smoke", "status"], what: "활동 기록: 새것부터, 이벤트마다 아이콘·이름·짧은 내용, 도구 뒤 줄(PostToolUse)은 없음 (STA-14)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
+    files: { "fakebin/codex": `#!/bin/sh
+[ "$1" = "--version" ] && { echo 'codex-cli 9.9.9-lab'; exit 0; }
+d="$CODEX_HOME/sessions/$(date +%Y/%m/%d)"; mkdir -p "$d"; f="$d/rollout-lab.jsonl"
+sleep 2
+printf '{"type":"session_meta","payload":{"cwd":"%s"}}\\n' "$(pwd -P)" > "$f"
+for l in '{"type":"event_msg","payload":{"type":"task_started"}}' \\
+  '{"type":"response_item","payload":{"type":"function_call","call_id":"a","name":"exec_command","arguments":"{\\"cmd\\":\\"rg needle src\\"}"}}' \\
+  '{"type":"response_item","payload":{"type":"reasoning"}}' \\
+  '{"type":"response_item","payload":{"type":"custom_tool_call","call_id":"b","name":"apply_patch","input":"*** Begin Patch\\n*** Update File: src/app.js\\n"}}' \\
+  '{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"all good"}}'; do printf '%s\\n' "$l" >> "$f"; done
+sleep 30
+` },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "codex" }, { wait: 200 }, { key: "Enter" }, { wait: 7000 }, { probe: "log" }],
+    check: ({ probe }) => {
+      const a = (probe.log?.activity || []).map((x) => x.trim());
+      return [
+        ok(a.length === 4, `줄 수 ${a.length} ${JSON.stringify(a)} (PostToolUse 없이 4줄)`),
+        ok(/^✅ Stop all good/.test(a[0] || ""), `첫 줄(가장 새것) ${a[0]}`),
+        ok(/^✏️ Edit app\.js/.test(a[1] || "") || /^✏️ Edit src\/app\.js/.test(a[1] || ""), `둘째 줄 ${a[1]}`),
+        ok(/^📖 Grep rg needle src/.test(a[2] || ""), `셋째 줄 ${a[2]}`),
+        ok(/^💬 UserPromptSubmit/.test(a[3] || ""), `넷째 줄 ${a[3]}`),
+      ];
+    },
+  },
+  {
+    id: "agent-swap", tags: ["smoke", "agents"], what: "⌘G: 실행 중인 것과 같은 에이전트는 그대로(포커스만), 다른 것은 확인 — 취소면 그대로, 확인이면 교체 (AGT-03)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
+    files: { "fakebin/claude": "#!/bin/sh\necho \"fake-claude args: $*\"\nsleep 60\n", "fakebin/codex": "#!/bin/sh\n[ \"$1\" = \"--version\" ] && { echo 'codex-cli 9.9.9-lab'; exit 0; }\necho \"fake-codex args: $*\"\nsleep 60\n" },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 },
+      { key: "g", mods: 4 }, { wait: 500 }, { probe: "menu0" }, { key: "1" }, { wait: 2500 }, { probe: "claude" },
+      { key: "g", mods: 4 }, { wait: 500 }, { probe: "menu1" }, { key: "1" }, { wait: 800 }, { probe: "stay" },
+      { confirm: false }, { key: "g", mods: 4 }, { wait: 500 }, { key: "2" }, { wait: 1500 }, { probe: "cancel" },
+      { confirm: true }, { key: "g", mods: 4 }, { wait: 500 }, { key: "2" }, { wait: 2500 }, { probe: "swapped" }],
+    check: ({ probe, log }) => {
+      const starts = log.split("\n").filter((l) => /^agent-start /.test(l));
+      return [
+        ok(/Claude/.test(probe.menu0?.menuItems?.[0] || "") && /Codex/.test(probe.menu0?.menuItems?.[1] || ""), `⌘G 목록 ${JSON.stringify(probe.menu0?.menuItems)}`),
+        ok(probe.claude?.agent === "claude", `처음 고른 에이전트 ${probe.claude?.agent}`),
+        ok(/실행 중/.test(probe.menu1?.menuItems?.[0] || ""), `실행 중 표시 없음 ${probe.menu1?.menuItems?.[0]}`),
+        ok(/Claude[^\n]*은\(는\) 이미 실행 중이에요/.test(probe.stay?.toast || ""), `같은 에이전트 알림 ${probe.stay?.toast}`),
+        ok(/^lab-confirm false 지금 에이전트를 끝내고 Codex\(으\)로 바꿀까요\?$/m.test(log), "취소한 확인 문구가 다름/없음"),
+        ok(probe.cancel?.agent === "claude", `취소 뒤 에이전트 ${probe.cancel?.agent}`),
+        ok(probe.swapped?.agent === "codex", `확인 뒤 에이전트 ${probe.swapped?.agent}`),
+        ok(starts.length === 2 && /claude/.test(starts[0]) && /codex/.test(starts[1]), `에이전트 시작 ${starts.length}번 (claude 1 → codex 1 이어야): ${starts.join(" | ")}`),
+      ];
+    },
+  },
+  {
+    id: "agent-registered", tags: ["smoke", "agents"], what: "등록한 에이전트(agents.json): ⌘G 목록·연결 창에 나오고, 셸에서 치면 출력 기준(activity)으로 따라감 (AGT-12)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
+    files: { "agents-user.json": JSON.stringify({ labagent: { name: "LabAgent", icon: "⌘", cmd: ["labagent"], state: "activity" }, plain: { cmd: "plainagent" } }),
+      "fakebin/labagent": "#!/bin/sh\necho lab agent running\nsleep 30\n", "fakebin/plainagent": "#!/bin/sh\nsleep 30\n" },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 },
+      { invoke: "agents_status", log: true }, { key: "g", mods: 4 }, { wait: 500 }, { probe: "menu" }, { key: "Escape" }, { wait: 300 },
+      { call: "focusShell" }, { text: "labagent" }, { wait: 200 }, { key: "Enter" }, { wait: 3500 }, { probe: "typed" }],
+    check: ({ probe, log }) => {
+      const st = JSON.parse(log.match(/^lab-invoke agents_status (.*)$/m)?.[1] || "{}");
+      const lab = st.list?.find((a) => a.key === "labagent"), plain = st.list?.find((a) => a.key === "plain");
+      return [
+        ok(lab?.name === "LabAgent" && lab?.level === "basic", `연결 창 ${JSON.stringify(lab)}`),
+        ok(plain?.name === "plain", `기본값(이름 = 키) ${JSON.stringify(plain)}`),
+        ok((probe.menu?.menuItems || []).some((t) => /LabAgent/.test(t)), `⌘G 목록 ${JSON.stringify(probe.menu?.menuItems)}`),
+        ok(/host-agent \S+ labagent kind=activity/.test(log) || /shell-agent \S+ labagent kind=activity/.test(log), `셸에서 친 등록 에이전트가 activity로 안 잡힘 (${log.match(/^(host|shell)-agent .*/m)?.[0]})`),
+        ok(probe.typed?.agent === "labagent", `큰 칸 에이전트 ${probe.typed?.agent}`),
+      ];
+    },
+  },
+  {
+    id: "guessed-done", tags: ["agents", "poke"], what: "이벤트 없는 에이전트: 오래 출력하다 조용해지면 완료 추정 — EXP는 두 번에 한 번, 야생 없음 (AGT-13, STA-06)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], timeoutMs: 110000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    files: { "agents-user.json": JSON.stringify({ labagent: { name: "LabAgent", cmd: ["labagent"], state: "activity" } }),
+      "fakebin/labagent": "#!/bin/sh\nfor round in 1 2; do i=0; while [ $i -lt 46 ]; do echo \"working $round.$i\"; i=$((i+1)); sleep 0.5; done; sleep 8; done\nsleep 30\n" },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "labagent" }, { wait: 200 }, { key: "Enter" }, { wait: 12000 }, { probe: "working" }, { wait: 50000 }, { probe: "end" }],
+    check: ({ probe, log }) => {
+      const lines = log.split("\n");
+      const g1 = lines.findIndex((l) => /^guessed done ws=\S+ n=1$/.test(l)), g2 = lines.findIndex((l) => /^guessed done ws=\S+ n=2$/.test(l));
+      const exps = lines.map((l, i) => (/^exp ws=/.test(l) ? i : -1)).filter((i) => i >= 0);
+      return [
+        ok(probe.working?.astate === "thinking", `출력 중 상태 ${probe.working?.astate} (생각 중이어야)`),
+        ok(g1 >= 0 && g2 > g1, `추정 완료 기록 n=1 ${g1}, n=2 ${g2}`),
+        ok(exps.length === 1 && exps[0] > g2, `EXP ${exps.length}번 (두 번째 추정 완료 뒤 한 번이어야)`),
+        ok(!/^wild appeared/m.test(log), "추정 완료에 야생이 나옴"),
+      ];
+    },
+  },
+  {
+    id: "restore-resume-codex", tags: ["smoke", "restore", "agents"], what: "복원: Codex는 resume --last로 잇고, 5초 안에 끝나면(이을 대화 없음) 새로 시작·알림 (AGT-15)",
+    data: "owner", mode: "direct", folders: [], make: ["a"], session: { tabs: ["a"], active: "a", shell: [] }, pathFirst: ["fakebin"],
+    setup: (box) => fs.writeFileSync(path.join(box.data, "agents.json"), JSON.stringify({ [box.folder("a")]: "codex" })),
+    files: { "fakebin/codex": "#!/bin/sh\n[ \"$1\" = \"--version\" ] && { echo 'codex-cli 9.9.9-lab'; exit 0; }\necho \"fake-codex args: [$*]\"\n[ \"$1\" = resume ] && exit 0\nsleep 30\n" },
+    steps: [{ until: "tabs.0" }, { until: "toast", match: "이어 할 대화", timeout: 8000 }, { probe: "after" }, { wait: 1500 }, { grep: "fake-codex args" }],
+    check: ({ probe, log }) => [
+      ok(/agent-start \S+ codex resume=true/.test(log), "복원한 탭에 Codex가 이어서 모드로 안 뜸"),
+      ok(/^agent-resume-failed /m.test(log) && /agent-start \S+ codex resume=false/.test(log), "이어 할 대화가 없을 때 새로 시작 안 함"),
+      ok(/이어 할 대화가 없어 새로 시작했어요/.test(probe.after?.toast || ""), `알림 ${probe.after?.toast}`),
+      ok(/lab-grep fake-codex args rows=\[\d[^\n]*text="fake-codex args: \[\]"/.test(log), `새로 시작한 Codex 인자 ${log.match(/lab-grep fake-codex[^\n]*/)?.[0]}`),
+    ],
+  },
+  {
+    id: "about-feedback", tags: ["smoke", "app"], what: "Tamer 정보·피드백 메일 초안: 같은 버전(package.json), 권리 고지·피드백 주소, 메일 본문 틀과 버전·macOS (APP-07, APP-09)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { wait: 500 }, { invoke: "about_test", log: true }],
+    check: ({ log }) => {
+      const a = JSON.parse(log.match(/^lab-invoke about_test (.*)$/m)?.[1] || "{}");
+      const pkg = require("../package.json").version, mail = decodeURIComponent(a.feedback || "");
+      return [
+        ok(a.pkg === pkg && a.version?.startsWith(pkg) && a.about?.applicationVersion === a.version, `버전 ${a.version} / 정보 창 ${a.about?.applicationVersion} / package.json ${pkg}`),
+        ok(a.build?.kind === "release" ? a.version === pkg : /\+[0-9a-f]{7,}$/.test(a.version || "") || !a.build?.commit, `개발 빌드 표시 ${a.version} (${JSON.stringify(a.build)})`),
+        ok(/Nintendo \/ Creatures \/ GAME FREAK \/ The Pokémon Company/.test(a.about?.credits || "") && /yeomjae5766@gmail\.com/.test(a.about?.credits || ""), "정보 창에 권리 고지·피드백 주소 없음"),
+        ok(/^mailto:yeomjae5766@gmail\.com\?/.test(a.feedback || "") && mail.includes(`subject=Tamer ${a.version} 피드백`), `메일 주소·제목 ${mail.slice(0, 80)}`),
+        ok(/무엇을 했고:/.test(mail) && /진단 정보 복사/.test(mail) && new RegExp(`Tamer ${a.version?.replace(/[+.]/g, "\\$&")} · macOS \\d`).test(mail), "메일 본문 틀·버전·macOS 없음"),
+        ok((a.menu || []).includes("피드백 보내기…") && (a.menu || []).includes("오픈소스 고지"), `메뉴 ${JSON.stringify(a.menu)}`),
+      ];
+    },
+  },
+  {
+    id: "partner-click-menu", tags: ["smoke", "poke"], what: "파트너 클릭 → 공격/애교 이모지, 우클릭 → 메뉴(바꾸기·공격·애교·도감·야생), 숫자로 고름, EXP 줄 (PKM-03)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => evolvePartner(box),
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 800 }, { probe: "start" },
+      { click: "main.grid:not([hidden]) .poke" }, { wait: 150 }, { probe: "clicked" }, { wait: 1200 },
+      { click: "main.grid:not([hidden]) .pane-avatar", button: "right" }, { wait: 300 }, { probe: "menu" },
+      { key: "3" }, { wait: 150 }, { probe: "cute" }, { wait: 1200 },
+      { click: "main.grid:not([hidden]) .pane-avatar", button: "right" }, { wait: 300 }, { key: "2" }, { wait: 150 }, { probe: "attack" }],
+    check: ({ probe }) => [
+      ok(probe.start?.pokeExp === "EXP 7 · 진화까지 1", `EXP 줄 ${probe.start?.pokeExp}`),
+      ok((probe.clicked?.fx || []).length >= 5 && ["💕", "🔥"].includes(probe.clicked?.fx?.[0]), `클릭 반응 ${JSON.stringify(probe.clicked?.fx)} (애교 💕 또는 불꽃 타입 공격 🔥)`),
+      ok(["1🔄파트너 바꾸기", "2⚔️공격", "3💕애교", "4📕도감", "5🌿야생 포켓몬"].every((w, i) => (probe.menu?.menuItems?.[i] || "").startsWith(w)) && probe.menu.menuItems.length === 5, `메뉴 ${JSON.stringify(probe.menu?.menuItems)}`),
+      ok(probe.cute?.fx?.length === 5 && probe.cute.fx.every((g) => g === "💕") && probe.cute?.menu === false, `3(애교) ${JSON.stringify(probe.cute?.fx)} 메뉴 닫힘 ${probe.cute?.menu === false}`),
+      ok(probe.attack?.fx?.length === 8 && probe.attack.fx.every((g) => g === "🔥"), `2(공격) ${JSON.stringify(probe.attack?.fx)} (파이리 = 불꽃 🔥 8개)`),
+    ],
+  },
+  {
+    id: "drop-folders", tags: ["smoke", "tabs"], what: "Finder 폴더를 시작 화면·탭 줄에 끌어 놓으면 새 탭(여러 개는 차례로), 파일은 '폴더만' 알림, 터미널 칸에 놓으면 경로 입력 (TAB-07)",
+    data: "owner", mode: "direct", folders: [], make: ["a", "b", "c"], files: { "note.txt": "x" },
+    steps: (box) => [{ until: "start" }, { wait: 400 },
+      { drop: "#start", files: [box.folder("a")] }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 600 }, { probe: "start" },
+      { drop: "#tabs", files: [box.folder("b"), box.folder("c")] }, { wait: 2500 }, { call: "closeDex" }, { wait: 400 }, { probe: "bar" },
+      { drop: "#tabs", files: [path.join(box.dir, "note.txt")] }, { wait: 200 }, { probe: "file" },
+      { call: "focusShell" }, { drop: "main.grid:not([hidden]) .pane-agent .term", files: [path.join(box.dir, "note.txt")] }, { wait: 600 }, { grep: "note.txt" }, { probe: "pane" }],
+    check: ({ probe, log }) => [
+      ok(JSON.stringify(probe.start?.tabs) === '["a"]' && probe.start?.start === false, `시작 화면에 놓은 뒤 ${JSON.stringify(probe.start?.tabs)}`),
+      ok(JSON.stringify(probe.bar?.tabs) === '["a","b","c"]', `탭 줄에 둘 놓은 뒤 ${JSON.stringify(probe.bar?.tabs)}`),
+      ok(/폴더만 새 탭으로 열 수 있어요/.test(probe.file?.toast || "") && probe.file?.tabs?.length === 3, `파일을 놓았을 때 ${probe.file?.toast} 탭 ${probe.file?.tabs?.length}`),
+      ok(/lab-grep note\.txt rows=\[\d/.test(log) && probe.pane?.tabs?.length === 3, "터미널 칸에 놓은 경로가 입력되지 않음(또는 탭이 생김)"),
     ],
   },
   {

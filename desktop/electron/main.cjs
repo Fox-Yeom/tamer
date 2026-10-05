@@ -891,7 +891,7 @@ const commands = {
     const restored = sess?.tabs?.filter(isDir) || [];
     const open = [...new Set([...restored, ...handed])];
     return {
-      home: HOME, shell: agents.userShell(), recent: recentDirs(), open,
+      home: (TEST && process.env.CVIM_DESKTOP_TEST_HOME) || HOME, shell: agents.userShell(), recent: recentDirs(), open,
       // in front: the folder handed in (dropped on the app to launch it), else last time's front tab
       front: handed.at(-1) || (restored.length ? sess.active : null),
       restored: restored.length ? { tabs: restored, active: sess.active, sessions: sess.sessions || {}, shell: sess.shell || [] } : null,
@@ -949,6 +949,8 @@ const commands = {
   workspace_open({ cwd }) { return openWorkspace(String(cwd)); },
   workspace_close({ ws }) { closeWorkspace(String(ws)); },
   async choose_folder() {
+    // tests: no system dialog — the folder the case names (CVIM_DESKTOP_TEST_CHOOSE), or "cancelled"
+    if (TEST) { logLine(`choose_folder (test) ${process.env.CVIM_DESKTOP_TEST_CHOOSE || "cancel"}`); return process.env.CVIM_DESKTOP_TEST_CHOOSE || null; }
     const r = await dialog.showOpenDialog(win, { properties: ["openDirectory", "createDirectory"], message: "Tamer에서 열 폴더를 선택하세요" });
     return r.canceled ? null : r.filePaths[0];
   },
@@ -968,7 +970,8 @@ const commands = {
     if (kind === "agent" && (data === "\x1b" || data === "\x03") && sessions.has(wsId)) core.notify("esc", { ws: wsId });
   },
   pty_resize({ id, cols, rows }) { const p = ptys.get(String(id)); if (p) p.resize(num(cols), num(rows)); },
-  copy_text({ text }) { clipboard.writeText(String(text)); },
+  // tests never touch the system clipboard (CLAUDE.md): the test copy only says what it would copy
+  copy_text({ text }) { if (TEST) return void logLine(`copy_text ${JSON.stringify(String(text))}`); clipboard.writeText(String(text)); },
   // partner sprite GIFs only (from the cvim cache)
   async sprite_b64({ path: p }) {
     // the path policy lives in the Rust core (symlinks / `..` resolved there)
@@ -1219,13 +1222,30 @@ const testCommands = {
   // the overlay's "도감에서 보기" (#25), as if pressed there
   wild_dex_test({ id }) { overlayCommands.wild_dex({ id }); },
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)
-  async click_test({ x, y, modifiers = 0 }) {
+  async click_test({ x, y, modifiers = 0, button = "left" }) {
     const dbg = win.webContents.debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
     await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
     await new Promise((r) => setTimeout(r, 120)); // the link under the pointer is looked up on move
-    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, modifiers, button: "left", clickCount: 1 });
-    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button: "left", clickCount: 1 });
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, modifiers, button, clickCount: 1 });
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button, clickCount: 1 });
+  },
+  // a mouse drag from (x1, y1) to (x2, y2) with the left button held — selecting text as a hand does (TRM-04)
+  async drag_test({ x1, y1, x2, y2 }) {
+    const dbg = win.webContents.debugger;
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    const ev = (type, x, y, extra = {}) => dbg.sendCommand("Input.dispatchMouseEvent", { type, x, y, button: "left", ...extra });
+    await ev("mouseMoved", x1, y1, { button: "none" });
+    await ev("mousePressed", x1, y1, { clickCount: 1, buttons: 1 });
+    for (let i = 1; i <= 6; i++) { await ev("mouseMoved", x1 + ((x2 - x1) * i) / 6, y1 + ((y2 - y1) * i) / 6, { buttons: 1 }); await new Promise((r) => setTimeout(r, 30)); }
+    await ev("mouseReleased", x2, y2, { clickCount: 1, buttons: 0 });
+  },
+  // Finder files dropped at (x, y) — the real drag path (dragenter/over/drop with File objects) (TAB-07)
+  async drop_test({ x, y, files }) {
+    const dbg = win.webContents.debugger;
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    const data = { items: [], files: files.map(String), dragOperationsMask: 1 };
+    for (const type of ["dragEnter", "dragOver", "drop"]) await dbg.sendCommand("Input.dispatchDragEvent", { type, x, y, data });
   },
   // a key as from the keyboard (modifiers: 8 = ⇧, 4 = ⌘) to the focused element (#7 #8 keys test)
   async key_test({ key, code, keyCode, modifiers = 0, text, commands }) {
@@ -1291,6 +1311,8 @@ const testCommands = {
   menu_test: () => Menu.getApplicationMenu().items.flatMap((m) => m.submenu.items.map((i) => `${i.role || i.label}${i.accelerator ? `(${i.accelerator})` : ""}`)),
   overlay_collapse_test: () => overlayCommands.overlay_collapse(),
   // a line in the workspace's hook log, as Claude's hook (claude/hooks/event.sh) writes it
+  // what Tamer 정보 · 피드백 메일 · 진단 정보 say (native panels and the mail app can't be looked at in a test)
+  about_test() { return { about: aboutOptions(), feedback: feedbackUrl(), version: VERSION(), pkg: app.getVersion(), build: BUILD, notices: !!NOTICES(), menu: helpItems.map((i) => i.label).filter(Boolean) }; },
   hook_event_test({ ws, event, detail }) {
     if (!sessions.has(String(ws)) || !/^\w+$/.test(String(event))) return; // any session
     fs.appendFileSync(path.join(TABS, `${ws}.log`), JSON.stringify({ event, ts: Math.floor(Date.now() / 1000), tool: "", detail: String(detail || "") }) + "\n");
@@ -1306,6 +1328,13 @@ const FEEDBACK = "yeomjae5766@gmail.com";
 // (scripts/stamp.cjs → build-info.json; docs/VERSIONING.md 5)
 const BUILD = (() => { try { return require("./build-info.json"); } catch { return { kind: "dev", commit: null }; } })();
 const VERSION = () => app.getVersion() + (BUILD.kind === "release" || !BUILD.commit ? "" : `+${BUILD.commit}`);
+// the feedback mail draft (APP-09): only a mailto: draft, nothing is sent; diagnostics are pasted by the user
+const feedbackUrl = () => `mailto:${FEEDBACK}?subject=${encodeURIComponent(`Tamer ${VERSION()} 피드백`)}&body=${encodeURIComponent(`무엇을 했고:\n무엇을 기대했고:\n무엇이 보였는지:\n\n(메뉴 Tamer → 진단 정보 복사 후 여기에 붙여넣기)\n\nTamer ${VERSION()} · macOS ${process.getSystemVersion()} · ${process.arch}\n`)}`;
+// Tamer 정보 (APP-07)
+const aboutOptions = () => ({
+  applicationName: "Tamer", applicationVersion: VERSION(),
+  credits: "AI 코딩 에이전트와 함께 쓰는 터미널 · 피드백: " + FEEDBACK + "\n오픈소스 고지: Tamer 메뉴 → 오픈소스 고지\nPokémon은 비공식 팬 기능이며 권리는 Nintendo / Creatures / GAME FREAK / The Pokémon Company에 있습니다.",
+});
 const NOTICES = () => [process.resourcesPath && path.join(process.resourcesPath, "THIRD_PARTY_NOTICES.txt"), path.join(__dirname, "..", "build", "THIRD_PARTY_NOTICES.txt")].find((f) => f && fs.existsSync(f));
 // "진단 정보 복사": version, macOS, agent connections, open tabs/shells and the recent app log —
 // for the tester to paste into a feedback mail (nothing is sent by the app). No conversations,
@@ -1338,13 +1367,10 @@ const helpItems = [
     clipboard.writeText(diagnostics());
     dialog.showMessageBox(win, { type: "info", message: "진단 정보를 복사했어요", detail: `피드백 메일(${FEEDBACK})에 붙여넣어 주세요. 버전·macOS·에이전트 연결 상태·최근 앱 기록이 들어 있고, 대화 내용·명령어·파일 이름은 없으며 폴더 이름은 "폴더1"처럼 가려져 있어요. 보내기 전에 내용을 확인할 수 있어요.` });
   } },
-  { label: "피드백 보내기…", click: () => shell.openExternal(`mailto:${FEEDBACK}?subject=${encodeURIComponent(`Tamer ${VERSION()} 피드백`)}&body=${encodeURIComponent(`무엇을 했고:\n무엇을 기대했고:\n무엇이 보였는지:\n\n(메뉴 Tamer → 진단 정보 복사 후 여기에 붙여넣기)\n\nTamer ${VERSION()} · macOS ${process.getSystemVersion()} · ${process.arch}\n`)}`) },
+  { label: "피드백 보내기…", click: () => shell.openExternal(feedbackUrl()) },
   { label: "오픈소스 고지", click: () => { const f = NOTICES(); if (f) shell.openPath(f); } },
 ];
-app.setAboutPanelOptions({
-  applicationName: "Tamer", applicationVersion: VERSION(),
-  credits: "AI 코딩 에이전트와 함께 쓰는 터미널 · 피드백: " + FEEDBACK + "\n오픈소스 고지: Tamer 메뉴 → 오픈소스 고지\nPokémon은 비공식 팬 기능이며 권리는 Nintendo / Creatures / GAME FREAK / The Pokémon Company에 있습니다.",
-});
+app.setAboutPanelOptions(aboutOptions());
 
 // only agent work waits for the shell environment (up to 15 s with a heavy ~/.zshrc): finding an
 // agent (its PATH), starting one (its variables) — the window, tabs, shells and the core don't

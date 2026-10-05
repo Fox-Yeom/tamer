@@ -52,6 +52,9 @@ function refs(c) {
     ts: [...all(/TS #(\d+)/g, t).map((n) => `#${n}`), ...all(/TS (?!#)([^,·\n]+)/g, t).map((s) => s.trim())],
     oldTests: all(/구 시험 `([^`]+)`/g, t), coreTests: all(/코어 시험 `([^`]+)`/g, t),
     gap: /(^|\n)\s*-?\s*부족:/.test(t) ? t.split(/\n/).find((l) => /부족:/.test(l)).replace(/^.*부족:\s*/, "") : null,
+    // what can't be tested automatically by its nature (a system dialog, a real reboot, a real agent's
+    // account): checked by hand in TEST_SCENARIOS — not debt, but it must have a 수동 step
+    manualOnly: /(^|\n)\s*-?\s*수동만:/.test(t) ? t.split(/\n/).find((l) => /수동만:/.test(l)).replace(/^.*수동만:\s*/, "") : null,
     none: /해당 없음/.test(t),
     code: String(f["코드"] || "").split(" · ").map((seg) => {
       const m = seg.match(/`([^`]+)`\s*(.*)/);
@@ -82,7 +85,7 @@ function load() {
 // ── check ─────────────────────────────────────────────────────────────────────
 function check() {
   const { cs, ps } = load();
-  const errors = [], warns = [], debt = [];
+  const errors = [], warns = [], debt = [], manual = [];
   const err = (c, m) => errors.push(`${c.file}:${c.line} ${c.id} — ${m}`);
   const labs = new Set(labIds()), scenes = new Set(sceneIds()), ts = scenarios(), flags = oldFlags(), fns = coreFns();
   const polIds = new Set(ps.map((p) => p.id)), cardIds = new Set();
@@ -119,6 +122,8 @@ function check() {
     const tests = r.labs.length + r.scenes.length + r.ts.length + r.oldTests.length + r.coreTests.length;
     if (r.status === "✅" && !tests && !r.gap) err(c, "✅인데 시험이 없음 — 시험을 넣거나 **부족:**에 적기");
     if (r.status === "✅" && r.gap) debt.push(`${c.id} ${c.title} — ${r.gap}`);
+    if (r.manualOnly && !r.ts.length) err(c, "**수동만:**인데 수동 시험(TS …)이 없음");
+    if (r.status === "✅" && r.manualOnly) manual.push(`${c.id} ${c.title} — ${r.manualOnly}`);
     if (r.status === "✅" && !r.code.length) warns.push(`${c.file}:${c.line} ${c.id} — **코드** 없음(델타가 이 카드를 못 찾음)`);
   }
   for (const l of labs) if (!usedLabs.has(l)) warns.push(`lab \`${l}\` — 어느 카드·정책에도 없음`);
@@ -128,6 +133,7 @@ function check() {
   for (const f of appFiles) { const rel = path.relative(REPO, f); if (!usedFiles.has(rel)) warns.push(`코드 ${path.relative(ROOT, f)} — 어느 카드에도 없음`); }
   console.log(`카드 ${cs.length} (${["✅", "🔜", "💡", "⏸", "✖"].map((s) => `${s} ${cs.filter((c) => c.r.status === s).length}`).join(" · ")}) · 정책 ${ps.length}`);
   if (debt.length) { console.log(`\n시험 부족 ${debt.length}:`); for (const d of debt) console.log(`  · ${d}`); }
+  if (manual.length) { console.log(`\n수동만 ${manual.length} (자동 시험이 성격상 불가 — TEST_SCENARIOS로 확인):`); for (const d of manual) console.log(`  · ${d}`); }
   if (warns.length) { console.log(`\n경고 ${warns.length}:`); for (const w of warns) console.log(`  · ${w}`); }
   if (errors.length) { console.log(`\n오류 ${errors.length}:`); for (const e of errors) console.log(`  ✗ ${e}`); process.exit(1); }
   console.log("\n참조 오류 없음");

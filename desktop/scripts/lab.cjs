@@ -37,7 +37,8 @@ if (!picked.length) { console.error("no case matches"); process.exit(1); }
   for (const { c, v, name } of picked.flatMap(variants)) {
     const made = [...(c.folders || []), ...(c.make || [])];
     const box = T.sandbox(name.replace(/[^\w@=.-]/g, "_"), { data: c.data, folders: made.length ? made : ["proj"], session: c.session });
-    const env = { ...box.env, ...(c.env || {}), CVIM_LAB_STEPS: JSON.stringify(c.steps) };
+    const caseEnv = Object.fromEntries(Object.entries(c.env || {}).map(([k, v]) => [k, typeof v === "function" ? v(box) : v])); // a value may be a function of the sandbox
+    const env = { ...box.env, ...caseEnv, CVIM_LAB_STEPS: JSON.stringify(typeof c.steps === "function" ? c.steps(box) : c.steps) }; // steps may need the sandbox's paths
     if (c.offline) env.CVIM_TEST_OFFLINE = "1";
     if (c.slowShell) env.SHELL = T.slowShell(box.dir, c.slowShell);
     // files the case puts in its sandbox ({ "fakebin/codex": "#!/bin/sh …" }, made executable) and

@@ -438,8 +438,9 @@ async function pickAgent(tab, a, running) {
 // ── agent connections: what CVIM sees of each agent, one-click fixes, how to install ───────────
 const agentsOpen = () => !$("#agents").hidden;
 const LEVEL = { full: "🟢 전체", basic: "🟡 기본", none: "⚪ 없음" };
-async function openAgents() {
-  const { list } = await invoke("agents_status");
+// fixed: the list to show instead of this Mac's (ui:shots — the same picture on any machine)
+async function openAgents(fixed = null) {
+  const { list } = fixed || await invoke("agents_status");
   const ul = $("#agents-list");
   ul.innerHTML = "";
   for (const a of list) {
@@ -2037,8 +2038,9 @@ let startSel = 0;
 let recentCount = 0;
 
 let startShownOnce = false;
-async function showStart(required) {
-  const recent = await invoke("recent_dirs");
+// fixed: the recent list to show instead of this Mac's (ui:shots)
+async function showStart(required, fixed = null) {
+  const recent = fixed || await invoke("recent_dirs");
   // a folder handed to the app (dropped on it to launch it) may be opening meanwhile: not over it
   if (required && (tabs.length || opening)) return void invoke("startup_mark", { what: "start screen skipped (folder opening)" });
   recentCount = recent.length;
@@ -2664,7 +2666,15 @@ function labState() {
     usage: $("#usage")?.textContent || "",
     usageRaw: (() => { const u = active && shownOf(active)?.usage; return u ? Object.keys(u).filter((k) => u[k] != null).join(",") : null; })(),
     sid: active?.sid ?? null,
-    astate: active?.state?.state || null, // the agent state the top bar shows (waiting = 입력 필요)
+    astate: active?.state?.state || null,
+    recent: startOpen() ? [...document.querySelectorAll("#recent li:not(.dim) span:nth-child(2)")].map((x) => x.textContent) : null,
+    startSel: startOpen() ? startSel : null,
+    menuItems: $("#menu").hidden ? null : [...$("#menu").querySelectorAll("button")].map((b) => b.textContent),
+    activity: active ? [...$(".activity", active.view)?.querySelectorAll("li") || []].map((li) => li.textContent.replace(/^\S+ /, "")) : null, // without the time
+    sessId: active ? curSession(active)?.id ?? null : null,
+    fx: active ? [...$(".fx", active.view).children].map((x) => x.textContent) : null, // the partner's reaction glyphs (PKM-03)
+    pokeExp: active ? $(".poke-exp", active.view)?.textContent || null : null,
+    agent: active ? (() => { const s = curSession(active); return s?.hostAgent?.key || (s?.running ? s?.agent?.key || s?.agent?.label : null) || null; })() : null, // the agent state the top bar shows (waiting = 입력 필요)
     tsearch: $("#tsearch").hidden ? null : { q: $("#tsearch-q").value, n: $("#tsearch-n").textContent, pane: tsearchPane?.kind || null, alt: !$("#tsearch-alt").hidden },
     // the top bar and the hint line stay one line, nothing pushed out (#38)
     barFits: (() => { const b = $("#bar"); return b.scrollWidth <= b.clientWidth + 1 && [...b.children].every((c) => c.hidden || c.offsetHeight <= b.clientHeight); })(),
@@ -2684,20 +2694,38 @@ const LAB_CALLS = { home: () => (dexOpen() ? dexView("home") : openDex(null, "ho
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
+  // the native confirm() would block the run: it answers what the case set ({ confirm: true | false }), and says so
+  let answer = true;
+  window.confirm = (msg) => { log(`lab-confirm ${answer} ${msg}`); return answer; };
   const get = (path) => path.split(".").reduce((o, k) => (o == null ? o : o[k]), labState());
   try {
     for (const s of steps) {
       if (s.wait != null) await wait(s.wait);
-      else if (s.until) { const end = performance.now() + (s.timeout || 15000); while (!get(s.until) && performance.now() < end) await wait(100); if (!get(s.until)) await log(`lab-timeout ${s.until}`); }
+      else if (s.until) { // match: the value must also contain this text (a toast after another one)
+        const hit = () => { const v = get(s.until); return s.match ? String(v ?? "").includes(s.match) : !!v; };
+        const end = performance.now() + (s.timeout || 15000); while (!hit() && performance.now() < end) await wait(100); if (!hit()) await log(`lab-timeout ${s.until}${s.match ? ` ~ ${s.match}` : ""}`);
+      }
       else if (s.key) {
-        const k = s.key, code = /^[0-9]$/.test(k) ? `Digit${k}` : k.length === 1 ? `Key${k.toUpperCase()}` : k;
+        const k = s.key, code = s.code || ({ "[": "BracketLeft", "]": "BracketRight" }[k]) || (/^[0-9]$/.test(k) ? `Digit${k}` : k.length === 1 ? `Key${k.toUpperCase()}` : k);
         const keyCode = { Escape: 27, Enter: 13, ArrowLeft: 37, ArrowUp: 38, ArrowRight: 39, ArrowDown: 40, Tab: 9, Backspace: 8 }[k] || k.toUpperCase().charCodeAt(0);
         await invoke("key_test", { key: k, code, keyCode, modifiers: s.mods || 0, ...(s.commands ? { commands: s.commands } : {}), ...(k.length === 1 && !s.mods ? { text: k } : {}) });
       } else if (s.click) {
         const el = document.querySelector(s.click);
         if (!el) { await log(`lab-missing ${s.click}`); continue; }
         const r = el.getBoundingClientRect();
-        await invoke("click_test", { x: r.left + r.width / 2, y: r.top + r.height / 2 });
+        await invoke("click_test", { x: r.left + r.width / 2, y: r.top + r.height / 2, ...(s.button ? { button: s.button } : {}) });
+      } else if (s.drop) { // Finder paths dropped on an element: { drop: "css", files: ["/abs", …] } ("$dir/x" = the case's sandbox)
+        const el = document.querySelector(s.drop);
+        if (!el) { await log(`lab-missing ${s.drop}`); continue; }
+        const r = el.getBoundingClientRect();
+        await invoke("drop_test", { x: r.left + Math.min(r.width / 2, 60), y: r.top + r.height / 2, files: s.files });
+      } else if (s.select != null) { // drag the mouse over the first on-screen run of this text in the big pane (TRM-04)
+        const t = bigPane(active).term, b = t.buffer.active, scr = t.element.querySelector(".xterm-screen").getBoundingClientRect();
+        let at = null;
+        for (let y = b.viewportY; y < b.viewportY + t.rows && !at; y++) { const x = (b.getLine(y)?.translateToString(true) || "").indexOf(s.select); if (x >= 0) at = { x, y: y - b.viewportY }; }
+        if (!at) { await log(`lab-missing select ${s.select}`); continue; }
+        const cw = scr.width / t.cols, ch = scr.height / t.rows, cy = scr.top + (at.y + 0.5) * ch;
+        await invoke("drag_test", { x1: scr.left + (at.x + 0.2) * cw, y1: cy, x2: scr.left + (at.x + s.select.length - 0.2) * cw, y2: cy });
       } else if (s.probe) await log(`lab-probe ${s.probe} +${Math.round(performance.now())}ms ${JSON.stringify(labState())}`); // ms since the page began
       else if (s.shot) await invoke("shot_test", { name: s.shot });
       else if (s.ime != null) await invoke("ime_compose", { text: s.ime }); // Hangul being composed
@@ -2711,6 +2739,7 @@ async function labRun(steps) {
         for (let y = 0; y < b.length; y++) { const l = b.getLine(y)?.translateToString(true) || ""; if (l.includes(s.grep)) rows.push(y); }
         await log(`lab-grep ${s.grep} rows=${JSON.stringify(rows)} length=${b.length} baseY=${b.baseY} type=${b.type}${rows.length ? ` text=${JSON.stringify((b.getLine(rows[0])?.translateToString(true) || "").slice(0, 160))}` : ""}`);
       } else if (s.resize) { await invoke("win_resize_test", { w: s.resize[0], h: s.resize[1] }); await wait(400); }
+      else if (s.confirm != null) answer = !!s.confirm;
       else if (s.call && LAB_CALLS[s.call]) await LAB_CALLS[s.call]();
     }
   } catch (e) { await log(`lab-error ${e?.stack || e}`); }
@@ -2795,6 +2824,20 @@ async function uiScenes(set) {
       // find in the terminal (#40): the search line on the big pane, a query typed
       await invoke("win_resize_test", { w: 1400, h: 900 });
       openTermSearch(bigPane(tab)); $("#tsearch-q").value = "proj"; termFind(1, true); await shot("term-search"); closeTermSearch();
+      // 에이전트 연결 창 (AGT-04): every level and button once — a fixed list, not this Mac's agents
+      await invoke("win_resize_test", { w: 1100, h: 700 });
+      await openAgents({ list: [
+        { key: "claude", icon: "✳", name: "Claude Code", level: "full", path: "~/.local/bin/claude", fix: "claude_link" },
+        { key: "codex", icon: "◎", name: "Codex", level: "full", path: "/opt/homebrew/bin/codex" },
+        { key: "gemini", icon: "✦", name: "Gemini CLI", level: "basic", path: "/opt/homebrew/bin/gemini", fix: "gemini_link" },
+        { key: "opencode", icon: "◇", name: "OpenCode", level: "none", path: null, install: { cmd: "curl -fsSL https://opencode.ai/install | bash", url: "https://opencode.ai" } },
+        { key: "aider", icon: "▸", name: "Aider", level: "basic", path: "~/.local/bin/aider" },
+      ] });
+      await shot("agents-window"); closeAgents();
+      // 시작 화면 (TAB-03), opened with ⌘T: recent folders (fixed, under this home), the actions, Esc
+      await showStart(false, ["dev/tamer", "dev/blog", "work/api-server", "Documents/notes"].map((d) => `${info.home}/${d}`));
+      startSel = 1; markStart();
+      await shot("start-screen"); hideStart();
     }
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("done");
