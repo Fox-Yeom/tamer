@@ -186,20 +186,20 @@ module.exports = [
   {
     id: "hangul-in-shell", tags: ["smoke", "input"], what: "셸에서 한글 조합 → 확정, 이어서 영문 — 글자가 겹치거나 빠지지 않음",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { call: "closeDex" }, { wait: 3000 }, { text: "echo " }, { ime: "ㅎ" }, { ime: "하" }, { ime: "한" }, { text: "한" }, { ime: "ㄱ" }, { ime: "그" }, { ime: "글" }, { text: "글" }, { text: "ab" }, { wait: 600 }, { probe: "typed" }],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 3000 }, { text: "echo " }, { ime: "ㅎ" }, { ime: "하" }, { ime: "한" }, { text: "한" }, { ime: "ㄱ" }, { ime: "그" }, { ime: "글" }, { text: "글" }, { text: "ab" }, { wait: 600 }, { probe: "typed" }],
     check: ({ probe }) => [ok(/echo 한글ab$/.test(probe.typed?.line || ""), `셸 줄 ${JSON.stringify(probe.typed?.line)}`)],
   },
   {
     id: "hangul-cmd-arrow", tags: ["smoke", "input"], what: "한글 조합 중 ⌘← → 조합만 끝내고 글자는 제자리 (#15, iTerm2와 같음)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { call: "closeDex" }, { wait: 3000 }, { text: "echo ab" }, { ime: "ㅎ" }, { ime: "하" }, { key: "ArrowLeft", mods: 4, commands: ["moveToBeginningOfLine"] }, { wait: 300 }, { text: "하" }, { wait: 600 }, { probe: "after" }],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 3000 }, { text: "echo ab" }, { ime: "ㅎ" }, { ime: "하" }, { key: "ArrowLeft", mods: 4, commands: ["moveToBeginningOfLine"] }, { wait: 300 }, { text: "하" }, { wait: 600 }, { probe: "after" }],
     check: ({ probe }) => [ok(/echo ab하$/.test(probe.after?.line || ""), `셸 줄 ${JSON.stringify(probe.after?.line)}`)],
   },
   // ── window size ──
   {
     id: "narrow-window", tags: ["smoke", "layout"], what: "좁은 창(1100·900·720): 상단 바·단축키 줄이 한 줄로 들어감, 가로 넘침 없음, 포켓몬 창이 창 안에 (#38)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { call: "closeDex" }, { call: "fakeUsage" },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { call: "fakeUsage" },
       { resize: [1100, 600] }, { probe: "w1100" }, { resize: [900, 600] }, { probe: "w900" }, { shot: "narrow-900" }, { resize: [720, 520] }, { probe: "main" }, { shot: "narrow-720" },
       { call: "openDex" }, { wait: 500 }, { probe: "dex" }, { call: "box" }, { wait: 400 }, { probe: "box" }, { shot: "narrow-box" }],
     check: ({ probe }) => [
@@ -209,5 +209,42 @@ module.exports = [
       ok(probe.dex?.pokeFits === true, "도감 창이 창 밖으로 나감"),
       ok(probe.box?.pokeFits === true, "내 포켓몬 창이 창 밖으로 나감"),
     ],
+  },
+  // ── find in the terminal (#40) ──
+  {
+    id: "term-search", tags: ["smoke", "input"], what: "터미널 ⌘F: 결과 수·다음·이전, 한글도, Esc로 닫고 터미널로, 포켓몬 창이 열려 있으면 도감 검색 (#40)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "echo 바늘1; echo 바늘2; echo needle" }, { key: "Enter" }, { wait: 800 },
+      { key: "f", mods: 4 }, { wait: 300 }, { probe: "open" },
+      { text: "바늘" }, { wait: 400 }, { probe: "found" },
+      { key: "Enter" }, { wait: 300 }, { probe: "next" },
+      { key: "Enter", mods: 8 }, { wait: 300 }, { probe: "prev" },
+      { key: "Escape" }, { wait: 300 }, { probe: "closed" },
+      { call: "openDex" }, { wait: 500 }, { key: "f", mods: 4 }, { wait: 300 }, { probe: "dex" }],
+    check: ({ probe }) => [
+      ok(probe.open?.tsearch && probe.open.focus === "tsearch-q", `⌘F에 검색 줄이 안 열림 (${JSON.stringify(probe.open?.tsearch)}, focus ${probe.open?.focus})`),
+      ok(/^\d\/4$/.test(probe.found?.tsearch?.n || ""), `"바늘" 결과 수 ${probe.found?.tsearch?.n} (명령 줄 2 + 출력 2 = 4)`),
+      ok(probe.next?.tsearch?.n !== probe.found?.tsearch?.n, "Enter로 다음 결과로 안 감"),
+      ok(probe.prev?.tsearch?.n === probe.found?.tsearch?.n, `⇧Enter로 이전 결과로 안 감 (${probe.found?.tsearch?.n} → ${probe.next?.tsearch?.n} → ${probe.prev?.tsearch?.n})`),
+      ok(probe.closed?.tsearch === null && /xterm-helper-textarea/.test(probe.closed?.focus || ""), "Esc로 안 닫히거나 터미널로 안 돌아감"),
+      ok(probe.dex?.tsearch === null && probe.dex?.focus === "dex-search", `포켓몬 창에서 ⌘F가 도감 검색으로 안 감 (focus ${probe.dex?.focus})`),
+    ],
+  },
+  {
+    id: "term-search-scrollback", tags: ["smoke", "input"], what: "⌘F가 화면 밖(스크롤백)의 줄도 찾음 — 300줄 위의 단어 (#40)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "echo TOPMARK; seq 1 300" }, { wait: 200 }, { key: "Enter" }, { wait: 1200 },
+      { key: "f", mods: 4 }, { wait: 300 }, { text: "TOPMARK" }, { wait: 500 }, { probe: "found" }, { grep: "TOPMARK" }, { grep: "lab$" }, { grep: "299" }],
+    check: ({ probe }) => [ok(/^\d\/2$/.test(probe.found?.tsearch?.n || ""), `300줄 위 단어 결과 ${probe.found?.tsearch?.n} (명령 줄 + 출력 = 2)`), ok(probe.found?.tsearch?.alt === false, "일반 화면인데 \"보이는 화면만\" 안내")],
+  },
+  {
+    id: "term-search-alt", tags: ["smoke", "input"], what: "전체 화면 프로그램(대체 화면)에서 ⌘F: \"보이는 화면만\" 안내, 일반 화면에선 안내 없음 (#40)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "printf '\\033[?1049h'; seq 1 100; echo ALTMARK; sleep 30" }, { wait: 200 }, { key: "Enter" }, { wait: 1200 },
+      { key: "f", mods: 4 }, { wait: 300 }, { text: "ALTMARK" }, { wait: 500 }, { probe: "alt" }, { grep: "ALTMARK" }],
+    check: ({ probe }) => [ok(probe.alt?.tsearch?.alt === true, `대체 화면인데 안내가 없음 (${JSON.stringify(probe.alt?.tsearch)})`), ok(/^1\/1$/.test(probe.alt?.tsearch?.n || ""), `보이는 단어 결과 ${probe.alt?.tsearch?.n}`)],
   },
 ];

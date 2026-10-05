@@ -41,7 +41,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
 .grid { position: absolute; inset: 0; display: grid; grid-template-columns: 60% 40%; }
 .grid[hidden] { display: none; }
 .side { display: grid; grid-template-rows: 300px 1fr 1fr; min-height: 0; border-left: 1px solid var(--line); }
-.pane { display: flex; flex-direction: column; min-height: 0; min-width: 0; border-bottom: 1px solid var(--line); background: var(--pane); }
+.pane { position: relative; /* the find line (#40) */ display: flex; flex-direction: column; min-height: 0; min-width: 0; border-bottom: 1px solid var(--line); background: var(--pane); }
 .title { font-size: 12px; padding: 2px 8px; color: var(--dim); background: #24242c; }
 .pane.focus .title { color: var(--fg); background: #33333f; }
 .term { flex: 1; min-height: 0; padding: 4px 6px; }
@@ -269,3 +269,14 @@ body.ui-test .xterm-screen { visibility: hidden !important; } /* what the shells
 @media (max-width: 1200px) { #usage .gauge, #usage .u-model, #usage .u-model + .sep { display: none; } }
 @media (max-width: 1000px) { #cwd .cwd-parent, #agent .bar-wide { display: none; } }
 @media (max-width: 800px) { #doing .doing-text { display: none; } }
+
+/* #40 find in the terminal: a search line at the focused pane's top right */
+#tsearch { position: absolute; top: 30px; right: 14px; z-index: 6; display: flex; align-items: center; gap: 4px; padding: 4px 6px;
+  background: #22222b; border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 4px 14px #0007; font-size: 12px; }
+#tsearch[hidden] { display: none; }
+#tsearch input { width: 180px; padding: 3px 6px; color: var(--fg); background: #16161c; border: 1px solid var(--line); border-radius: 4px; font: 12px "Fira Code", "CVIM Hangul", monospace; outline: none; }
+#tsearch input:focus { border-color: var(--accent); }
+#tsearch #tsearch-n { min-width: 42px; text-align: center; white-space: nowrap; }
+#tsearch #tsearch-alt { color: #e5a33a; white-space: nowrap; cursor: help; }
+#tsearch button { padding: 1px 6px; color: var(--fg); background: transparent; border: 0; border-radius: 4px; cursor: pointer; }
+#tsearch button:hover { background: #33333f; }

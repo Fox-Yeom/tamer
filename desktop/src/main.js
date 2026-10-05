@@ -5,6 +5,7 @@ import { invoke, listen } from "./host.js";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { SearchAddon } from "@xterm/addon-search";
 import { createWild, josa } from "./wild.js";
 import "./poke/poke.css";
 import { pkCard } from "./poke/card.js";
@@ -236,7 +237,10 @@ function makePane(tab, kind, opts = {}) {
     imeLog(id, "caret-reset", `${t.selectionStart}-${t.selectionEnd}/${n}`);
     t.setSelectionRange(n, n);
   }, true);
-  const p = { id, kind, tab, term, fit, el, section, bytes: 0, discard: false };
+  const p = { id, kind, tab, term, fit, el, section, bytes: 0, discard: false, search: new SearchAddon() };
+  term.loadAddon(p.search);
+  term.buffer.onBufferChange(() => { if (tsearchPane === p) tsearchAlt(); });
+  p.search.onDidChangeResults(({ resultIndex, resultCount }) => { if (tsearchPane === p) tsearchCount(resultIndex, resultCount); });
   term.onData((data) => {
     imeLog(id, "onData", JSON.stringify(data));
     // drop only the text a cancelled composition commits — never terminal replies (ESC …), e.g. the
@@ -532,7 +536,57 @@ async function openFolderNow(cwd, { resume }) {
   return tab;
 }
 
+// ── find in the terminal (#40): ⌘F in a pane (the big one when no terminal has the keyboard) — a
+// search line at the pane's top right; every match marked, the current one brighter, "3/12".
+// ↵ next · ⇧↵ previous · Esc closes (back to the terminal). The Pokémon window keeps its own ⌘F.
+let tsearchPane = null;
+const TSEARCH_DECO = { matchBackground: "#6b5a2a", matchOverviewRuler: "#c9a227", activeMatchBackground: "#e5a33a", activeMatchColorOverviewRuler: "#ff9e3d" };
+function tsearchCount(i, n) { $("#tsearch-n").textContent = !$("#tsearch-q").value ? "" : n ? `${i >= 0 ? i + 1 : "?"}/${n}` : "없음"; tsearchAlt(); }
+// a full-screen program (alternate screen — e.g. Claude Code scrolling its own view): the terminal
+// holds only the screen you see, so only that can be found; say so (iTerm2 is the same)
+function tsearchAlt() { $("#tsearch-alt").hidden = tsearchPane?.term.buffer.active.type !== "alternate"; }
+function openTermSearch(p) {
+  if (!p) return;
+  if (tsearchPane && tsearchPane !== p) closeTermSearch(false);
+  tsearchPane = p;
+  const box = $("#tsearch"), q = $("#tsearch-q");
+  p.section.append(box);
+  box.hidden = false;
+  const sel = p.term.getSelection();
+  if (sel && !sel.includes("\n")) q.value = sel;
+  q.focus(); q.select();
+  tsearchAlt();
+  if (q.value) termFind(1, true);
+}
+function closeTermSearch(refocus = true) {
+  const p = tsearchPane;
+  tsearchPane = null;
+  $("#tsearch").hidden = true;
+  if (!p) return;
+  p.search.clearDecorations();
+  p.term.clearSelection();
+  if (refocus) p.term.focus();
+}
+function termFind(dir, incremental = false) {
+  const p = tsearchPane, q = $("#tsearch-q").value;
+  if (!p) return;
+  if (!q) { p.search.clearDecorations(); tsearchCount(-1, 0); return; }
+  const opts = { decorations: TSEARCH_DECO, incremental };
+  if (dir < 0) p.search.findPrevious(q, opts); else p.search.findNext(q, opts);
+}
+$("#tsearch-q").addEventListener("input", () => termFind(1, true));
+$("#tsearch-q").addEventListener("keydown", (e) => {
+  if (e.isComposing || e.keyCode === 229) return; // Hangul being composed: Enter commits it first
+  if (e.key === "Enter") { e.preventDefault(); termFind(e.shiftKey ? -1 : 1); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeTermSearch(); }
+});
+$("#tsearch").addEventListener("click", (e) => {
+  const d = e.target.closest("button")?.dataset.dir;
+  if (d === "close") closeTermSearch(); else if (d) { termFind(d === "prev" ? -1 : 1); $("#tsearch-q").focus(); }
+});
+
 function selectTab(tab) {
+  if (tsearchPane && tsearchPane.tab !== tab) closeTermSearch(false);
   if (!tab) return;
   active = tab;
   for (const t of tabs) t.view.hidden = t !== tab;
@@ -2002,6 +2056,11 @@ window.addEventListener("keydown", (e) => {
   }
   if (!e.metaKey) return;
   const hit = (fn) => { e.preventDefault(); e.stopPropagation(); fn(); };
+  // ⌘F: find in the terminal that has the keyboard (or the big pane) (#40)
+  if (e.code === "KeyF" && !e.shiftKey && !e.altKey) {
+    const p = [...panes.values()].find((x) => x.term.textarea === document.activeElement) || (e.target === $("#tsearch-q") ? tsearchPane : active && bigPane(active));
+    if (p) return hit(() => openTermSearch(p));
+  }
   if (e.altKey && e.code === "Digit1") return hit(() => focusBig(active)); // the agent (the shell while there's none)
   if (e.altKey && e.code === "Digit2") return hit(() => $(".changes li[data-i]", active?.view)?.focus());
   if (e.altKey && e.code === "Digit3") return hit(() => active?.panes.shell.term.focus());
@@ -2526,6 +2585,7 @@ function labState() {
       return lineText(p.term, b.baseY + b.cursorY + 1).text.trimEnd();
     })(),
     width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth,
+    tsearch: $("#tsearch").hidden ? null : { q: $("#tsearch-q").value, n: $("#tsearch-n").textContent, pane: tsearchPane?.kind || null, alt: !$("#tsearch-alt").hidden },
     // the top bar and the hint line stay one line, nothing pushed out (#38)
     barFits: (() => { const b = $("#bar"); return b.scrollWidth <= b.clientWidth + 1 && [...b.children].every((c) => c.hidden || c.offsetHeight <= b.clientHeight); })(),
     hintFits: (() => { const h = $("#hint"); return h.scrollHeight <= h.clientHeight + 1; })(),
@@ -2538,7 +2598,7 @@ function fakeUsage(tab) {
     usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
   renderBar(tab);
 }
-const LAB_CALLS = { fakeUsage: () => fakeUsage(active), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
+const LAB_CALLS = { fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
@@ -2561,7 +2621,11 @@ async function labRun(steps) {
       else if (s.ime != null) await invoke("ime_compose", { text: s.ime }); // Hangul being composed
       else if (s.text != null) await invoke("ime_commit", { text: s.text }); // text committed (typed / IME done)
       else if (s.invoke) await invoke(s.invoke, JSON.parse(JSON.stringify(s.args || {}).replaceAll('"$ws"', JSON.stringify(active?.id || "")))); // a test command; "$ws" = the current tab
-      else if (s.resize) { await invoke("win_resize_test", { w: s.resize[0], h: s.resize[1] }); await wait(400); }
+      else if (s.grep) { // the lines of the big pane's whole buffer (scrollback included) that contain it
+        const t = bigPane(active).term, b = t.buffer.active, rows = [];
+        for (let y = 0; y < b.length; y++) { const l = b.getLine(y)?.translateToString(true) || ""; if (l.includes(s.grep)) rows.push(y); }
+        await log(`lab-grep ${s.grep} rows=${JSON.stringify(rows)} length=${b.length} baseY=${b.baseY} type=${b.type}`);
+      } else if (s.resize) { await invoke("win_resize_test", { w: s.resize[0], h: s.resize[1] }); await wait(400); }
       else if (s.call && LAB_CALLS[s.call]) await LAB_CALLS[s.call]();
     }
   } catch (e) { await log(`lab-error ${e?.stack || e}`); }
@@ -2639,6 +2703,9 @@ async function uiScenes(set) {
       // the top bar and the hint line at four window widths (#38): an agent waiting, with usage
       fakeUsage(tab);
       for (const w of [1400, 1100, 900, 720]) { await invoke("win_resize_test", { w, h: 600 }); await shot(`bar-${w}`); }
+      // find in the terminal (#40): the search line on the big pane, a query typed
+      await invoke("win_resize_test", { w: 1400, h: 900 });
+      openTermSearch(bigPane(tab)); $("#tsearch-q").value = "proj"; termFind(1, true); await shot("term-search"); closeTermSearch();
     }
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("done");

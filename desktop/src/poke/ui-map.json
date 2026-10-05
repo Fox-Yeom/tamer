@@ -44,7 +44,8 @@
         "bar-1400",
         "bar-1100",
         "bar-900",
-        "bar-720"
+        "bar-720",
+        "term-search"
       ]
     }
   },
@@ -266,6 +267,29 @@
       ],
       "selectors": [
         "#hint"
+      ],
+      "screens": [
+        "main"
+      ]
+    },
+    "term-search": {
+      "what": "터미널 검색 줄(⌘F): 포커스된 칸 오른쪽 위, 입력·결과 수·↑↓·✕ (#40)",
+      "files": [
+        "index.html",
+        "src/style.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        "#tsearch",
+        "#tsearch-q",
+        "#tsearch-n",
+        ".pane"
+      ],
+      "functions": [
+        "openTermSearch",
+        "closeTermSearch",
+        "termFind",
+        "tsearchCount"
       ],
       "screens": [
         "main"

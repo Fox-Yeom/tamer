@@ -18,7 +18,7 @@
     </header>
     <nav id="tabs"><button id="new-tab" title="새 탭 (⌘T)">＋</button></nav>
     <div id="views"></div>
-    <footer id="hint" class="dim" title="⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭">⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭</footer>
+    <footer id="hint" class="dim" title="⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘F 찾기 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭">⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘F 찾기 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭</footer>
 
     <!-- start screen: recent folders (shared with the Neovim CVIM) -->
     <section id="start" hidden>
@@ -81,6 +81,8 @@
         <div id="diff-body"></div>
       </div>
     </section>
+    <!-- #40 find in the terminal (⌘F): moved into the focused pane while open -->
+    <div id="tsearch" hidden><input id="tsearch-q" spellcheck="false" placeholder="터미널에서 찾기" /><span id="tsearch-n" class="dim"></span><span id="tsearch-alt" hidden title="이 칸의 프로그램(예: Claude Code)이 전체 화면 모드라, 터미널에는 지금 보이는 화면만 있어요. 위로 스크롤해 보이는 지난 내용은 그 프로그램이 다시 그려 주는 것이라 여기서 찾을 수 없어요 — 프로그램 안의 기록·검색 기능을 써 주세요">보이는 화면만</span><button data-dir="prev" title="이전 (⇧↵)">↑</button><button data-dir="next" title="다음 (↵)">↓</button><button data-dir="close" title="닫기 (Esc)">✕</button></div>
     <div id="toast"></div>
     <script type="module" src="/src/main.js"></script>
   </body>
