@@ -1,7 +1,7 @@
 {
   "name": "cvim-desktop",
   "private": true,
-  "version": "0.3.0-beta.29",
+  "version": "0.3.0-beta.30",
   "description": "Tamer (CVIM v2) desktop app — Electron + Rust core (cvim-core)",
   "type": "module",
   "scripts": {
@@ -19,7 +19,9 @@
     "ui:shots": "node scripts/ui-shots.cjs",
     "ui:impact": "node scripts/ui-impact.cjs",
     "firstrun": "node scripts/first-run.cjs",
-    "lab": "node scripts/lab.cjs"
+    "lab": "node scripts/lab.cjs",
+    "spec:check": "node scripts/spec.cjs check",
+    "spec:impact": "node scripts/spec.cjs impact"
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.10",

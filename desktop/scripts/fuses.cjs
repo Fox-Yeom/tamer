@@ -1,5 +1,5 @@
 // Turn off Electron features this app doesn't need and that would let other programs run code
-// as Tamer (POLICY.md 11): ELECTRON_RUN_AS_NODE, NODE_OPTIONS, --inspect. Turn on asar
+// as Tamer (docs/policy POL-SEC-01): ELECTRON_RUN_AS_NODE, NODE_OPTIONS, --inspect. Turn on asar
 // integrity so the packaged app code can't be swapped. Runs after packaging; re-signs ad hoc.
 const path = require("node:path");
 const { flipFuses, FuseVersion, FuseV1Options } = require("@electron/fuses");

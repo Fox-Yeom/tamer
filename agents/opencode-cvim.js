@@ -22,7 +22,6 @@ function line(event, tool = "", detail = "") {
 
 // OpenCode tool names → the ones CVIM knows (state icons)
 const TOOL = { edit: "Edit", write: "Write", read: "Read", grep: "Grep", glob: "Glob", list: "LS", bash: "Bash", webfetch: "WebFetch", task: "Task" };
-const detailOf = (a = {}) => a.filePath || a.path || a.command || a.pattern || a.url || a.description || "";
 
 export const CvimEvents = async () => {
   let busy = false;
@@ -45,11 +44,12 @@ export const CvimEvents = async () => {
           break;
         case "permission.asked":
         case "question.asked":
-          line("Notification", "", p.permission || p.tool || "input");
+          line("Notification", "", "input"); // that it asks, not what
           break;
       }
     },
-    "tool.execute.before": async (input, output) => line("PreToolUse", TOOL[input?.tool] || input?.tool || "tool", detailOf(output?.args)),
+    // the tool's name only — never its file path, command, pattern or URL (POL-DATA-02, 2026-10-05)
+    "tool.execute.before": async (input) => line("PreToolUse", TOOL[input?.tool] || input?.tool || "tool"),
     "tool.execute.after": async () => line("PostToolUse"),
   };
 };

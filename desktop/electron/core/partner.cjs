@@ -313,7 +313,8 @@ function prefetchNext(id, shiny) {
   const key = `${id}${shiny ? "s" : ""}`;
   if (!nextStage.has(key)) {
     nextStage.set(key, fetchPy(["evolve", String(id)]).then(async (next) => {
-      if (next) await fetchPy([next, ...(shiny ? ["shiny"] : [])]);
+      if (!next) { nextStage.delete(key); return ""; } // offline: ask again next time (don't remember a failure)
+      if (next !== "none") await fetchPy([next, ...(shiny ? ["shiny"] : [])]);
       return next;
     }));
   }
@@ -344,14 +345,15 @@ async function onDone(cwd) {
   try {
     // more than EVOLVE_EVERY carried over: it may evolve again right away
     for (;;) {
-      const nextId = await prefetchNext(m.id, m.shiny);
-      const next = nextId ? loadSprite(Number(nextId), m.shiny) : null;
+      const nextId = await prefetchNext(m.id, m.shiny); // a number, "none" (final) or "" (couldn't tell)
+      let next = nextId && nextId !== "none" ? loadSprite(Number(nextId), m.shiny) : null;
+      if (nextId && nextId !== "none" && !next) { await fetchPy([nextId, ...(m.shiny ? ["shiny"] : [])]); next = loadSprite(Number(nextId), m.shiny); } // its picture once more
       let again = false;
       updateBox((b) => {
         const x = monOf(b, m.uid);
         if (!x) return;
         if (x.id === m.id && (x.since_evo || 0) >= EVOLVE_EVERY) {
-          if (!nextId) x.final = true;
+          if (nextId === "none") x.final = true; // only a known end; offline ("") keeps the EXP for the next try
           else if (next) {
             (x.evo ||= []).push({ from: x.id, to: next.id, at: now() }); // evolution history (#44)
             x.id = next.id; x.since_evo -= EVOLVE_EVERY; to = next; again = x.since_evo >= EVOLVE_EVERY;

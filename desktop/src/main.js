@@ -2695,7 +2695,7 @@ async function labRun(steps) {
       else if (s.grep) { // the lines of the big pane's whole buffer (scrollback included) that contain it
         const t = bigPane(active).term, b = t.buffer.active, rows = [];
         for (let y = 0; y < b.length; y++) { const l = b.getLine(y)?.translateToString(true) || ""; if (l.includes(s.grep)) rows.push(y); }
-        await log(`lab-grep ${s.grep} rows=${JSON.stringify(rows)} length=${b.length} baseY=${b.baseY} type=${b.type}`);
+        await log(`lab-grep ${s.grep} rows=${JSON.stringify(rows)} length=${b.length} baseY=${b.baseY} type=${b.type}${rows.length ? ` text=${JSON.stringify((b.getLine(rows[0])?.translateToString(true) || "").slice(0, 160))}` : ""}`);
       } else if (s.resize) { await invoke("win_resize_test", { w: s.resize[0], h: s.resize[1] }); await wait(400); }
       else if (s.call && LAB_CALLS[s.call]) await LAB_CALLS[s.call]();
     }

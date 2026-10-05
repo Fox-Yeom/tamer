@@ -18,6 +18,17 @@ const path = require("node:path");
 const filesWith = (dir, needle) => { const out = []; if (!fs.existsSync(dir)) return out; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else { try { if (fs.readFileSync(f, "utf8").includes(needle)) out.push(path.relative(dir, f)); } catch {} } } }; walk(dir); return out; };
 // #45: a stand-in Claude for the shell (prints its arguments, feeds a status line through Tamer's script)
 const FAKE_CLAUDE = "#!/bin/sh\n# a stand-in Claude: says what it was started with, then — like the real one, which redraws its status line all the time — reports a status line through Tamer's script every second\necho \"fake-claude args: $*\"\nfor i in $(seq 30); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":12}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $((now+3600)) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n";
+// a partner one task away from evolving (Charmander, EXP 7 of 8) in the case's "proj" folder (PKM-04)
+function evolvePartner(box) {
+  const C = box.data, proj = box.folder("proj"), now = Math.floor(Date.now() / 1000);
+  const b = JSON.parse(fs.readFileSync(path.join(C, "box.json"), "utf8"));
+  b.mons.push({ uid: 99, id: 4, shiny: false, xp: 7, since_evo: 7, how: "starter", at: now - 3600, folder: proj });
+  b.mons = b.mons.map((m) => (m.uid === 99 ? { ...m, uid: 1 } : m.uid === 1 ? { ...m, uid: 98 } : m));
+  fs.writeFileSync(path.join(C, "box.json"), JSON.stringify(b));
+  const f = JSON.parse(fs.readFileSync(path.join(C, "folders.json"), "utf8"));
+  f[proj] = { id: 4, uid: 1, pinned: true };
+  fs.writeFileSync(path.join(C, "folders.json"), JSON.stringify(f));
+}
 const envMs = (log) => { const m = log.match(/env ready .*?\+(\d+)ms/); return m ? Number(m[1]) : null; };
 
 module.exports = [
@@ -357,5 +368,83 @@ module.exports = [
         ok(!text.includes("Tamer: Claude 연결") && /PS1='lab\$ '/.test(text), "해제 뒤 블록이 남았거나 원래 줄이 사라짐"),
       ];
     },
+  },
+  // ── test debt, group A (docs/spec: PKM-04, APP-04, AGT-15, PKM-16) and the hook log (STA-02, POL-DATA-02) ──
+  {
+    id: "evolve-offline", tags: ["smoke", "poke"], what: "진화 차례에 오프라인: 최종 진화로 굳지 않고 EXP는 그대로 — 다음에 다시 시도 (PKM-04)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => evolvePartner(box),
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } },
+      { wait: 2500 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
+    check: ({ log, box }) => {
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+      const raw = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8")).mons.find((x) => x.uid === 1);
+      return [
+        ok(m?.id === 4 && m.xp === 8, `파트너 ${JSON.stringify(m && { id: m.id, xp: m.xp })} (파이리 EXP 8이어야)`),
+        ok(!raw?.final, "오프라인인데 최종 진화로 굳음 — 다시는 진화하지 않게 됨"),
+        ok(m?.toEvolve === 0, `진화까지 ${m?.toEvolve} (다음 완료 때 다시 시도 = 0)`),
+      ];
+    },
+  },
+  {
+    id: "evolve-online", tags: ["net", "poke"], what: "진화 차례(온라인): 다음 단계로 진화하고 진화 이력이 남음 (PKM-04, PKM-15)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    setup: (box) => evolvePartner(box),
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } },
+      { wait: 12000 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
+    check: ({ log }) => {
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+      return [ok(m?.id === 5, `진화 안 함 (${m?.id}) — 파이리 → 리자드`), ok(m?.evo?.length === 1, `진화 이력 ${JSON.stringify(m?.evo)}`)];
+    },
+  },
+  {
+    id: "data-perms-prune", tags: ["smoke", "data"], what: "시작할 때 데이터 폴더는 소유자만(700/600)으로, 8일 된 훅 기록은 지움 (APP-04, POL-DATA-03·04)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      const tabs = path.join(box.dir, "state", "tabs"); fs.mkdirSync(tabs, { recursive: true });
+      for (const [n, days] of [["old", 8], ["fresh", 1]]) { const f = path.join(tabs, `${n}.log`); fs.writeFileSync(f, "{}\n", { mode: 0o644 }); const t = Date.now() / 1000 - days * 86400; fs.utimesSync(f, t, t); }
+      fs.chmodSync(path.join(box.data, "box.json"), 0o644);
+    },
+    steps: [{ until: "tabs.0" }, { wait: 800 }, { probe: "after" }],
+    check: ({ box }) => {
+      const tabs = path.join(box.dir, "state", "tabs"), loose = [];
+      const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, e.name), m = fs.statSync(p).mode & 0o777; if (e.isDirectory()) { if (m !== 0o700) loose.push(`${path.relative(box.dir, p)} ${m.toString(8)}`); walk(p); } else if (m !== 0o600) loose.push(`${path.relative(box.dir, p)} ${m.toString(8)}`); } };
+      walk(box.data);
+      return [
+        ok(!fs.existsSync(path.join(tabs, "old.log")), "8일 된 훅 기록이 남음"),
+        ok(fs.existsSync(path.join(tabs, "fresh.log")), "하루 된 훅 기록이 지워짐"),
+        ok(!loose.length, `소유자만이 아닌 것: ${loose.slice(0, 4).join(", ")}`),
+      ];
+    },
+  },
+  {
+    id: "restore-resume", tags: ["smoke", "restore", "agents"], what: "갑자기 꺼진 뒤 복원: 에이전트가 켜져 있던 탭은 대화를 이어서(claude --continue) 띄움 (AGT-15, TAB-10)",
+    data: "owner", mode: "direct", folders: [], make: ["a"], session: { tabs: ["a"], active: "a", shell: [] },
+    pathFirst: ["fakebin"], files: { "fakebin/claude": "#!/bin/sh\necho \"fake-claude args: $*\"\nsleep 30\n" },
+    steps: [{ until: "tabs.0" }, { wait: 4000 }, { grep: "fake-claude args" }, { probe: "after" }],
+    check: ({ log }) => [ok(/agent-start \S+ claude resume=true/.test(log), "복원한 탭에 에이전트가 이어서 모드로 안 뜸"), ok(/lab-grep fake-claude args rows=\[\d[^\n]*text="fake-claude args: --continue/.test(log), `claude에 --continue가 안 붙음 (${log.match(/lab-grep fake-claude[^\n]*/)?.[0]})`)],
+  },
+  {
+    id: "wild-toggle", tags: ["smoke", "poke"], what: "야생 끄면 작업을 끝내도 안 나옴, 켜면 나옴 (PKM-16)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: false, next: { id: 16, shiny: false } })),
+    steps: [{ until: "tabs.0" }, { wait: 500 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 800 },
+      { invoke: "wild_toggle", log: true },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "done", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 800 }, { probe: "after" }],
+    check: ({ log }) => {
+      const appeared = log.split("\n").filter((l) => /^wild appeared/.test(l));
+      return [ok(/^lab-invoke wild_toggle true$/m.test(log), "켜기가 안 됨"), ok(appeared.length === 1 && /wild appeared 16 /.test(appeared[0]), `야생 등장 ${appeared.length}번 (끈 동안 0, 켠 뒤 1이어야)`)];
+    },
+  },
+  {
+    id: "hook-log-minimal", tags: ["smoke", "agents", "data"], what: "훅 기록엔 이벤트·도구 이름·종류만 — 명령·경로·메시지 글은 안 남음 (STA-02, POL-DATA-02)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: `L="$CVIM_STATE_DIR/tabs/$CVIM_TAB_ID.log"; printf '{"tool_name":"Bash","tool_input":{"command":"curl -H Bearer LABSECRET9 https://x"}}' | bash "$CVIM_ROOT/claude/hooks/event.sh" PreToolUse; printf '{"message":"needs permission for /Users/x/LABPATH9"}' | bash "$CVIM_ROOT/claude/hooks/event.sh" Notification; echo "LEAK=$(grep -c 'LABSECRET9\\|LABPATH9' "$L") LINES=$(wc -l < "$L" | tr -d ' ')"` },
+      { wait: 200 }, { key: "Enter" }, { wait: 1500 }, { grep: "LEAK=0 LINES=2" }],
+    check: ({ log }) => [ok(/lab-grep LEAK=0 LINES=2 rows=\[\d/.test(log), "훅 기록에 명령·경로가 남았거나 줄이 안 써짐")],
   },
 ];

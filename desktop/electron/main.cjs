@@ -851,7 +851,7 @@ const overlayCommands = {
 
 // ── commands from the UI ────────────────────────────────────────────────────
 // What the UI may ask for. The UI never names a program: the main process decides what runs in
-// each pane, and folders must be real directories (POLICY.md 11). A compromised page can't do more.
+// each pane, and folders must be real directories (docs/policy POL-SEC-02). A compromised page can't do more.
 const commands = {
   startup_mark({ what }) { logLine(`startup ${String(what).slice(0, 40)} +${since()}ms`); },
   app_info() {

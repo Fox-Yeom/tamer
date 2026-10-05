@@ -99,7 +99,7 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 ## 데이터와 개인정보
 - 모든 데이터는 **이 맥에만** 있습니다: `~/.cache/tamer/`(폴더 기록, 파트너·도감, 상태 파일), `~/Library/Application Support/Tamer/`(창 설정). 데이터 파일이 깨져 읽히지 않으면 덮어쓰기 전에 원본을 `~/.cache/tamer/backup/corrupt/`에 남겨 둡니다
 - Tamer가 밖으로 보내는 것은 없습니다. 인터넷은 받기에만 씁니다: 포켓몬 이미지·이름(PokéAPI, GitHub의 스프라이트), 그리고 `≈$` 비용 추정용 모델 가격표(GitHub의 LiteLLM 가격표, 필요할 때 하루 한 번).
-- 에이전트 **대화 내용은 저장하지 않습니다.** 상태 표시를 위해 이벤트 종류 · 도구 이름 · 짧은 인자(파일 경로 등) · 모델 이름 · 토큰 수만 읽습니다.
+- 에이전트 **대화 내용은 저장하지 않습니다.** 상태 표시를 위해 이벤트 종류 · 도구 이름 · 모델 이름 · 토큰 수를 읽고, 이 맥에 남기는 것은 이벤트 종류 · 도구 이름 · "입력 필요/쉬는 중" 같은 종류 값뿐입니다(7일 뒤 정리). 에이전트가 다룬 파일 경로 · 명령 · 메시지 글은 남기지 않습니다.
 - 에이전트는 내 터미널과 같은 환경으로 실행됩니다(시작할 때 셸 환경을 한 번 읽고, 메모리에만 둠).
 - Claude는 Tamer가 띄울 때(또는 직접 켠 "셸에서 친 Claude도 연결"이 있을 때 Tamer 셸 안에서만) 상태 표시용 설정이 붙고, `~/.claude/settings.json`은 건드리지 않습니다. 연결을 켜면 셸 설정 파일에 표시된 블록 하나가 들어가고(사본은 `~/.cache/tamer/backup/shell-rc`), 해제하면 그 블록만 빠집니다.
 
@@ -116,9 +116,10 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 - Windows · Linux는 아직 지원하지 않습니다.
 
 ## 지우기
-1. Tamer 종료 → Applications에서 Tamer를 휴지통으로
-2. (데이터까지) `~/.cache/tamer`, `~/Library/Application Support/Tamer` 삭제
-3. (Gemini 확장을 연결했다면) `gemini extensions uninstall cvim`
+1. ("셸에서 친 Claude도 연결"을 켰다면, 먼저) ⌘G → ⚙ 에이전트 연결 상태 → **연결 해제**. 이미 앱을 지웠다면 셸 설정 파일(`~/.zshrc` · `~/.bash_profile` · `~/.config/fish/config.fish` 중 쓰는 것)에서 `# >>> Tamer: Claude 연결` 부터 `# <<< Tamer: Claude 연결 <<<` 까지 지우세요(Tamer 밖에서는 아무 일도 하지 않는 줄이라 남아 있어도 동작엔 영향 없음)
+2. Tamer 종료 → Applications에서 Tamer를 휴지통으로
+3. (데이터까지) `~/.cache/tamer`, `~/Library/Application Support/Tamer` 삭제
+4. (Gemini 확장을 연결했다면) `gemini extensions uninstall cvim`
 
 ## 라이선스 · 고지
 - 메뉴 **Tamer → 오픈소스 고지**: Tamer에 들어 있는 오픈소스와 라이선스

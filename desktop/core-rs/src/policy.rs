@@ -1,4 +1,4 @@
-//! Path policy: is a path inside a workspace folder? (POLICY.md 11.2 — agent file access, sprites)
+//! Path policy: is a path inside a workspace folder? (docs/policy POL-SEC-02 — agent file access, sprites)
 //! Symlinks and `..` are resolved before comparing, so a link inside the folder that points
 //! outside it is outside. Paths that don't exist yet (a file about to be written) are checked by
 //! resolving their nearest existing parent.

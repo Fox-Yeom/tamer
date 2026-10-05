@@ -103,11 +103,12 @@ async function fetchOne(id, shiny, info = null) {
 const shinyRoll = () => Math.floor(rng() * SHINY_ODDS) === 0;
 
 // the commands (v1 fetch.py's command line): ["random"] ["wild"] ["starter", …types] ["<id>", "shiny"?]
-// ["evolve", "<id>"] → a JSON path / the next id as text / "" (offline, not found)
+// ["evolve", "<id>"] → a JSON path / the next id as text / "none" (it has no next stage) / "" (offline,
+// failed — not the same as "none": an offline evolution must not mark it final, PKM-04)
 async function run(args) {
   try {
     const [a = "random", ...rest] = args.map(String);
-    if (a === "evolve") return String((await nextEvolution(Number(rest[0]))) ?? "");
+    if (a === "evolve") return String((await nextEvolution(Number(rest[0]))) ?? "none");
     if (a === "starter") { const [id, info] = await pickStarter(rest); return await fetchOne(id, shinyRoll(), info); }
     if (a === "random" || a === "wild") { const [id, info] = await (a === "random" ? pickRandom() : pickWild()); return await fetchOne(id, shinyRoll(), info); }
     return await fetchOne(Number(a), rest[0] === "shiny");

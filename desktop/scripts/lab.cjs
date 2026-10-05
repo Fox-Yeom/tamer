@@ -42,7 +42,9 @@ if (!picked.length) { console.error("no case matches"); process.exit(1); }
     if (c.slowShell) env.SHELL = T.slowShell(box.dir, c.slowShell);
     // files the case puts in its sandbox ({ "fakebin/codex": "#!/bin/sh …" }, made executable) and
     // folders put first on PATH (a fake program shadowing the real one)
-    for (const [f, text] of Object.entries(c.files || {})) { const p = path.join(box.dir, f); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, text, { mode: 0o755 }); }
+    // a file's text may be a function of the sandbox (paths of its folders): (box) => text
+    for (const [f, text] of Object.entries(c.files || {})) { const p = path.join(box.dir, f); fs.mkdirSync(path.dirname(p), { recursive: true }); fs.writeFileSync(p, typeof text === "function" ? text(box) : text, { mode: 0o755 }); }
+    if (c.setup) c.setup(box); // anything else the case needs in its sandbox before launch (old files, dates …)
     if (c.pathFirst) env.PATH = [...c.pathFirst.map((d) => path.join(box.dir, d)), process.env.PATH].join(":");
     const t0 = Date.now();
     const { log, timedOut } = await T.launch({ env, mode: c.mode, folders: (c.folders || []).map((f) => box.folder(f)), lateMs: v.lateMs ?? 300, args: c.args || [], timeoutMs: (c.timeoutMs || 60000) + (c.slowShell || 0) * 1000 });
