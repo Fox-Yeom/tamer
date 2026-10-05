@@ -23,7 +23,6 @@
 html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
   font: 13px -apple-system, "Apple SD Gothic Neo", sans-serif; overflow: hidden; }
 #bar { display: flex; gap: 10px; align-items: center; height: 28px; padding: 0 10px; border-bottom: 1px solid var(--line); }
-.brand { background: var(--accent); color: #1b1b1f; font-weight: 700; padding: 1px 8px; border-radius: 3px; }
 .agent { font-weight: 700; padding: 1px 8px; border-radius: 3px; color: #1b1b1f; }
 .dim { color: var(--dim); }
 .grow { flex: 1; }
@@ -49,7 +48,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
 .avatar-box { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; }
 /* crisp pixels: integer scale set from JS, nearest-neighbour */
 .poke { image-rendering: pixelated; transform-origin: 50% 100%; }
-#hint { height: 22px; padding: 3px 10px; border-top: 1px solid var(--line); font-size: 12px; }
+#hint { height: 22px; padding: 3px 10px; border-top: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #toast { position: fixed; top: 40px; right: 16px; background: #33333f; padding: 8px 12px; border-radius: 6px; opacity: 0; transition: opacity .2s; }
 #toast.show { opacity: 1; }
 
@@ -261,3 +260,12 @@ body.away #wild { visibility: hidden; }
 body.ui-test *, body.ui-test *::before, body.ui-test *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }
 body.ui-test .xterm-cursor-layer, body.ui-test .xterm .xterm-cursor { visibility: hidden !important; }
 body.ui-test .xterm-screen { visibility: hidden !important; } /* what the shells print varies with timing */
+
+/* #38 the top bar on a narrow window: one line always; what gives way first, in steps —
+   gauges and the model name (≤1200), parent folders and the "⌘G 에이전트" hint (≤1000), the
+   state sentence (≤800, the icon stays; the tab shows it too). Hover shows the full text. */
+#bar > * { white-space: nowrap; flex-shrink: 0; }
+#bar > #cwd { flex-shrink: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1200px) { #usage .gauge, #usage .u-model, #usage .u-model + .sep { display: none; } }
+@media (max-width: 1000px) { #cwd .cwd-parent, #agent .bar-wide { display: none; } }
+@media (max-width: 800px) { #doing .doing-text { display: none; } }

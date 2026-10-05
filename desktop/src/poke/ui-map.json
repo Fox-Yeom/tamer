@@ -36,6 +36,16 @@
       "what": "에이전트 연결 창 (첫 실행 자동 · ⌘G → ⚙) — 포켓몬 창 위(z 26)",
       "entry": "openAgents",
       "scenes": []
+    },
+    "main": {
+      "what": "메인 창 상단 바(에이전트·폴더·상태·사용량)와 아래 단축키 줄 — 창 폭에 따라 줄어듦 (#38)",
+      "entry": "renderBar",
+      "scenes": [
+        "bar-1400",
+        "bar-1100",
+        "bar-900",
+        "bar-720"
+      ]
     }
   },
   "components": {
@@ -219,6 +229,46 @@
       ],
       "screens": [
         "agents"
+      ]
+    },
+    "top-bar": {
+      "what": "상단 바: 에이전트 알약 · 폴더 · 요약 · 상태 · 사용량, 폭별 줄이기(≤1200 막대·모델, ≤1000 경로·셸 안내, ≤800 상태 문장)",
+      "files": [
+        "index.html",
+        "src/style.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        "#bar",
+        "#agent",
+        ".agent",
+        "#cwd",
+        "#summary",
+        "#doing",
+        "#usage",
+        ".gauge",
+        ".bar-wide"
+      ],
+      "functions": [
+        "renderBar",
+        "showAgent",
+        "selectTab"
+      ],
+      "screens": [
+        "main"
+      ]
+    },
+    "hint-line": {
+      "what": "아래 단축키 줄 — 한 줄, 넘치면 … (전체는 마우스를 올리면)",
+      "files": [
+        "index.html",
+        "src/style.css"
+      ],
+      "selectors": [
+        "#hint"
+      ],
+      "screens": [
+        "main"
       ]
     }
   },

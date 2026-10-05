@@ -356,7 +356,7 @@ function showAgent(tab, a) {
   $(".agent-name", tab.view).innerHTML = titleHTML(tab.sessions?.length > 1 ? `${paneTitle(tab, a)} · 셸 ${sessNo(tab, curSession(tab)) || 1}` : paneTitle(tab, a), tab.hostAgent && curSession(tab)?.hostWhere);
   if (tab === active) {
     const tag = $("#agent"), bare = tab.shellOnly && !tab.hostAgent; // S2: no agent yet
-    tag.textContent = bare ? "🐚 셸 · ⌘G 에이전트" : a.label;
+    tag.innerHTML = bare ? '🐚 셸<span class="bar-wide"> · ⌘G 에이전트</span>' : esc(a.label);
     tag.style.background = bare ? "#33333f" : a.color;
     tag.style.color = bare ? "var(--fg)" : "";
   }
@@ -537,7 +537,10 @@ function selectTab(tab) {
   active = tab;
   for (const t of tabs) t.view.hidden = t !== tab;
   for (const p of Object.values(tab.panes)) resize(p);
-  $("#cwd").textContent = tab.cwd.replace(info.home, "~");
+  // the folder name always shows; its parent folders give way first on a narrow window (#38)
+  const shown = tab.cwd.replace(info.home, "~"), cut = shown.lastIndexOf("/") + 1;
+  $("#cwd").innerHTML = `<span class="cwd-parent">${esc(shown.slice(0, cut))}</span>${esc(shown.slice(cut))}`;
+  $("#cwd").title = shown;
   if (tab.agent) showAgent(tab, tab.agent);
   if (tab.state) renderBar(tab);
   renderTabs();
@@ -834,21 +837,26 @@ function renderBar(tab) {
   const what = DOING[st.state] || "";
   const detail = DETAIL_STATES.includes(st.state) ? ` ${short(st.detail).slice(0, 32)}` : "";
   doing.className = st.state === "waiting" || st.state === "error" ? "bad" : "dim";
-  doing.textContent = st.state === "waiting" ? `❗ ${what}` : `${ICON[st.state] || ""} ${what}${detail}`;
+  // narrow windows keep the icon only (the tab shows the state too) (#38)
+  doing.innerHTML = st.state === "waiting" ? `❗<span class="doing-text"> ${esc(what)}</span>` : `${ICON[st.state] || ""}<span class="doing-text"> ${esc(what + detail)}</span>`;
+  doing.title = `${what}${detail}`;
   document.title = `${ICON[st.state] || ""} ${base(tab.cwd)} — Tamer`;
   const u = withLast(st, tab), parts = [];
   const old = (k) => (u.stale?.includes(k) ? ' title="지난번 값 — 첫 응답 뒤에 새로 고쳐져요" style="opacity:.55"' : "");
-  if (u?.model) parts.push(`<span class="dim"${old("model")}>${esc(u.model)}</span>`);
-  if (u?.ctx != null) parts.push(`<span class="${level(u.ctx)}">ctx ${bar(u.ctx)} ${Math.round(u.ctx)}%</span>`);
+  // gauges and the model name give way first on a narrow window: the numbers stay (#38)
+  const gauge = (p) => `<span class="gauge">${bar(p)} </span>`;
+  if (u?.model) parts.push(`<span class="dim u-model"${old("model")}>${esc(u.model)}</span>`);
+  if (u?.ctx != null) parts.push(`<span class="${level(u.ctx)}">ctx ${gauge(u.ctx)}${Math.round(u.ctx)}%</span>`);
   else if (u?.ctx_tokens != null) parts.push(`<span class="dim">ctx ${Math.round(u.ctx_tokens / 1000)}k</span>`);
-  if (u?.five_hour) parts.push(`<span class="${level(u.five_hour.pct)}"${old("five_hour")}>5h ${bar(u.five_hour.pct)} ${Math.round(u.five_hour.pct)}%${untilReset(u.five_hour.resets_at)}</span>`);
-  if (u?.seven_day) parts.push(`<span class="${level(u.seven_day.pct)}"${old("seven_day")}>7d ${bar(u.seven_day.pct)} ${Math.round(u.seven_day.pct)}%</span>`);
+  if (u?.five_hour) parts.push(`<span class="${level(u.five_hour.pct)}"${old("five_hour")}>5h ${gauge(u.five_hour.pct)}${Math.round(u.five_hour.pct)}%${untilReset(u.five_hour.resets_at)}</span>`);
+  if (u?.seven_day) parts.push(`<span class="${level(u.seven_day.pct)}"${old("seven_day")}>7d ${gauge(u.seven_day.pct)}${Math.round(u.seven_day.pct)}%</span>`);
   if (u?.cost != null) parts.push(`<span class="dim">$${u.cost.toFixed(2)}</span>`);
   else if (u?.tokens) { // no cost of its own (Claude typed in the shell, Codex): tokens × API prices (#23)
     const c = estCost(u.tokens);
     if (c != null) parts.push(`<span class="dim" title="토큰 수 × API 가격으로 계산한 추정치 — 실제 청구 금액이 아니에요">≈$${c.toFixed(2)}</span>`);
   }
-  $("#usage").innerHTML = parts.length ? parts.join('<span class="dim"> │ </span>') : `<span class="dim">${esc(st.agent?.short)}</span>`;
+  $("#usage").innerHTML = parts.length ? parts.join('<span class="dim sep"> │ </span>') : `<span class="dim">${esc(st.agent?.short)}</span>`;
+  $("#usage").title = u?.model || "";
 }
 
 // ── usage before the first reply (and for a Claude started in the shell, which has no statusLine)
@@ -2518,10 +2526,19 @@ function labState() {
       return lineText(p.term, b.baseY + b.cursorY + 1).text.trimEnd();
     })(),
     width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth,
+    // the top bar and the hint line stay one line, nothing pushed out (#38)
+    barFits: (() => { const b = $("#bar"); return b.scrollWidth <= b.clientWidth + 1 && [...b.children].every((c) => c.hidden || c.offsetHeight <= b.clientHeight); })(),
+    hintFits: (() => { const h = $("#hint"); return h.scrollHeight <= h.clientHeight + 1; })(),
     pokeFits: dexOpen() ? (() => { const r = $("#dex .pk-window")?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() : null,
   };
 }
-const LAB_CALLS = { openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
+// tests: the top bar as with an agent waiting, every usage item shown (ui:shots, lab)
+function fakeUsage(tab) {
+  tab.state = { state: "waiting", detail: "", agent: { key: "claude", short: "Claude" },
+    usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
+  renderBar(tab);
+}
+const LAB_CALLS = { fakeUsage: () => fakeUsage(active), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
@@ -2618,6 +2635,9 @@ async function uiScenes(set) {
       await search("age0"); await shot("box-search");
       await search("zzz"); await shot("box-empty");
       await search(""); dexView("dex"); closeDex();
+      // the top bar and the hint line at four window widths (#38): an agent waiting, with usage
+      fakeUsage(tab);
+      for (const w of [1400, 1100, 900, 720]) { await invoke("win_resize_test", { w, h: 600 }); await shot(`bar-${w}`); }
     }
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("done");

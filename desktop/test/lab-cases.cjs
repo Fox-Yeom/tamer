@@ -197,12 +197,15 @@ module.exports = [
   },
   // ── window size ──
   {
-    id: "narrow-window", tags: ["explore", "layout"], what: "좁은 창(720×520): 가로로 넘치지 않고 포켓몬 창이 창 안에",
+    id: "narrow-window", tags: ["smoke", "layout"], what: "좁은 창(1100·900·720): 상단 바·단축키 줄이 한 줄로 들어감, 가로 넘침 없음, 포켓몬 창이 창 안에 (#38)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { call: "closeDex" }, { resize: [720, 520] }, { probe: "main" }, { call: "openDex" }, { wait: 500 }, { probe: "dex" }, { call: "box" }, { wait: 400 }, { probe: "box" }, { shot: "narrow-box" }],
+    steps: [{ until: "tabs.0" }, { call: "closeDex" }, { call: "fakeUsage" },
+      { resize: [1100, 600] }, { probe: "w1100" }, { resize: [900, 600] }, { probe: "w900" }, { shot: "narrow-900" }, { resize: [720, 520] }, { probe: "main" }, { shot: "narrow-720" },
+      { call: "openDex" }, { wait: 500 }, { probe: "dex" }, { call: "box" }, { wait: 400 }, { probe: "box" }, { shot: "narrow-box" }],
     check: ({ probe }) => [
       ok(probe.main?.width <= 730, `창 폭 ${probe.main?.width} (크기 바꾸기가 안 됨)`),
       ok(probe.main?.overflow === false, "메인 화면이 가로로 넘침"),
+      ...["w1100", "w900", "main"].flatMap((k) => [ok(probe[k]?.barFits === true, `${k}: 상단 바가 넘치거나 두 줄`), ok(probe[k]?.hintFits === true, `${k}: 단축키 줄이 두 줄`)]),
       ok(probe.dex?.pokeFits === true, "도감 창이 창 밖으로 나감"),
       ok(probe.box?.pokeFits === true, "내 포켓몬 창이 창 밖으로 나감"),
     ],
