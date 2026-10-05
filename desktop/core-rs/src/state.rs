@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::time::{Duration, Instant, SystemTime};
 
 /// States in which a turn is running (Esc / Ctrl-C can interrupt it).
@@ -72,6 +72,11 @@ pub struct Usage {
     pub ctx_window: Option<f64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ctx_tokens: Option<f64>,
+    /// tokens used so far by model, from the conversation log: [input, cache write (5 min),
+    /// cache write (1 hour), cache read, output] — the UI turns them into an estimated cost when
+    /// the agent gives none (#23). Claude Code writes 1-hour caches, priced higher
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<BTreeMap<String, [f64; 5]>>,
 }
 
 /// Claude's "waiting for your input" reminder (notification_type idle_prompt; older versions: the message)
@@ -190,6 +195,7 @@ pub fn usage_from_status(st: &Value) -> Usage {
         model_id: st["model"]["id"].as_str().map(Into::into),
         ctx_window: num(&st["context_window"]["context_window_size"]),
         ctx_tokens: None,
+        tokens: None,
     }
 }
 

@@ -11,6 +11,7 @@ const { HOME, CACHE, STATE, TABS, ROOT, writeFile, mkdirPrivate, tighten, pruneT
 const agents = require("./core/agents.cjs");
 const partner = require("./core/partner.cjs");
 const wild = require("./core/wild.cjs");
+const prices = require("./core/prices.cjs");
 const { RustCore } = require("./core/rust.cjs");
 
 const ptys = new Map(); // pane id "<ws>:<agent|shell>" -> IPty
@@ -566,6 +567,29 @@ function foreground(p) {
   });
 }
 
+// the folders a pane's relative paths are from (#26): the program in front (an agent after `cd`),
+// the shell, the tab — looked up at most every 2 s per pane
+const dirsCache = new Map();
+async function paneDirs(id, cwd) {
+  const hit = dirsCache.get(id);
+  if (hit && Date.now() - hit.at < 2000) return hit.dirs;
+  const p = ptys.get(String(id)), dirs = [];
+  if (p) {
+    const fg = await foreground(p);
+    for (const pid of [fg?.pid, p.pid]) { const d = pid && (await procCwd(pid)); if (d && !dirs.includes(d)) dirs.push(d); }
+  }
+  if (cwd && !dirs.includes(cwd)) dirs.push(String(cwd));
+  dirsCache.set(id, { at: Date.now(), dirs });
+  return dirs;
+}
+// the editor ⌘-clicked files open in: the first one installed
+function editorApp() {
+  for (const [name, scheme] of [["Visual Studio Code", "vscode"], ["Cursor", "cursor"], ["Zed", "zed"]]) {
+    if ([`/Applications/${name}.app`, path.join(HOME, `Applications/${name}.app`)].some((a) => fs.existsSync(a))) return scheme;
+  }
+  return "text";
+}
+
 // where a process runs (an agent typed after `cd`): its working directory, from lsof
 function procCwd(pid) {
   return new Promise((resolve) => {
@@ -748,6 +772,8 @@ let drag = null;
 const overlayCommands = {
   overlay_state: () => overlayPayload(),
   overlay_click({ ws }) { focusMain(String(ws)); },
+  // "📕 도감에서 보기" on the overlay's wild card: Tamer in front (keyboard included), its Pokédex on it
+  wild_dex({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); logLine("wild dex from overlay"); },
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
   overlay_fit({ width, height }) {
     if (drag) return;
@@ -826,6 +852,7 @@ const commands = {
         dexnav_test: !!process.env.CVIM_DESKTOP_DEXNAV_TEST, // arrows in the "새로 잡은" row (#17)
         links_test: !!process.env.CVIM_DESKTOP_LINKS_TEST, // ⌘-click links (#19)
         dexsearch_test: !!process.env.CVIM_DESKTOP_DEXSEARCH_TEST, // dex search terms (#21)
+        cost_test: !!process.env.CVIM_DESKTOP_COST_TEST, // ≈$ for a Claude typed in the shell (#23)
         keys_test: !!process.env.CVIM_DESKTOP_KEYS_TEST, // ⇧↵ / ⌘⌫ bytes (#7 #8)
         diag_test: !!process.env.CVIM_DESKTOP_DIAG_TEST, // diagnostics with nested folders open (#6)
         multi_test: !!process.env.CVIM_DESKTOP_MULTI_TEST, // a shell finishing while another needs you
@@ -954,6 +981,34 @@ const commands = {
     return { agent: agentInfo(t), id: p.cvimId };
   },
   // official install pages only
+  // file paths in a terminal (#26): which of these candidates are files / folders, from the pane's
+  // folders (the program in front, the shell, the tab). Only existence is checked, nothing is read
+  async file_links({ id, cwd, cands }) {
+    const bases = await paneDirs(id, cwd);
+    return (Array.isArray(cands) ? cands.slice(0, 40) : []).map((c) => {
+      const p = String(c || "");
+      if (!p || p.length > 400) return null;
+      const tries = p.startsWith("/") ? [p] : p.startsWith("~/") ? [path.join(HOME, p.slice(2))] : bases.map((b) => path.resolve(b, p));
+      for (const abs of tries) {
+        try { const st = fs.statSync(abs); return { abs, dir: st.isDirectory() }; } catch {}
+      }
+      return null;
+    });
+  },
+  // ⌘-click on a file path (#26): a file in the editor at its line (VS Code → Cursor → Zed → the
+  // default text editor), a folder in Finder. Never runs anything. Tests only log it
+  open_file({ abs, line, col }) {
+    const p = String(abs || "");
+    let st;
+    try { st = fs.statSync(p); } catch { throw new Error("no such file"); }
+    const ln = Math.max(1, Number(line) || 1), cl = Math.max(1, Number(col) || 1);
+    const editor = st.isDirectory() ? "finder" : editorApp();
+    logLine(`open file (${editor})`); // not the path: the log goes into the diagnostics
+    if (TEST) { linksOpened.push(`${editor}:${p}:${ln}:${cl}`); return; }
+    if (editor === "finder") return shell.openPath(p);
+    if (editor === "text") return execFile("open", ["-t", p]);
+    return shell.openExternal(`${editor}://file${encodeURI(p)}:${ln}:${cl}`);
+  },
   // ⌘-click on a link in a terminal (#19): web pages only, in the user's browser. Tests only log it
   open_link({ url }) {
     let u;
@@ -1012,6 +1067,8 @@ const commands = {
   // { starter: id } | { uid } — the rules are checked in partner.take
   partner_take({ ws, starter, uid }) { return partnerTake(wsOf(ws), starter != null ? { starter } : { uid }); },
   dex_list: () => partner.dex(),
+  // model prices for an estimated cost (#23), fetched only when asked (an agent without its own cost)
+  prices: () => prices.get(),
   dex_viewed: ({ id }) => partner.viewed(id),
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
@@ -1047,6 +1104,8 @@ const testCommands = {
     await dbg.sendCommand("Input.insertText", { text });
   },
   links_opened_test: () => linksOpened.splice(0),
+  // the overlay's "도감에서 보기" (#25), as if pressed there
+  wild_dex_test({ id }) { overlayCommands.wild_dex({ id }); },
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)
   async click_test({ x, y, modifiers = 0 }) {
     const dbg = win.webContents.debugger;

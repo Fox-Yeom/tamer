@@ -78,36 +78,89 @@ function openLink(e, uri) {
   invoke("open_link", { url: uri }).catch((err) => toast(String(err.message || err)));
 }
 
-// web addresses in the text, across wrapped lines, mapped to cells (Hangul takes 2 cells)
+// the text of buffer row y's logical line (wrapped rows joined) and where each character sits
+// (1-based cells; Hangul takes 2)
+function lineText(term, y) {
+  const buf = term.buffer.active;
+  let top = y - 1;
+  while (top > 0 && buf.getLine(top)?.isWrapped) top--;
+  let text = "";
+  const at = [];
+  for (let row = top; row < buf.length; row++) {
+    const line = buf.getLine(row);
+    if (!line || (row > top && !line.isWrapped)) break;
+    for (let x = 0; x < term.cols; x++) {
+      const cell = line.getCell(x);
+      if (!cell || cell.getWidth() === 0) continue;
+      const ch = cell.getChars() || " ";
+      for (const c of ch) { text += c; at.push({ x: x + 1, y: row + 1 }); }
+    }
+  }
+  return { text, at };
+}
+const onRow = (a, b, y) => a && b && (a.y === y || b.y === y || (a.y < y && b.y > y));
+
+// web addresses in the text
 const URL_RE = /https?:\/\/[^\s<>"'`\u3000-\u9fff\uac00-\ud7af]+/g;
+function urlsIn(text) {
+  const out = [];
+  for (const m of text.matchAll(URL_RE)) {
+    let url = m[0].replace(/[.,;:!?'"]+$/, "");
+    // a ")" that closes "(… url)" isn't part of it; one that's opened inside the url is
+    while (url.endsWith(")") && (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length) url = url.slice(0, -1);
+    out.push({ index: m.index, url });
+  }
+  return out;
+}
 function webLinks(term) {
   return {
     provideLinks(y, done) {
-      const buf = term.buffer.active;
-      let top = y - 1;
-      while (top > 0 && buf.getLine(top)?.isWrapped) top--;
-      let text = "";
-      const at = []; // text index → { x, y } (1-based cells)
-      for (let row = top; row < buf.length; row++) {
-        const line = buf.getLine(row);
-        if (!line || (row > top && !line.isWrapped)) break;
-        for (let x = 0; x < term.cols; x++) {
-          const cell = line.getCell(x);
-          if (!cell || cell.getWidth() === 0) continue;
-          const ch = cell.getChars() || " ";
-          for (const c of ch) { text += c; at.push({ x: x + 1, y: row + 1 }); }
-        }
-      }
-      const links = [];
-      for (const m of text.matchAll(URL_RE)) {
-        let url = m[0].replace(/[.,;:!?'"]+$/, "");
-        // a ")" that closes "(… url)" isn't part of it; one that's opened inside the url is
-        while (url.endsWith(")") && (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length) url = url.slice(0, -1);
-        const a = at[m.index], b = at[m.index + url.length - 1];
-        if (!a || !b || (a.y !== y && b.y !== y && !(a.y < y && b.y > y))) continue; // not on this line
-        links.push({ range: { start: a, end: b }, text: url, activate: (e) => openLink(e, url) });
+      const { text, at } = lineText(term, y), links = [];
+      for (const { index, url } of urlsIn(text)) {
+        const a = at[index], b = at[index + url.length - 1];
+        if (onRow(a, b, y)) links.push({ range: { start: a, end: b }, text: url, activate: (e) => openLink(e, url) });
       }
       done(links.length ? links : undefined);
+    },
+  };
+}
+
+// file paths in the text (#26): "src/a.ts:12", "./x", "/abs/y.md:3:5", "~/z", "Update(src/main.js)" —
+// a word with a "/" or a file extension, kept only if it exists from the pane's folders. ⌘-click
+// opens it in the editor at that line (a folder: Finder)
+const PATH_RE = /[\w.~\/@+-]*[\w\/@+-](?::\d+(?::\d+)?)?/g;
+function fileLinks(term, paneId, tab) {
+  return {
+    provideLinks(y, done) {
+      const { text, at } = lineText(term, y);
+      const urls = urlsIn(text).map((u) => [u.index, u.index + u.url.length]);
+      const cands = [];
+      for (const m of text.matchAll(PATH_RE)) {
+        let tok = m[0].replace(/[.,;:]+$/, "");
+        const lc = tok.match(/:(\d+)(?::(\d+))?$/);
+        const file = lc ? tok.slice(0, lc.index) : tok;
+        if (!file || file === "/" || file === "~" || /^[.\/~]+$/.test(file)) continue;
+        if (!file.includes("/") && !/\.[A-Za-z][A-Za-z0-9]{0,9}$/.test(file)) continue; // a plain word
+        if (/^\d/.test(file) && !file.includes("/")) continue; // 1.5, 3.14
+        if (urls.some(([s, e]) => m.index < e && m.index + tok.length > s)) continue; // part of a web address
+        const a = at[m.index], b = at[m.index + tok.length - 1];
+        if (!onRow(a, b, y)) continue;
+        cands.push({ file, line: lc?.[1], col: lc?.[2], range: { start: a, end: b }, text: tok });
+        if (cands.length >= 40) break;
+      }
+      if (!cands.length) return done(undefined);
+      invoke("file_links", { id: paneId, cwd: tab?.cwd, cands: cands.map((c) => c.file) }).then((found) => {
+        const links = [];
+        cands.forEach((c, i) => {
+          const f = found?.[i];
+          if (!f) return;
+          links.push({ range: c.range, text: c.text, activate: (e) => {
+            if (!e.metaKey) return;
+            invoke("open_file", { abs: f.abs, line: c.line, col: c.col }).catch((err) => toast(String(err.message || err)));
+          } });
+        });
+        done(links.length ? links : undefined);
+      }).catch(() => done(undefined));
     },
   };
 }
@@ -132,6 +185,7 @@ function makePane(tab, kind, opts = {}) {
   term.unicode.activeVersion = "11";
   term.open(el);
   term.registerLinkProvider(webLinks(term)); // plain web addresses in the output: ⌘-click opens (#19)
+  term.registerLinkProvider(fileLinks(term, id, tab)); // file paths: ⌘-click opens the editor (#26)
   // ⌘ shortcuts belong to the app, never to the program in the terminal — except the iTerm2
   // ("Natural Text Editing") editing keys: ⇧↵ = a new line in the prompt (ESC CR, what Claude
   // Code's /terminal-setup binds; zsh inserts a newline too) (#7), ⌘⌫ = delete to the line start
@@ -746,6 +800,25 @@ function untilReset(epoch) {
   return h > 0 ? ` ↻${h}h${String(m).padStart(2, "0")}m` : ` ↻${m}m`;
 }
 
+// prices for "≈$" (#23): asked for once a day, only when an agent shows tokens without a cost
+let PRICES = null, pricesAt = 0;
+function estCost(tokens) {
+  if (Date.now() - pricesAt > 24 * 3600 * 1000) {
+    pricesAt = Date.now();
+    const again = () => { pricesAt = Date.now() - 23.5 * 3600 * 1000; }; // offline: try again in 30 min
+    invoke("prices").then((p) => { if (p?.models) { PRICES = p.models; if (active) renderBar(active); } else again(); }).catch(again);
+  }
+  if (!PRICES) return null;
+  let sum = 0, priced = false;
+  for (const [model, t] of Object.entries(tokens)) {
+    const p = PRICES[model] || PRICES[model.replace(/-\d{8}$/, "")]; // claude-haiku-4-5-20251001 → claude-haiku-4-5
+    if (!p) continue;
+    priced = true;
+    for (let i = 0; i < 5; i++) sum += (t[i] || 0) * p[i];
+  }
+  return priced ? sum : null;
+}
+
 const bar = (p, n = 8) => { const fill = Math.round(((p || 0) / 100) * n); return "█".repeat(fill) + "░".repeat(n - fill); };
 
 function renderBar(tab) {
@@ -764,6 +837,10 @@ function renderBar(tab) {
   if (u?.five_hour) parts.push(`<span class="${level(u.five_hour.pct)}"${old("five_hour")}>5h ${bar(u.five_hour.pct)} ${Math.round(u.five_hour.pct)}%${untilReset(u.five_hour.resets_at)}</span>`);
   if (u?.seven_day) parts.push(`<span class="${level(u.seven_day.pct)}"${old("seven_day")}>7d ${bar(u.seven_day.pct)} ${Math.round(u.seven_day.pct)}%</span>`);
   if (u?.cost != null) parts.push(`<span class="dim">$${u.cost.toFixed(2)}</span>`);
+  else if (u?.tokens) { // no cost of its own (Claude typed in the shell, Codex): tokens × API prices (#23)
+    const c = estCost(u.tokens);
+    if (c != null) parts.push(`<span class="dim" title="토큰 수 × API 가격으로 계산한 추정치 — 실제 청구 금액이 아니에요">≈$${c.toFixed(2)}</span>`);
+  }
   $("#usage").innerHTML = parts.length ? parts.join('<span class="dim"> │ </span>') : `<span class="dim">${esc(st.agent?.short)}</span>`;
 }
 
@@ -1401,6 +1478,14 @@ function dexFilter() {
       + `<div class="dim">${q.includes("&") || q.includes("!") ? "&amp; 조건을 하나 줄이거나 ! 를 빼 보세요 · " : ""}예) 불꽃 · 전설 · 잡음 · age0 · 1-151</div>`;
   }
   $(".dex-preview").style.visibility = empty.hidden ? "" : "hidden"; // nothing found: no stale preview
+  // the region buttons follow the search: its results in each, none → can't be pressed (#24)
+  for (const b of document.querySelectorAll("#dex-regions button[data-a]")) {
+    const r = b.dataset.a === "new" ? null : REGIONS.find(([, a]) => String(a) === b.dataset.a);
+    const n = !q ? null : r ? d.hits.filter((x) => x >= r[1] && x <= r[2]).length : shownCells("#dex-grid .cells.recent .cell").length;
+    b.dataset.label ??= b.innerHTML;
+    b.innerHTML = n == null ? b.dataset.label : `${b.dataset.label.replace(/<span class="dim">.*<\/span>/, "")}<span class="dim">${n}</span>`;
+    b.disabled = n === 0;
+  }
   $("#dex-found").textContent = q ? `${d.hits.length}종` : "";
 }
 
@@ -1595,8 +1680,15 @@ $("#dex-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".cell
 $("#dex-regions").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
-  if (b.dataset.a === "new") dexRecent(0);
-  else dexSelect(Number(b.dataset.a));
+  const d = dexState;
+  if (b.dataset.a === "new") {
+    const first = shownCells("#dex-grid .cells.recent .cell")[0];
+    dexRecent(first ? Number(first.dataset.ri) : 0);
+  } else if (d?.hits) { // searching: the region's first result
+    const r = REGIONS.find(([, a]) => String(a) === b.dataset.a);
+    const n = d.hits.find((x) => x >= r[1] && x <= r[2]);
+    if (n) dexSelect(n);
+  } else dexSelect(Number(b.dataset.a));
   $(`#region-${b.dataset.a}`).scrollIntoView({ block: "start" });
 });
 $("#dex-take").addEventListener("click", () => dexChoose());
@@ -1966,6 +2058,7 @@ listen("shell-agent", (e) => { const t = byId.get(e.payload.ws); if (t) onShellA
 window.addEventListener("blur", () => document.body.classList.add("away"));
 window.addEventListener("focus", () => document.body.classList.remove("away"));
 listen("wild", (e) => wild.show(e.payload));
+listen("open-dex", (e) => { wild.hide(); openDex(e.payload?.id || undefined); }); // from the overlay's wild card (#25)
 listen("wild-throw", (e) => wild.play(e.payload));
 listen("wild-end", (e) => wild.end(e.payload));
 
@@ -2994,6 +3087,23 @@ async function main() {
     let bad = "";
     try { await invoke("open_link", { url: "file:///etc/passwd" }); } catch (err) { bad = String(err.message || err); }
     await invoke("log_line", { line: `links-test click plain=${JSON.stringify(plain)} cmd=${JSON.stringify(cmd)} file-url=${JSON.stringify(bad)}` });
+    // #26 file paths (the test folder has src/a.ts and docs/x.md)
+    await invoke("pty_write_test", { id: p.id, data: `clear; echo '편집: src/a.ts:12 그리고 없는/파일.ts:3 끝'; echo 'Update(docs/x.md) · https://ex.com/src/a.ts'; echo '버전 1.5 와 e.g. 그리고 ./src'\r` });
+    await new Promise((r) => setTimeout(r, 1500));
+    const fprov = fileLinks(t, p.id, active), files = [];
+    for (let y = 1; y <= buf().length; y++) {
+      const text = buf().getLine(y - 1)?.translateToString(true) || "";
+      if (!text.trim() || text.includes("echo")) continue;
+      await new Promise((r) => fprov.provideLinks(y, (ls) => { for (const l of ls || []) files.push({ y, text: l.text, s: `${l.range.start.x},${l.range.start.y}`, e: `${l.range.end.x},${l.range.end.y}` }); r(); }));
+    }
+    await invoke("log_line", { line: `links-test files=${JSON.stringify(files)}` });
+    const ff = files[0], [fx, fy] = ff.s.split(",").map(Number);
+    const px = screen.left + (fx + 1.5) * dim.width, py = screen.top + (fy - 1 - buf().viewportY + 0.5) * dim.height;
+    await invoke("click_test", { x: px, y: py }); await new Promise((r) => setTimeout(r, 400));
+    const fplain = await invoke("links_opened_test");
+    await invoke("click_test", { x: px, y: py, modifiers: 4 }); await new Promise((r) => setTimeout(r, 400));
+    const fcmd = await invoke("links_opened_test");
+    await invoke("log_line", { line: `links-test file-click plain=${JSON.stringify(fplain)} cmd=${JSON.stringify(fcmd.map((x) => x.replace(/\/.*\/proj\//, "…/proj/")))}` });
     invoke("log_line", { line: "autotype done" });
   }, 4000);
   if (info.test.dexsearch_test) setTimeout(async () => {
@@ -3042,10 +3152,30 @@ async function main() {
     await new Promise((r) => setTimeout(r, 600));
     await invoke("shot_test", { name: "dexempty" });
     $("#dex-clear").click();
+    $("#dex-search").value = "불꽃,물"; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true }));
+    const btns = () => [...document.querySelectorAll("#dex-regions button[data-a]")].map((b) => `${b.textContent.trim()}${b.disabled ? "(off)" : ""}`).join("|");
+    out.regions = btns();
+    dexSelect(1); document.querySelector('#dex-regions button[data-a="1"]').click(); out.regionClick = dexState.sel;
+    document.querySelector('#dex-regions button[data-a="152"]').click(); out.disabledClick = dexState.sel;
+    $("#dex-search").value = ""; $("#dex-search").dispatchEvent(new Event("input", { bubbles: true }));
+    out.regionsCleared = btns();
+    closeDex();
+    await invoke("wild_dex_test", { id: 37 });
+    await new Promise((r) => setTimeout(r, 800));
+    out.overlayDex = `open=${dexOpen()} sel=${dexState?.sel}`;
     out.cleared2 = `preview=${$(".dex-preview").style.visibility || "shown"} hits=${dexState.hits} filtering=${$("#dex-grid").classList.contains("filtering")} box=${$("#dex-search").value} grid-shown=${vis().split(",").length}`;
     await invoke("log_line", { line: `dexsearch-test ${JSON.stringify(out)}` });
     invoke("log_line", { line: "autotype done" });
   }, 6000);
+  if (info.test.cost_test) setTimeout(async () => {
+    // #23: Claude typed in the shell (no cost of its own) → "≈$" from its log's tokens × prices
+    const tab = active, wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    if (chooseOpen()) closeChoose(false);
+    await invoke("pty_write_test", { id: tab.panes.agent.id, data: `${info.test.fake_claude}\r` });
+    for (let i = 0; i < 50 && !/≈\$/.test($("#usage").textContent); i++) await wait(300);
+    await invoke("log_line", { line: `cost-test usage=${$("#usage").textContent} tip=${$("#usage [title]")?.title || ""} tokens=${JSON.stringify(tab.state?.usage?.tokens || null)}` });
+    invoke("log_line", { line: "autotype done" });
+  }, 3000);
   if (info.test.multi_test) multiTest();
   if (info.test.cd_test) cdTest();
   if (info.test.tour_test) tourTest();

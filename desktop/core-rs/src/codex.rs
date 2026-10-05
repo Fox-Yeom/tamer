@@ -19,6 +19,8 @@ pub struct Codex {
     pub offset: u64,
     pub scanned: Option<Instant>,
     pub window: Option<f64>,
+    /// the model of the current turn (gpt-5.5), for the tokens' estimated cost
+    pub model_id: Option<String>,
 }
 
 impl Codex {
@@ -30,6 +32,7 @@ impl Codex {
             offset: 0,
             scanned: None,
             window: None,
+            model_id: None,
         }
     }
 }
@@ -105,6 +108,7 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
     let ev = |e: &str, tool: Option<&str>, detail: Option<String>| Some(Event::new(e, tool, detail));
     if rec["type"] == "turn_context" {
         if let Some(m) = p["model"].as_str() {
+            c.model_id = Some(m.to_string());
             let u = usage.get_or_insert_with(Usage::default);
             u.model = Some(match p["effort"].as_str() {
                 Some(e) => format!("{m} {e}"),
@@ -159,6 +163,15 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
                 if w > 0.0 {
                     u.ctx = Some((last / w * 100.0).round());
                 }
+            }
+            // the session's tokens so far (Codex keeps the total): [input, cache write, -, cache read, output]
+            let tot = &p["info"]["total_token_usage"];
+            if let (Some(model), Some(input)) = (c.model_id.clone(), tot["input_tokens"].as_f64()) {
+                let n = |k: &str| tot[k].as_f64().unwrap_or(0.0);
+                let (cached, write) = (n("cached_input_tokens"), n("cache_write_input_tokens"));
+                // output: whatever the total counts beyond the input (reasoning included), at least output_tokens
+                let out = tot["total_tokens"].as_f64().map(|t| t - input).unwrap_or(0.0).max(n("output_tokens"));
+                u.tokens = Some([(model, [(input - cached - write).max(0.0), write, 0.0, cached, out])].into_iter().collect());
             }
             for (key, src) in [("five_hour", &p["rate_limits"]["primary"]), ("seven_day", &p["rate_limits"]["secondary"])] {
                 if let Some(pct) = src["used_percent"].as_f64() {
@@ -219,7 +232,7 @@ mod tests {
             json!({"type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"npm test\"}"}}),
             json!({"type":"response_item","payload":{"type":"web_search_call","action":{"type":"search","query":"lua json"}}}),
             json!({"type":"response_item","payload":{"type":"function_call","name":"request_user_input","arguments":"{}"}}),
-            json!({"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":64600},"model_context_window":258400},"rate_limits":{"primary":{"used_percent":12.0,"resets_at":100},"secondary":{"used_percent":30.0}}}}),
+            json!({"type":"event_msg","payload":{"type":"token_count","info":{"last_token_usage":{"total_tokens":64600},"total_token_usage":{"input_tokens":22907,"cached_input_tokens":6912,"cache_write_input_tokens":0,"output_tokens":6,"reasoning_output_tokens":0,"total_tokens":22913},"model_context_window":258400},"rate_limits":{"primary":{"used_percent":12.0,"resets_at":100},"secondary":{"used_percent":30.0}}}}),
             json!({"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"done!"}}),
             json!({"type":"event_msg","payload":{"type":"turn_aborted","reason":"interrupted"}}),
             json!({"type":"compacted","payload":{}}),
@@ -239,6 +252,7 @@ mod tests {
         ]);
         let u = usage.unwrap();
         assert_eq!(u.model.as_deref(), Some("gpt-5.5 high"));
+        assert_eq!(u.tokens.as_ref().unwrap()["gpt-5.5"], [15995.0, 0.0, 0.0, 6912.0, 6.0]);
         assert_eq!(u.ctx, Some(25.0));
         assert_eq!(u.five_hour, Some(Window { pct: 12.0, resets_at: Some(100) }));
         assert_eq!(u.seven_day, Some(Window { pct: 30.0, resets_at: None }));

@@ -153,6 +153,7 @@ body.drop-target #views { outline: 2px dashed var(--accent); outline-offset: -6p
 #dex-regions { display: flex; gap: 6px; padding: 8px 14px; border-bottom: 1px solid #2f4535; }
 #dex-regions button { cursor: pointer; font: inherit; font-size: 12px; }
 #dex-regions button:hover { background: rgba(120, 200, 110, .22); }
+#dex-regions button:disabled { opacity: .35; cursor: default; }
 /* dex search (#21) */
 #dex-regions .dex-search { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 #dex-search { width: 220px; border: 1px solid #4f7a57; border-radius: 8px; padding: 3px 9px; font: inherit; font-size: 12px; color: #d9f3c0; background: rgba(0, 0, 0, .25); outline: none; }

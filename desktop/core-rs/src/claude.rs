@@ -10,7 +10,7 @@
 use crate::state::{Event, Usage};
 use crate::tail;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -20,6 +20,8 @@ pub struct ClaudeLog {
     pub file: Option<PathBuf>,
     pub offset: u64,
     pub scanned: Option<Instant>,
+    /// replies already counted: a reply is written once per content block, each with its usage
+    pub seen: HashSet<String>,
 }
 
 pub fn config_dir() -> PathBuf {
@@ -42,6 +44,7 @@ impl ClaudeLog {
             file: None,
             offset: 0,
             scanned: None,
+            seen: HashSet::new(),
         }
     }
 }
@@ -139,8 +142,9 @@ pub fn model_name(id: &str) -> String {
     name
 }
 
-/// The model and context size of the conversation (assistant replies carry both); `changed` = moved
-pub fn read_usage(usage: &mut Option<Usage>, changed: &mut bool, rec: &Value) {
+/// The model and context size of the conversation (assistant replies carry both), and the tokens
+/// used so far by model (each reply once, by its message id); `changed` = moved
+pub fn read_usage(usage: &mut Option<Usage>, changed: &mut bool, seen: &mut HashSet<String>, rec: &Value) {
     if rec["type"] != "assistant" || rec["isSidechain"] == true {
         return;
     }
@@ -149,7 +153,20 @@ pub fn read_usage(usage: &mut Option<Usage>, changed: &mut bool, rec: &Value) {
     let u = &m["usage"];
     let tokens = ["input_tokens", "cache_creation_input_tokens", "cache_read_input_tokens"].iter().filter_map(|k| u[*k].as_f64()).sum::<f64>();
     let cur = usage.get_or_insert_with(Usage::default);
-    let next = Usage { model: Some(model_name(id)), model_id: Some(id.into()), ctx_tokens: (tokens > 0.0).then_some(tokens).or(cur.ctx_tokens), ..cur.clone() };
+    let mut next = Usage { model: Some(model_name(id)), model_id: Some(id.into()), ctx_tokens: (tokens > 0.0).then_some(tokens).or(cur.ctx_tokens), ..cur.clone() };
+    if m["id"].as_str().is_some_and(|k| seen.insert(k.to_string())) {
+        let t = |v: &Value| v.as_f64().unwrap_or(0.0);
+        // cache writes by lifetime when given (ephemeral_5m / _1h), else all as 5-minute ones
+        let cw = t(&u["cache_creation_input_tokens"]);
+        let hour = t(&u["cache_creation"]["ephemeral_1h_input_tokens"]).min(cw);
+        let add = [t(&u["input_tokens"]), cw - hour, hour, t(&u["cache_read_input_tokens"]), t(&u["output_tokens"])];
+        if add.iter().any(|x| *x > 0.0) {
+            let e = next.tokens.get_or_insert_with(Default::default).entry(id.to_string()).or_insert([0.0; 5]);
+            for (a, b) in e.iter_mut().zip(add) {
+                *a += b;
+            }
+        }
+    }
     if *cur != next {
         *cur = next;
         *changed = true;
@@ -179,7 +196,7 @@ pub fn poll(c: &mut ClaudeLog, usage: &mut Option<Usage>, changed: &mut bool, cl
     let Some(file) = c.file.clone() else { return vec![] };
     let recs: Vec<Value> = tail::new_lines(&file, &mut c.offset).iter().filter_map(|l| serde_json::from_str::<Value>(l).ok()).collect();
     for r in &recs {
-        read_usage(usage, changed, r);
+        read_usage(usage, changed, &mut c.seen, r);
     }
     recs.iter().filter_map(translate).collect()
 }
@@ -220,18 +237,33 @@ mod tests {
     }
 
     #[test]
+    fn tokens_by_model_each_reply_once() {
+        let (mut u, mut ch, mut seen) = (None, false, HashSet::new());
+        let reply = |id: &str, model: &str| json!({"type":"assistant","message":{"id":id,"model":model,"usage":{"input_tokens":2,"cache_creation_input_tokens":100,"cache_creation":{"ephemeral_5m_input_tokens":40,"ephemeral_1h_input_tokens":60},"cache_read_input_tokens":1000,"output_tokens":30}}});
+        // one reply written as two lines (text + tool_use), then another reply, then a reply from another model
+        for r in [reply("m1", "claude-opus-5-5"), reply("m1", "claude-opus-5-5"), reply("m2", "claude-opus-5-5"), reply("m3", "claude-haiku-4-5")] {
+            read_usage(&mut u, &mut ch, &mut seen, &r);
+        }
+        let t = u.unwrap().tokens.unwrap();
+        assert_eq!(t["claude-opus-5-5"], [4.0, 80.0, 120.0, 2000.0, 60.0]);
+        assert_eq!(t["claude-haiku-4-5"], [2.0, 40.0, 60.0, 1000.0, 30.0]);
+    }
+
+    #[test]
     fn model_and_context_from_replies() {
         assert_eq!(model_name("claude-opus-5-5"), "Opus 5.5");
         assert_eq!(model_name("claude-haiku-4-5-20251001"), "Haiku 4.5");
-        let (mut u, mut ch) = (None, false);
-        read_usage(&mut u, &mut ch, &json!({"type":"assistant","message":{"model":"<synthetic>","usage":{}}}));
+        let (mut u, mut ch, mut seen) = (None, false, HashSet::new());
+        read_usage(&mut u, &mut ch, &mut seen, &json!({"type":"assistant","message":{"model":"<synthetic>","usage":{}}}));
         assert!(u.is_none() && !ch);
-        read_usage(&mut u, &mut ch, &json!({"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":23911,"cache_read_input_tokens":25147,"output_tokens":33}}}));
+        read_usage(&mut u, &mut ch, &mut seen, &json!({"type":"assistant","message":{"model":"claude-opus-5-5","usage":{"input_tokens":2,"cache_creation_input_tokens":23911,"cache_read_input_tokens":25147,"output_tokens":33}}}));
         let got = u.clone().unwrap();
         assert!(ch);
         assert_eq!((got.model.as_deref(), got.model_id.as_deref(), got.ctx_tokens), (Some("Opus 5.5"), Some("claude-opus-5-5"), Some(49060.0)));
+        // no message id in this record: not counted (can't tell its repeats apart)
+        assert!(got.tokens.is_none());
         ch = false;
-        read_usage(&mut u, &mut ch, &json!({"type":"assistant","isSidechain":true,"message":{"model":"claude-haiku-4-5","usage":{"input_tokens":9}}}));
+        read_usage(&mut u, &mut ch, &mut seen, &json!({"type":"assistant","isSidechain":true,"message":{"model":"claude-haiku-4-5","usage":{"input_tokens":9}}}));
         assert!(!ch);
     }
 

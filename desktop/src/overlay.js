@@ -23,7 +23,8 @@ async function spriteUrl(gif) {
   return sprites.get(gif);
 }
 
-const wild = createWild(document.getElementById("wild"), { invoke });
+// caught from the overlay: "도감에서 보기" brings Tamer to the front with the Pokédex on it (#25)
+const wild = createWild(document.getElementById("wild"), { invoke, dexButton: (e) => invoke("wild_dex", { id: e.id }) });
 // state colour of a small icon (needs you / failed / working / done / idle)
 const DOT = (t) => (t.state === "waiting" ? "bad" : t.ended === "error" ? "bad" : t.ended === "done" ? "ok"
   : ["idle", "sleep", "done", "interrupted", "error"].includes(t.state) ? "idle" : "work");
