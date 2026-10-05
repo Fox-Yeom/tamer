@@ -30,6 +30,13 @@ function evolvePartner(box) {
   f[proj] = { id: 4, uid: 1, pinned: true };
   fs.writeFileSync(path.join(C, "folders.json"), JSON.stringify(f));
 }
+// a scratch git repository (never the user's git config: no global/system config, so no hooks)
+function gitRepo(dir, cmds) {
+  const { execFileSync } = require("node:child_process");
+  const env = { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" };
+  const git = (...a) => execFileSync("git", ["-c", "user.name=lab", "-c", "user.email=lab@example.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...a], { cwd: dir, env, stdio: "pipe" });
+  for (const c of cmds) typeof c === "function" ? c(dir) : git(...c);
+}
 const envMs = (log) => { const m = log.match(/env ready .*?\+(\d+)ms/); return m ? Number(m[1]) : null; };
 
 module.exports = [
@@ -622,6 +629,25 @@ sleep 30
         ok(probe.done?.astate === "done" || probe.done?.astate === "idle", `끝 ${probe.done?.astate}`),
       ];
     },
+  },
+  {
+    id: "changes-branch", tags: ["smoke", "terminal"], what: "변경 사항 칸 제목에 브랜치: ⎇ 이름 ↑올릴 ↓받을(원격 기준), 첫 커밋 전, 브랜치 아닌 커밋, git 아님 (TRM-18)",
+    data: "owner", mode: "direct", folders: ["proj", "fresh", "loose", "plain"],
+    setup: (box) => {
+      const w = (f, t) => (d) => fs.writeFileSync(path.join(d, f), t);
+      gitRepo(box.folder("proj"), [["init", "-q"], w("a.txt", "1\n"), ["add", "."], ["commit", "-qm", "one"],
+        ["checkout", "-qb", "feat/lab", "--track", "main"], w("a.txt", "2\n"), ["commit", "-qam", "two"], w("b.txt", "new\n")]);
+      gitRepo(box.folder("fresh"), [["init", "-q"], w("x.txt", "x\n")]);
+      gitRepo(box.folder("loose"), [["init", "-q"], w("a.txt", "1\n"), ["add", "."], ["commit", "-qm", "one"], ["checkout", "-q", "--detach"]]);
+    },
+    steps: [{ until: "tabs.3" }, { wait: 1500 }, { call: "closeDex" },
+      ...[1, 2, 3, 4].flatMap((n) => [{ key: String(n), mods: 4 }, { wait: 1500 }, { call: "closeDex" }, { probe: `t${n}` }])],
+    check: ({ probe }) => [
+      ok(probe.t1?.branch?.text === "⎇ feat/lab↑1" && /feat\/lab → main · 올릴 커밋 1 · 받을 커밋 0/.test(probe.t1?.branch?.title || ""), `브랜치 ${JSON.stringify(probe.t1?.branch)}`),
+      ok(probe.t2?.branch?.text === "⎇ main (첫 커밋 전)", `첫 커밋 전 ${JSON.stringify(probe.t2?.branch)}`),
+      ok(/^⎇ [0-9a-f]{7,}$/.test(probe.t3?.branch?.text || "") && /브랜치가 아닌 커밋/.test(probe.t3?.branch?.title || ""), `detached ${JSON.stringify(probe.t3?.branch)}`),
+      ok(probe.t4?.branch?.text === "", `git 아닌 폴더 ${JSON.stringify(probe.t4?.branch)}`),
+    ],
   },
   {
     id: "claude-typed-unlinked", tags: ["smoke", "agents"], what: "연결 안 한 셸에서 친 Claude: 대화 기록 방식, 상단 바에 \"5h·7d ?\" 안내 (#45)",

@@ -1269,6 +1269,12 @@ function renderChanges(tab) {
   const had = document.activeElement?.closest?.(".changes li[data-i]") && ul.contains(document.activeElement)
     ? document.activeElement.title : null;
   $(".changes-count", tab.view).textContent = r?.repo && r.items.length ? `(${r.items.length})` : "";
+  // the branch the list is measured against (TRM-18): ⎇ main ↑2 — git's own idea of the remote (no fetch)
+  const b = r?.repo ? r.branch : null, bEl = $(".changes-branch", tab.view);
+  // a long name shrinks to … — the ↑↓ counts stay
+  bEl.innerHTML = b?.name ? `<span class="bn">⎇ ${esc(b.name)}${b.unborn ? " (첫 커밋 전)" : ""}</span>${b.ahead || b.behind ? `<span class="ab">${[b.ahead && `↑${b.ahead}`, b.behind && `↓${b.behind}`].filter(Boolean).join(" ")}</span>` : ""}` : "";
+  bEl.title = !b?.name ? "" : b.detached ? `브랜치가 아닌 커밋 ${b.name}` : b.unborn ? `${b.name} — 아직 커밋이 없어요`
+    : b.upstream ? `${b.name} → ${b.upstream}${b.gone ? " (원격 브랜치 없어짐)" : ""} · 올릴 커밋 ${b.ahead} · 받을 커밋 ${b.behind} (마지막으로 받아 온 원격 기준)` : `${b.name} — 원격 브랜치와 연결 안 됨`;
   if (!r) return;
   if (!r.repo) { ul.innerHTML = '<li class="dim">git 저장소가 아니에요</li>'; return; }
   if (!r.items.length) { ul.innerHTML = '<li class="dim">바뀐 파일이 없어요</li>'; return; }
@@ -2691,6 +2697,7 @@ function labState() {
     usageRaw: (() => { const u = active && shownOf(active)?.usage; return u ? Object.keys(u).filter((k) => u[k] != null).join(",") : null; })(),
     sid: active?.sid ?? null,
     astate: active?.state?.state || null,
+    branch: active ? { text: $(".changes-branch", active.view)?.textContent || "", title: $(".changes-branch", active.view)?.title || "" } : null, // TRM-18
     doing: $("#doing")?.textContent || "", // the top bar's state sentence (STA-20 times)
     tabTitle: active ? $(`#tabs .tab[data-ws="${active.id}"]`)?.title || "" : null,
     recent: startOpen() ? [...document.querySelectorAll("#recent li:not(.dim) span:nth-child(2)")].map((x) => x.textContent) : null,
@@ -2714,7 +2721,7 @@ function labState() {
 function fakeUsage(tab) {
   tab.state = { state: "waiting", detail: "", agent: { key: "claude", short: "Claude" }, state_at: Date.now() - 4 * 60000 - 5000, // waiting 4 min (STA-20)
     usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
-  renderBar(tab);
+  renderBar(tab); renderTab(tab); // the tab too: else the 15 s redraw (STA-20) decides when it changes
 }
 const LAB_CALLS = { home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
 async function labRun(steps) {
@@ -2864,6 +2871,13 @@ async function uiScenes(set) {
       await showStart(false, ["dev/tamer", "dev/blog", "work/api-server", "Documents/notes"].map((d) => `${info.home}/${d}`));
       startSel = 1; markStart();
       await shot("start-screen"); hideStart();
+      // 변경 사항 칸 제목의 브랜치 (TRM-18): a long name (… in the narrow title), ahead/behind, a short list
+      const keep = tab.changes;
+      tab.changes = { repo: true, branch: { name: "feature/unattended-run-display", upstream: "origin/feature/unattended-run-display", ahead: 2, behind: 1 },
+        items: [{ path: "src/elapsed.js", status: "new", add: 27, del: 0 }, { path: "src/main.js", status: "modified", add: 48, del: 12 }] };
+      renderChanges(tab); await shot("changes-branch");
+      await invoke("win_resize_test", { w: 720, h: 700 }); await shot("changes-branch-720"); await invoke("win_resize_test", { w: 1100, h: 700 });
+      tab.changes = keep; renderChanges(tab);
       // 무인 실행 (STA-20): working 32 min, no new event for 12 — the top bar and the overlay card
       const now = Date.now(), times = { turn_at: now - 32 * 60000 - 5000, state_at: now - 12 * 60000 - 5000, event_at: now - 12 * 60000 - 5000, watch: true };
       tab.state = { ...tab.state, state: "coding", detail: "src/app.ts", ...times };

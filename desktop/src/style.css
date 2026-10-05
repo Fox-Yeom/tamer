@@ -199,7 +199,10 @@ body.away #wild { visibility: hidden; }
 .composer-hint { font-size: 11px; text-align: right; }
 
 /* 📝 changes panel */
-.pane-changes .title { display: flex; align-items: center; gap: 4px; }
+.pane-changes .title { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+.pane-changes .changes-branch { min-width: 0; flex: 0 1 auto; display: flex; overflow: hidden; white-space: nowrap; margin-left: 6px; } /* TRM-18 */
+.pane-changes .changes-branch .bn { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.pane-changes .changes-branch .ab { flex: none; margin-left: 5px; }
 .changes-refresh { border: 0; background: transparent; color: var(--dim); cursor: pointer; font-size: 13px; }
 .changes { flex: 1; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 4px; font: 12px "Fira Code", "CVIM Hangul", monospace; }
 .changes li { display: grid; grid-template-columns: 1.4em auto 1fr auto; gap: 6px; align-items: baseline; padding: 3px 6px; border-radius: 5px; white-space: nowrap; }

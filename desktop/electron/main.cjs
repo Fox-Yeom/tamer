@@ -549,9 +549,12 @@ async function changesOf(ws) {
   if (!top.ok) return { repo: false };
   const root = top.out.trim();
   const head = (await git(ws.cwd, ["rev-parse", "--verify", "-q", "HEAD"])).ok;
-  const st = await git(ws.cwd, ["status", "--porcelain=v1", "-z", "--untracked-files=all", "--", "."]);
+  // -b: the first entry is the branch line (TRM-18) — no extra git run for it
+  const st = await git(ws.cwd, ["status", "--porcelain=v1", "-b", "-z", "--untracked-files=all", "--", "."]);
   const items = [];
   const parts = st.out.split("\0");
+  const branch = parts[0]?.startsWith("## ") ? branchOf(parts.shift().slice(3)) : null;
+  if (branch?.detached) branch.name = (await git(ws.cwd, ["rev-parse", "--short", "HEAD"])).out.trim() || "HEAD";
   for (let i = 0; i < parts.length; i++) {
     const e = parts[i];
     if (e.length < 4) continue;
@@ -578,7 +581,19 @@ async function changesOf(ws) {
   for (const x of items) if (x.status === "new" || (x.status === "added" && x.add == null)) { const n = lineCount(x.abs); x.add = n; x.del = 0; x.binary = n == null; }
   items.sort((a, b) => a.path.localeCompare(b.path));
   ws.changes = new Map(items.map((x) => [x.path, x]));
-  return { repo: true, items: items.map(({ abs, ...x }) => x) };
+  return { repo: true, branch, items: items.map(({ abs, ...x }) => x) };
+}
+
+// git status -b's branch line (TRM-18): "main...origin/main [ahead 2, behind 1]" · "main" ·
+// "No commits yet on main" (older git: "Initial commit on main") · "HEAD (no branch)" · "… [gone]"
+function branchOf(line) {
+  const born = line.match(/^(?:No commits yet on|Initial commit on) (.+)$/);
+  if (born) return { name: born[1], unborn: true };
+  if (/^HEAD \(no branch\)/.test(line)) return { detached: true };
+  const m = line.match(/^(.+?)(?:\.\.\.(\S+))?(?: \[(.*)\])?$/);
+  if (!m) return null;
+  const n = (k) => Number((m[3] || "").match(new RegExp(`${k} (\\d+)`))?.[1] || 0);
+  return { name: m[1], upstream: m[2] || null, ahead: n("ahead"), behind: n("behind"), gone: /gone/.test(m[3] || "") };
 }
 
 async function changeDiff(ws, rel) {
