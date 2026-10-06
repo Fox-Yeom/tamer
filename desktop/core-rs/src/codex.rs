@@ -136,6 +136,22 @@ fn fail_kind(error: &Value) -> Option<String> {
     }
 }
 
+/// The first file an `apply_patch("*** Begin Patch\\n*** Update File: src/a.ts\\n…")` call in exec
+/// code touches — the newlines there are escapes inside a string literal
+fn patch_file(code: &str) -> Option<String> {
+    for tag in ["*** Update File: ", "*** Add File: ", "*** Delete File: "] {
+        if let Some(i) = code.find(tag) {
+            let rest = &code[i + tag.len()..];
+            let end = rest.find(|c| c == '\\' || c == '"' || c == '\n').unwrap_or(rest.len());
+            let f = rest[..end].trim();
+            if !f.is_empty() {
+                return Some(f.chars().take(200).collect());
+            }
+        }
+    }
+    None
+}
+
 /// One log record -> normalized event (or None); updates `usage` in place (`changed` = usage moved).
 pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, rec: &Value) -> Option<Event> {
     let p = &rec["payload"];
@@ -156,7 +172,8 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
         return ev("PreCompact", None, Some("compact".into()));
     }
     match p["type"].as_str().unwrap_or("") {
-        "task_started" => {
+        // the next names are already accepted by Codex itself (serde alias) — read both (#55)
+        "task_started" | "turn_started" => {
             if let Some(w) = p["model_context_window"].as_f64() {
                 c.window = Some(w);
             }
@@ -164,7 +181,7 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
         }
         // a failed turn ends with task_complete too, its last error in `error` (#53): only the kind is
         // kept — the message carries URLs and request ids. Never the reply text (STA-14)
-        "task_complete" => match fail_kind(&p["error"]) {
+        "task_complete" | "turn_complete" => match fail_kind(&p["error"]) {
             Some(kind) => ev("StopFailure", None, Some(kind)),
             None if !p["error"].is_null() => ev("StopFailure", None, None),
             None => ev("Stop", None, None),
@@ -210,9 +227,20 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
                     let cmd = a["cmd"].as_str().or(a["chars"].as_str()).unwrap_or("");
                     ev("PreToolUse", Some(read_cmd_tool(cmd)), Some(short(cmd)))
                 }
-                "exec" if exec_cmd(args).is_some() => {
-                    let cmd = exec_cmd(args).unwrap_or_default();
-                    ev("PreToolUse", Some(read_cmd_tool(&cmd)), Some(short(&cmd)))
+                // new Codex wraps every tool in `exec` — code calling them (#55): what the code
+                // calls decides the state; the code itself is never the detail (patches, queries)
+                "exec" => {
+                    if args.contains("apply_patch(") {
+                        ev("PreToolUse", Some("Edit"), Some(patch_file(args).unwrap_or_else(|| "patch".into())))
+                    } else if let Some(cmd) = exec_cmd(args) {
+                        ev("PreToolUse", Some(read_cmd_tool(&cmd)), Some(short(&cmd)))
+                    } else if args.contains("write_stdin(") {
+                        ev("PreToolUse", Some("Bash"), None)
+                    } else if args.contains("web__run(") || args.contains("web.run(") {
+                        ev("PreToolUse", Some("WebSearch"), None)
+                    } else {
+                        ev("PreToolUse", Some("tool"), None)
+                    }
                 }
                 other => ev("PreToolUse", Some(other), Some(short(args))),
             }
@@ -317,6 +345,31 @@ mod tests {
         assert_eq!(u.ctx, Some(25.0));
         assert_eq!(u.five_hour, Some(Window { pct: 12.0, resets_at: Some(100) }));
         assert_eq!(u.seven_day, Some(Window { pct: 30.0, resets_at: None }));
+    }
+
+    #[test]
+    fn exec_code_is_read_for_what_it_calls_never_shown() {
+        let (evs, _) = run(&[
+            // the shapes of the user's own logs (2026-10-06), contents made up
+            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"apply_patch(\"*** Begin Patch\\n*** Add File: notes/tmp.txt\\n+secret line\\n*** End Patch\");\ntext(p);\n"}}),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"const r = await tools.exec_command({cmd:\"rg needle src\"}); text(r);"}}),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"text(await write_stdin({session_id:1,chars:\"\",yield_time_ms:1000}))"}}),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"const r=await tools.web__run({search_query:[{\"q\":\"private question\"}]});"}}),
+            json!({"type":"response_item","payload":{"type":"custom_tool_call","name":"exec","input":"const x = await tools.something_new({secret:1});"}}),
+            json!({"type":"event_msg","payload":{"type":"turn_started"}}),
+            json!({"type":"event_msg","payload":{"type":"turn_complete","last_agent_message":"x"}}),
+        ]);
+        let got: Vec<(String, Option<String>, Option<String>)> = evs.into_iter().map(|e| (e.event, e.tool, e.detail)).collect();
+        let s = |x: &str| Some(x.to_string());
+        assert_eq!(got, vec![
+            ("PreToolUse".into(), s("Edit"), s("notes/tmp.txt")),
+            ("PreToolUse".into(), s("Grep"), s("rg needle src")),
+            ("PreToolUse".into(), s("Bash"), None),
+            ("PreToolUse".into(), s("WebSearch"), None),
+            ("PreToolUse".into(), s("tool"), None),
+            ("UserPromptSubmit".into(), None, None),
+            ("Stop".into(), None, None),
+        ]);
     }
 
     #[test]
