@@ -891,6 +891,7 @@ function createOverlay() {
 // shown while another app is in front (and there's something to show)
 function overlaySync() {
   if (!overlay || overlay.isDestroyed()) return;
+  if (draining) { overlay.hide(); return; } // quitting (#54): the hidden window's blur mustn't bring it back
   const away = !BrowserWindow.getFocusedWindow();
   if ((away || overlayForced) && workspaces.size) {
     overlayUpdate();
@@ -1586,6 +1587,10 @@ app.on("before-quit", (e) => {
   e.preventDefault();
   if (draining) return;
   draining = true;
+  // looks closed at once (#54): the wait below is invisible, and a Dock click meanwhile doesn't
+  // land on a window that is about to go
+  try { if (win && !win.isDestroyed()) win.hide(); if (overlay && !overlay.isDestroyed()) overlay.hide(); } catch {}
+  logLine("quit: windows hidden, ending terminals");
   // (tabs aren't closed here: a Mac shutdown quits too, and its session must keep the tabs)
   if (core) core.stop(); // the core removes its hook files and exits
   drainPtys().then(({ ms, left }) => {

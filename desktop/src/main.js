@@ -32,7 +32,8 @@ const DOING = {
   bash: "실행", agent: "하위 에이전트", tool: "도구", waiting: "입력 필요", done: "완료", compact: "압축 중", error: "실패", interrupted: "중단됨",
   shell: "셸",
 };
-const EVENT_ICON = { UserPromptSubmit: "💬", Notification: "❓", Stop: "✅", StopFailure: "💥", Interrupted: "⏹", PreCompact: "🗜", SessionStart: "🚀", SessionEnd: "🛑" };
+const EVENT_ICON = { UserPromptSubmit: "💬", Notification: "❓", PermissionRequest: "❓", Stop: "✅", StopFailure: "💥", Interrupted: "⏹", PreCompact: "🗜", SessionStart: "🚀", SessionEnd: "🛑" };
+const EVENT_LABEL = { PermissionRequest: "승인 요청" }; // #56: the one line that read "· PermissionRequest"
 const TOOL_ICON = { coding: "✏️", reading: "📖", searching: "🔍", bash: "💻", agent: "🤝", tool: "🛠" };
 const TOOL_STATE = { Edit: "coding", MultiEdit: "coding", Write: "coding", NotebookEdit: "coding", WebSearch: "searching",
   WebFetch: "searching", Read: "reading", Grep: "reading", Glob: "reading", LS: "reading", Bash: "bash", Task: "agent", Agent: "agent" };
@@ -996,7 +997,7 @@ function renderState(tab, st, { quiet = false } = {}) {
   $(".activity", tab.view).innerHTML = log.slice().reverse().map((ev, ri) => {
     const t = new Date(ms(ev)).toTimeString().slice(0, 8);
     const icon = ev.event === "PreToolUse" ? TOOL_ICON[TOOL_STATE[ev.tool] || "tool"] : EVENT_ICON[ev.event] || "·";
-    const label = ev.event === "PreToolUse" ? ev.tool : ev.event;
+    const label = ev.event === "PreToolUse" ? ev.tool : EVENT_LABEL[ev.event] || ev.event;
     // how long the task took (STA-20): back to its prompt, when that's still in the list
     let took = "";
     if (["Stop", "Interrupted", "StopFailure"].includes(ev.event)) {

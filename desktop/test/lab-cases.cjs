@@ -363,6 +363,7 @@ sleep 30
     check: ({ probe, log }) => [
       ok(/host-agent \S+ codex kind=codex_log/.test(log), "셸 Codex가 세션 로그 방식으로 안 잡힘"),
       ok(probe.asking?.astate === "waiting", `승인 대기 중 상태 ${probe.asking?.astate} (입력 필요여야)`),
+      ok(/^❓ 승인 요청 npm view x version/.test((probe.asking?.activity || [])[0]?.trim() || ""), `활동 기록 첫 줄 "${(probe.asking?.activity || [])[0]}" (❓ 승인 요청이어야, #56)`),
       ok(probe.answered?.astate === "thinking", `결과 뒤 상태 ${probe.answered?.astate} (생각 중이어야)`),
     ],
   },
@@ -690,7 +691,9 @@ sleep 40
       { text: "trap 'sleep 0.4; exit 0' HUP" }, { wait: 200 }, { key: "Enter" }, { wait: 500 }, { invoke: "quit_test" }, { wait: 5000 }],
     check: ({ log }) => {
       const m = log.match(/^quit: terminals ended in (\d+)ms(.*)$/m);
+      const lines = log.split("\n"), hid = lines.findIndex((l) => /^quit: windows hidden/.test(l)), ended = lines.findIndex((l) => /^quit: terminals ended/.test(l));
       return [
+        ok(hid >= 0 && hid < ended, "창을 먼저 숨기지 않음 (#54 보완)"),
         ok(m, "끄기 전에 터미널을 기다린 기록이 없음"),
         ok(m && Number(m[1]) >= 300 && !m[2], `기다린 시간 ${m?.[1]}ms${m?.[2] || ""} (늦게 끝나는 셸 0.4초를 기다려야, 남은 것 없이)`),
       ];
