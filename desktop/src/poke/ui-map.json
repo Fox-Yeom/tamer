@@ -41,10 +41,11 @@
       ]
     },
     "settings": {
-      "what": "설정 창 (⌘, · 메뉴 Tamer → 설정…) — 오버레이 켜기·보일 것·투명도, 탭 효과 (APP-19, #59)",
+      "what": "설정 창 (⌘, · 메뉴 Tamer → 설정…) — 오버레이 켜기·보일 것·투명도·최소 모드·그림자 + 미리보기, 테마, 탭 효과 (APP-19, #59 #63 #65 #67)",
       "entry": "openSettings",
       "scenes": [
         "settings-window",
+        "settings-minimal",
         "light-settings"
       ]
     },
@@ -73,11 +74,12 @@
       ]
     },
     "overlay": {
-      "what": "바탕화면 오버레이 — 다른 앱을 쓰는 동안 지금 탭·가장 급한 탭 카드, 아이콘 줄 (STA-15, STA-20)",
+      "what": "바탕화면 오버레이 — 다른 앱을 쓰는 동안 지금 탭·가장 급한 탭 카드, 아이콘 줄, 최소 모드(파트너+몬스터볼), 야생 알림 (STA-15, STA-20, #63 #65 #66)",
       "entry": "bigCard",
       "scenes": [
         "overlay-stall",
         "overlay-clear",
+        "overlay-noshadow",
         "light-overlay"
       ]
     },
@@ -242,8 +244,7 @@
       "what": "야생 포켓몬 카드",
       "files": [
         "src/wild.js",
-        "src/wild.css",
-        "src/overlay.js"
+        "src/wild.css"
       ],
       "selectors": [
         ".wild-"
@@ -378,6 +379,26 @@
       "screens": [
         "main"
       ]
+    },
+    "ov-cards": {
+      "what": "오버레이 카드 그리기 (오버레이 창과 설정 창 미리보기가 같이 씀) — 카드·말풍선·아이콘 줄·몬스터볼 줄·야생 알림",
+      "files": [
+        "src/overlay-view.js",
+        "src/overlay-cards.css"
+      ],
+      "selectors": [
+        ".ov"
+      ],
+      "functions": [
+        "cardsHtml",
+        "wildNoteHtml",
+        "applyShow",
+        "isMinimal"
+      ],
+      "screens": [
+        "overlay",
+        "settings"
+      ]
     }
   },
   "css": {
@@ -399,11 +420,12 @@
       "main window (index.html)": [
         "src/style.css",
         "src/wild.css",
+        "src/overlay-cards.css",
         "src/poke/poke.css"
       ],
       "desktop overlay (overlay.html)": [
         "src/overlay.css",
-        "src/wild.css"
+        "src/overlay-cards.css"
       ]
     }
   }

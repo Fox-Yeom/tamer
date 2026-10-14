@@ -80,6 +80,8 @@
         <header><span>설정</span><button id="settings-close" title="닫기 (Esc)">✕</button></header>
         <div class="dlg-body">
           <h4>바탕화면 오버레이 <span class="dim">— 다른 앱을 쓰는 동안 화면 구석의 카드</span></h4>
+          <div class="set-ov">
+          <div class="set-ov-controls">
           <label class="set-row"><input type="checkbox" data-set="overlay.on" /> 오버레이 켜기</label>
           <div class="set-group">
             <label class="set-row"><input type="checkbox" data-set="overlay.partner" /> 파트너 <span class="dim">지금 탭 카드</span></label>
@@ -87,6 +89,11 @@
             <label class="set-row"><input type="checkbox" data-set="overlay.wild" /> 야생 포켓몬 <span class="dim">끄면 Tamer 창에서만</span></label>
             <div class="set-row set-presets">빠른 선택 <button data-preset="all">전부</button><button data-preset="pokemon">포켓몬만</button><button data-preset="wild">야생 포켓몬만</button><button data-preset="off">끄기</button></div>
             <label class="set-row">카드 배경 <input type="range" min="0" max="100" step="5" data-set="overlay.alpha" /> <span class="set-val" data-val="overlay.alpha"></span></label>
+            <label class="set-row">최소 모드 <select data-set="overlay.minimal"><option value="auto">배경 30% 이하일 때</option><option value="always">항상</option><option value="never">안 씀</option></select> <span class="dim">글자 없이 파트너·몬스터볼만</span></label>
+            <label class="set-row"><input type="checkbox" data-set="overlay.shadow" /> 그림자 <span class="dim">배경을 옅게 할수록 옅어짐</span></label>
+          </div>
+          </div>
+          <figure class="set-preview" aria-label="미리보기"><figcaption class="dim">미리보기</figcaption><div class="set-preview-desk"><div class="ov"><div class="ov-wild"></div><div class="ov-cards"></div></div></div><div class="set-preview-off dim" hidden>오버레이가 뜨지 않아요</div></figure>
           </div>
           <h4>테마 <span class="dim">— 에이전트 화면 색은 그 에이전트 설정(Claude Code는 /theme)</span></h4>
           <label class="set-row"><select data-set="theme"><option value="system">시스템 따라가기</option><option value="dark">다크</option><option value="light">라이트</option></select></label>

@@ -808,14 +808,16 @@ const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
 // 설정 창 (APP-19, #59): only known keys, each checked — anything else falls back to the default,
 // which is how the app behaved before (everything on)
 const SETTINGS = path.join(CACHE, "ui", "settings.json");
-const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, alpha: 82 }, tabGlow: true, theme: "system" };
+const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, alpha: 82, shadow: true, minimal: "auto" }, tabGlow: true, theme: "system" };
+const MINIMAL = ["auto", "always", "never"]; // 최소 모드 (#63): by the background (≤ 30 %), always, never
 const THEMES = ["system", "dark", "light"]; // 테마 (APP-20, #60)
 function readSettings(raw = readJsonSafe(SETTINGS)) {
   const o = raw?.overlay || {}, d = SETTINGS_DEFAULT.overlay, b = (v, def) => (typeof v === "boolean" ? v : def);
   const a = Number(o.alpha);
   return {
     overlay: { on: b(o.on, d.on), partner: b(o.partner, d.partner), alerts: b(o.alerts, d.alerts), wild: b(o.wild, d.wild),
-      alpha: Number.isFinite(a) ? Math.round(Math.min(100, Math.max(0, a))) : d.alpha },
+      alpha: Number.isFinite(a) ? Math.round(Math.min(100, Math.max(0, a))) : d.alpha,
+      shadow: b(o.shadow, d.shadow), minimal: MINIMAL.includes(o.minimal) ? o.minimal : d.minimal }, // #65 #63
     tabGlow: b(raw?.tabGlow, SETTINGS_DEFAULT.tabGlow),
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
   };
@@ -949,8 +951,8 @@ let drag = null;
 const overlayCommands = {
   overlay_state: () => overlayPayload(),
   overlay_click({ ws }) { focusMain(String(ws)); },
-  // "📕 도감에서 보기" on the overlay's wild card: Tamer in front (keyboard included), its Pokédex on it
-  wild_dex({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); logLine("wild dex from overlay"); },
+  // the wild notice (#66): Tamer in front (keyboard included) — its own wild card shows there, to catch
+  wild_open() { focusMain(); logLine("wild open from overlay"); },
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
   overlay_fit({ width, height }) {
     if (drag) return;
@@ -1345,8 +1347,18 @@ const testCommands = {
     }
     return { name: n, diff: changed / (x.length / 4), block: Math.max(...blocks) / (B * B) };
   },
-  // the overlay's "도감에서 보기" (#25), as if pressed there
-  wild_dex_test({ id }) { overlayCommands.wild_dex({ id }); },
+  // the Pokédex on a species, as the wild card's "도감에서 보기" (#25) asks
+  wild_dex_test({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); },
+  wild_open_test: () => overlayCommands.wild_open(),
+  // what the overlay page shows (#63 #66): minimal mode, balls, words, the wild notice, the shadow
+  overlay_dom_test: () => overlay.webContents.executeJavaScript(`(() => {
+    const st = document.getElementById("stack"), card = document.querySelector("#cards .card"), note = document.querySelector(".wild-note");
+    return { minimal: st.classList.contains("ov-minimal"), balls: [...document.querySelectorAll(".ball")].map((b) => b.className.replace(/ball|hit/g, "").trim()),
+      minis: document.querySelectorAll(".mini").length, meta: !!document.querySelector(".card .meta"), counts: !!document.querySelector(".counts"),
+      bubbles: [...document.querySelectorAll(".bubble")].map((b) => b.textContent.trim()), shadow: card ? getComputedStyle(card).boxShadow : null,
+      bg: card ? getComputedStyle(card).backgroundColor : null, note: note ? note.textContent.replace(/\\s+/g, " ").trim() : null,
+      noteShadow: note ? getComputedStyle(note).boxShadow : null };
+  })()`),
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)
   async click_test({ x, y, modifiers = 0, button = "left", count = 1 }) {
     const dbg = win.webContents.debugger;

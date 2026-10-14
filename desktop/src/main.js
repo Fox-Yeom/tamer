@@ -9,6 +9,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import { createWild, josa } from "./wild.js";
 import { timing, dur, MINUTE } from "./elapsed.js";
 import { failLabel } from "./fail.js";
+import { cardsHtml, sizePokes, applyShow, wildNoteHtml } from "./overlay-view.js";
 import "./poke/poke.css";
 import { pkCard } from "./poke/card.js";
 
@@ -1311,6 +1312,30 @@ function applySettings(s) {
   }
   for (const el of document.querySelectorAll("#settings [data-val]")) el.textContent = `${getPath(s, el.dataset.val)}%`;
   $("#settings .set-group").classList.toggle("off", !s.overlay.on);
+  if (settingsOpen()) renderPreview(s.overlay);
+}
+// 미리보기 (#67): the overlay as these settings would draw it — this tab's partner, a tab that needs
+// you, three sample tabs and a wild notice, with the overlay's own drawing code (src/overlay-view.js)
+let previewSeq = 0;
+async function renderPreview(show) {
+  const seq = ++previewSeq, now = Date.now(), root = $("#settings .set-preview-desk .ov");
+  const others = tabs.filter((t) => t !== active && t.partner?.gif).map((t) => t.partner);
+  const tab = (ws, name, state, partner, extra = {}) => ({ ws, name, state, partner: partner || null, sessions: 1, times: {}, ...extra });
+  const current = tab("pv-now", active ? base(active.cwd) : "my-project", "coding", active?.partner, { active: true, times: { turn_at: now - 12 * MINUTE } });
+  const p = {
+    show, current, urgent: tab("pv-wait", "api-server", "waiting", others[0]),
+    minis: [tab("pv-1", "web", "coding", others[1]), tab("pv-2", "docs", "idle", others[2], { ended: "done" }), tab("pv-3", "notes", "sleep", others[3])],
+    more: 0, counts: { waiting: 1, working: 2, done: 1, error: 0 },
+  };
+  const off = !show.on || !(show.partner || show.alerts || show.wild);
+  const html = off ? "" : await cardsHtml(p, { spriteUrl: (gif) => (gif ? spriteUrl(gif) : null) });
+  if (seq !== previewSeq) return; // a newer change drew meanwhile
+  applyShow(root, show);
+  root.querySelector(".ov-cards").innerHTML = html;
+  root.querySelector(".ov-wild").innerHTML = !off && show.wild ? wildNoteHtml({ name: "피카츄" }, null) : "";
+  root.querySelector(".wild-note-timer")?.replaceChildren("· 24초");
+  sizePokes(root);
+  $("#settings .set-preview-off").hidden = !off;
 }
 const PRESETS = { // 빠른 선택
   all: { on: true, partner: true, alerts: true, wild: true }, pokemon: { on: true, partner: true, alerts: false, wild: true },
@@ -1320,7 +1345,7 @@ async function setSetting(key, value) {
   const [a, b] = key.split(".");
   applySettings(await invoke("settings_set", { patch: b ? { [a]: { [b]: value } } : { [a]: value } }));
 }
-async function openSettings() { applySettings(await invoke("settings_get")); $("#settings").hidden = false; $("#settings").focus(); }
+async function openSettings() { const s = await invoke("settings_get"); $("#settings").hidden = false; applySettings(s); $("#settings").focus(); }
 function closeSettings() { $("#settings").hidden = true; focusBig(active); }
 $("#settings").addEventListener("change", (e) => {
   const k = e.target.dataset?.set, t = e.target.type;
@@ -2547,7 +2572,7 @@ listen("shell-agent", (e) => { const t = byId.get(e.payload.ws); if (t) { t.shel
 window.addEventListener("blur", () => document.body.classList.add("away"));
 window.addEventListener("focus", () => document.body.classList.remove("away"));
 listen("wild", (e) => wild.show(e.payload));
-listen("open-dex", (e) => { wild.hide(); openDex(e.payload?.id || undefined); }); // from the overlay's wild card (#25)
+listen("open-dex", (e) => { wild.hide(); openDex(e.payload?.id || undefined); }); // the Pokédex on a species (#25; the lab's wild_dex_test)
 listen("wild-throw", (e) => wild.play(e.payload));
 listen("wild-end", (e) => wild.end(e.payload));
 
@@ -3024,8 +3049,17 @@ async function uiScenes(set) {
 
       const r2 = await invoke("ui_shot", { name: "overlay-clear", target: "overlay" });
       await log(`shot ${r2.name} diff=${r2.diff == null ? "-" : r2.diff.toFixed(5)} block=${(r2.block ?? 0).toFixed(3)}${r2.note ? ` ${r2.note}` : ""}`);
-      await invoke("settings_set", { patch: { overlay: { alpha: 82 } } });
+      // no shadow (#65), the background as it was
+      await invoke("settings_set", { patch: { overlay: { alpha: 82, shadow: false } } }); await wait(500);
+      const r4 = await invoke("ui_shot", { name: "overlay-noshadow", target: "overlay" });
+      await log(`shot ${r4.name} diff=${r4.diff == null ? "-" : r4.diff.toFixed(5)} block=${(r4.block ?? 0).toFixed(3)}${r4.note ? ` ${r4.note}` : ""}`);
+      await invoke("settings_set", { patch: { overlay: { shadow: true } } });
       await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" }); // let go of the held state
+      await invoke("overlay_show_test", { on: false });
+      // the 설정 창's 미리보기 with 최소 모드 always (#63 #67): the partner and the sample tabs' balls
+      await invoke("settings_set", { patch: { overlay: { minimal: "always" } } }); await wait(300);
+      await openSettings(); await wait(300); await shot("settings-minimal"); closeSettings();
+      await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
       // 라이트 테마 (APP-20, #60): the main window, the 설정 창, the Pokémon window, the overlay
       await invoke("settings_set", { patch: { theme: "light" } }); await wait(700);
       await invoke("win_resize_test", { w: 1400, h: 600 });

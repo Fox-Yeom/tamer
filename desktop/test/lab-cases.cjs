@@ -775,6 +775,40 @@ sleep 40
     },
   },
   {
+    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 Tamer로 (#63 #65 #66)",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: true, next: { id: 16, shiny: false } })),
+    steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 20 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "never" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82, shadow: false } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "always" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 1500 },
+      { invoke: "overlay_dom_test", log: true }, { invoke: "wild_open_test" }, { wait: 500 }, { probe: "opened" },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "bogus" } } } }, { invoke: "settings_get", log: true },
+      { invoke: "overlay_show_test", args: { on: false } }],
+    check: ({ probe, log, box }) => {
+      const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const [first, clear, never, flat, always, wild] = dom;
+      const got = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
+      let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
+      const none = (sh) => !sh || sh === "none" || /rgba\(0, 0, 0, 0\)/.test(sh);
+      return [
+        ok(dom.length === 6, `오버레이 확인 ${dom.length}번 (6이어야)`),
+        ok(first && !first.minimal && first.meta && first.minis === 1 && !none(first.shadow), `처음(82%) 보통 카드여야 ${JSON.stringify(first)}`),
+        ok(clear && clear.minimal && !clear.meta && !clear.counts && clear.balls.length === 1 && clear.minis === 0 && none(clear.shadow), `20%면 최소 모드(글자 없음·몬스터볼 1·그림자 없음)여야 ${JSON.stringify(clear)}`),
+        ok(never && !never.minimal && never.meta, `안 씀이면 20%여도 보통 카드여야 ${JSON.stringify(never)}`),
+        ok(flat && !flat.minimal && none(flat.shadow), `그림자 끔이면 82%여도 그림자 없어야 ${JSON.stringify(flat)}`),
+        ok(always && always.minimal && !always.meta, `항상이면 82%여도 최소 모드여야 ${JSON.stringify(always)}`),
+        ok(/^wild appeared 16 /m.test(log) && wild?.note && /야생의/.test(wild.note) && /등장/.test(wild.note) && none(wild.noteShadow), `야생 알림(글·그림자 없음)이 떠야 ${JSON.stringify(wild?.note)} ${wild?.noteShadow}`),
+        ok(/^wild open from overlay$/m.test(log) && probe.opened?.wild === true, `알림 누르면 Tamer 창의 야생 카드여야 — wild=${probe.opened?.wild}`),
+        ok(got.overlay?.minimal === "auto" && got.overlay?.shadow === false, `모르는 최소 모드 값은 기본값(auto)이어야 ${JSON.stringify(got.overlay)}`),
+        ok(saved?.overlay?.minimal === "auto" && saved?.overlay?.shadow === false && saved?.overlay?.alpha === 82, `settings.json ${JSON.stringify(saved?.overlay)}`),
+      ];
+    },
+  },
+  {
     id: "theme-switch", tags: ["smoke", "app"], what: "테마: 라이트·다크를 고르면 화면·터미널 색이 바로 바뀌고 settings.json에 남음 (APP-20, #60)",
     data: "owner", mode: "direct", folders: ["proj"],
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 },

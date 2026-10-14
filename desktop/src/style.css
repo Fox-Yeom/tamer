@@ -1,6 +1,7 @@
 @import "@xterm/xterm/css/xterm.css";
 @import "./theme.css";
 @import "./wild.css";
+@import "./overlay-cards.css";
 
 /* Hangul fill: Fira Code has no Hangul, so it falls back to Apple SD Gothic Neo, whose syllables
    are ~1em wide while the terminal gives them 2 cells (2 × 0.6em). Scale only the Hangul
@@ -167,7 +168,18 @@ body.away #wild { visibility: hidden; }
 .dlg footer { padding: 8px 16px; border-top: 1px solid var(--border); font-size: 11px; }
 #settings { position: fixed; inset: 0; z-index: 26; display: flex; align-items: center; justify-content: center; background: var(--scrim); backdrop-filter: blur(3px); outline: none; }
 #settings[hidden] { display: none; }
-#settings .dlg { width: min(560px, 94vw); }
+#settings .dlg { width: min(800px, 94vw); }
+/* the overlay's controls, and next to them its 미리보기 (#67): a bit of desktop, the cards at its corner */
+#settings .set-ov { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; align-items: start; }
+#settings .set-preview { margin: 0; position: relative; }
+#settings .set-preview figcaption { font-size: 11px; margin-bottom: 4px; }
+#settings .set-preview-desk { position: relative; height: 260px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border);
+  background: linear-gradient(160deg, #6f8fc9 0%, #9d8fc2 45%, #d99a7c 100%); } /* a wallpaper (an object colour, both themes) */
+#settings .set-preview-desk .ov { position: absolute; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding: 16px 8px 8px; pointer-events: none; }
+#settings .set-preview-desk .ov > :empty { display: none; }
+#settings .set-preview-off { position: absolute; inset: 22px 0 0; display: flex; align-items: center; justify-content: center; font-size: 12px; color: #fff; }
+#settings .set-preview-off[hidden] { display: none; }
+@media (max-width: 760px) { #settings .set-ov { grid-template-columns: 1fr; } }
 #settings h4 { margin: 14px 0 6px; font-size: 13px; }
 #settings h4 .dim { font-weight: 400; font-size: 11px; }
 #settings .set-row { display: flex; align-items: center; gap: 8px; padding: 5px 2px; font-size: 13px; }
