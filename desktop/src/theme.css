@@ -1,0 +1,33 @@
+/* 테마 (APP-20, #60): every colour the screens use, by meaning — dark (default) and light.
+   The main window and the overlay both load this; html[data-theme] picks the set (src/main.js
+   applyTheme, src/overlay.js). Object colours (a Poké Ball, an agent's pill) stay in their CSS. */
+:root {
+  --bg: #16161c; --pane: #1b1b22; --sunken: #121217; --line: #2a2a34;
+  --raised: #24242c; --raised-hi: #33333f; --hover: #2e2e3a; --border: #3a3a48; --border-hi: #4a4a58;
+  --fg: #e6e6e6; --dim: #8a8a8a; --faint: #5c5c66; --accent: #d97757; --on-accent: #1b1b1f;
+  --bad: #e5484d; --ok: #3ddc84; --warn: #f5c542; --stall: #f0883e;
+  --scrim: rgba(10, 10, 14, .62); --start-bg: rgba(16, 16, 22, .92); --dlg-top: #2a2a35; --dlg-bottom: #1d1d25;
+  --banner-fg: #f6c7a6; --banner-strong: #fff; --banner-line: #a8663a; --banner-chip: #f0b48a;
+  --bad-soft: #e5a0a0; --bad-line: #5a3a3a; --warn-fg: #e5c76b; --warn-line: #c9a227; --warn-hover: #3a3320; --warn-alt: #e5a33a;
+  --sbs-none: rgba(255, 255, 255, .02);
+  --ov-rgb: 27, 27, 34; --ov-text: #e6e6e6; --ov-dim: #9a9aa6; --ov-edge: rgba(255, 255, 255, .08); --ov-mini: rgba(255, 255, 255, .05); --ov-mini-hover: rgba(255, 255, 255, .14);
+  color-scheme: dark;
+}
+:root[data-theme="light"] {
+  --bg: #f4f4f6; --pane: #ffffff; --sunken: #e9e9ee; --line: #dedee5;
+  --raised: #f0f0f4; --raised-hi: #e2e2ea; --hover: #e8e8ef; --border: #cfcfd8; --border-hi: #b5b5c2;
+  --fg: #1d1d22; --dim: #6a6a75; --faint: #a3a3ae; --accent: #c8603d; --on-accent: #ffffff;
+  --bad: #d23b40; --ok: #18924b; --warn: #a87800; --stall: #c45f1a;
+  --scrim: rgba(235, 235, 240, .62); --start-bg: rgba(244, 244, 246, .94); --dlg-top: #ffffff; --dlg-bottom: #f5f5f8;
+  --banner-fg: #7a3a1c; --banner-strong: #3a1a0c; --banner-line: #dca27e; --banner-chip: #8a4a28;
+  --bad-soft: #b03035; --bad-line: #e5b5b5; --warn-fg: #8a6400; --warn-line: #c9a227; --warn-hover: #f7efd2; --warn-alt: #9a6400;
+  --sbs-none: rgba(0, 0, 0, .02);
+  --ov-rgb: 250, 250, 252; --ov-text: #1d1d22; --ov-dim: #5e5e69; --ov-edge: rgba(0, 0, 0, .1); --ov-mini: rgba(0, 0, 0, .05); --ov-mini-hover: rgba(0, 0, 0, .1);
+  /* the Pokédex's green world, light */
+  --pk-bg-top: #eef6e8; --pk-bg: #e3eedb; --pk-line: #b4cdb0; --pk-line-soft: #cfe0c9; --pk-edge: #8fb58f;
+  --pk-fg: #22361f; --pk-title: #3c6b2a; --pk-dim: #5c7a52; --pk-faint: #a3bd9a; --pk-ink: #f4faef;
+  --pk-hover: rgba(70, 140, 60, .12); --pk-sel: rgba(70, 140, 60, .2); --pk-chip: rgba(70, 140, 60, .08);
+  --pk-card: rgba(255, 255, 255, .55); --pk-field: rgba(255, 255, 255, .7);
+  --pk-new: #a87800; --pk-new-soft: rgba(168, 120, 0, .12);
+  color-scheme: light;
+}

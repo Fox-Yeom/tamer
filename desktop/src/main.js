@@ -17,11 +17,34 @@ const showErr = (m) => { const h = document.getElementById("hint"); h.textConten
 window.addEventListener("error", (e) => showErr(e.message));
 window.addEventListener("unhandledrejection", (e) => showErr(String(e.reason?.message || e.reason)));
 
-const THEME = {
-  background: "#1b1b22", foreground: "#e6e6e6", cursor: "#e6e6e6", selectionBackground: "#3a3a4a",
-  black: "#1b1b1f", red: "#e5484d", green: "#3ddc84", yellow: "#f5c542", blue: "#4f8df7",
-  magenta: "#c678dd", cyan: "#56b6c2", white: "#d0d0d0", brightBlack: "#5c5c66",
+// the terminals' 16 colours per theme (APP-20, #60) — an agent's own screen colours are its own setting
+const TERM_THEMES = {
+  dark: {
+    background: "#1b1b22", foreground: "#e6e6e6", cursor: "#e6e6e6", selectionBackground: "#3a3a4a",
+    black: "#1b1b1f", red: "#e5484d", green: "#3ddc84", yellow: "#f5c542", blue: "#4f8df7",
+    magenta: "#c678dd", cyan: "#56b6c2", white: "#d0d0d0", brightBlack: "#5c5c66",
+  },
+  light: { // darker hues on white: every colour stays readable as text
+    background: "#ffffff", foreground: "#1d1d22", cursor: "#1d1d22", cursorAccent: "#ffffff", selectionBackground: "#c9ddfb",
+    black: "#1d1d22", red: "#c4262e", green: "#17803d", yellow: "#8a6400", blue: "#2563d1",
+    magenta: "#9a3cb5", cyan: "#0f7480", white: "#6a6a75", brightBlack: "#8a8a95",
+    brightRed: "#d23b40", brightGreen: "#1e9a50", brightYellow: "#a87800", brightBlue: "#3b7ff0",
+    brightMagenta: "#b05ad0", brightCyan: "#168f9c", brightWhite: "#3a3a44",
+  },
 };
+// 테마: the main process sets macOS's appearance for the app (설정 "시스템 따라가기 / 다크 / 라이트"),
+// so the page just follows prefers-color-scheme — and so does the overlay
+const darkMedia = matchMedia("(prefers-color-scheme: dark)");
+const themeNow = () => (darkMedia.matches ? "dark" : "light");
+let THEME = TERM_THEMES[themeNow()];
+function applyTheme() {
+  const t = themeNow();
+  document.documentElement.dataset.theme = t;
+  THEME = TERM_THEMES[t];
+  for (const p of panes.values()) p.term.options.theme = THEME;
+}
+darkMedia.addEventListener("change", applyTheme);
+document.documentElement.dataset.theme = themeNow(); // before the first paint: no dark flash on a light Mac
 const ICON = {
   idle: "😌", sleep: "💤", thinking: "💭", coding: "⌨️", reading: "📖", searching: "🔍",
   bash: "💻", agent: "🤝", tool: "🛠", waiting: "❓", done: "🎉", compact: "🗜", error: "💥", interrupted: "⏹",
@@ -364,7 +387,7 @@ function showAgent(tab, a) {
   if (tab === active) {
     const tag = $("#agent"), bare = tab.shellOnly && !tab.hostAgent; // S2: no agent yet
     tag.innerHTML = bare ? '🐚 셸<span class="bar-wide"> · ⌘G 에이전트</span>' : esc(a.label);
-    tag.style.background = bare ? "#33333f" : a.color;
+    tag.style.background = bare ? "var(--raised-hi)" : a.color; // the theme's grey (#60)
     tag.style.color = bare ? "var(--fg)" : "";
   }
   renderTab(tab);
@@ -547,7 +570,11 @@ async function openFolderNow(cwd, { resume }) {
 // search line at the pane's top right; every match marked, the current one brighter, "3/12".
 // ↵ next · ⇧↵ previous · Esc closes (back to the terminal). The Pokémon window keeps its own ⌘F.
 let tsearchPane = null;
-const TSEARCH_DECO = { matchBackground: "#6b5a2a", matchOverviewRuler: "#c9a227", activeMatchBackground: "#e5a33a", activeMatchColorOverviewRuler: "#ff9e3d" };
+// find highlights per theme (#60): on white, a pale yellow — the dark one's olive hid dark text
+const TSEARCH_DECOS = {
+  dark: { matchBackground: "#6b5a2a", matchOverviewRuler: "#c9a227", activeMatchBackground: "#e5a33a", activeMatchColorOverviewRuler: "#ff9e3d" },
+  light: { matchBackground: "#fbe7a1", matchOverviewRuler: "#c9a227", activeMatchBackground: "#ffb84d", activeMatchColorOverviewRuler: "#e08a1a" },
+};
 function tsearchCount(i, n) { $("#tsearch-n").textContent = !$("#tsearch-q").value ? "" : n ? `${i >= 0 ? i + 1 : "?"}/${n}` : "없음"; tsearchAlt(); }
 // a full-screen program (alternate screen — e.g. Claude Code scrolling its own view): the terminal
 // holds only the screen you see, so only that can be found; say so (iTerm2 is the same)
@@ -578,7 +605,7 @@ function termFind(dir, incremental = false) {
   const p = tsearchPane, q = $("#tsearch-q").value;
   if (!p) return;
   if (!q) { p.search.clearDecorations(); tsearchCount(-1, 0); return; }
-  const opts = { decorations: TSEARCH_DECO, incremental };
+  const opts = { decorations: TSEARCH_DECOS[themeNow()], incremental };
   if (dir < 0) p.search.findPrevious(q, opts); else p.search.findNext(q, opts);
 }
 $("#tsearch-q").addEventListener("input", () => termFind(1, true));
@@ -646,6 +673,7 @@ function renderTab(t, b = $(`#tabs .tab[data-ws="${t.id}"]`), i = tabs.indexOf(t
   const waiting = st === "waiting";
   b.classList.toggle("active", t === active);
   b.classList.toggle("attention", waiting || st === "error");
+  b.classList.toggle("working", WORKING.includes(st) && !tm.stall); // #61: a gradient runs round the tab while its agent works
   const doing = waiting ? "❗ 입력 필요" : tm.stall ? `변화 없음 ${tm.stall}` : st && st !== "idle" && st !== "sleep" ? DOING[st] : "";
   b.innerHTML = `<span class="num">${i < 9 ? i + 1 : ""}</span><span>${tm.stall ? "⏳" : ICON[st] || "·"}</span>`
     + `<span class="name">${esc(base(t.cwd))}</span>${many}<span class="doing">${esc(doing)}</span><span class="close" title="닫기 (⌘W)">✕</span>`;
@@ -1256,6 +1284,7 @@ const wild = createWild($("#wild"), {
 const STATUS = { modified: ["M", "mod"], added: ["A", "add"], new: ["N", "add"], deleted: ["D", "del"], renamed: ["R", "mod"] };
 
 async function refreshChanges(tab) {
+  if (tab?.changesFrozen) return; // a UI scene's fixed list (ui:shots) — the real one mustn't replace it mid-picture
   if (!tab || tab.changesBusy) return;
   tab.changesBusy = true;
   try {
@@ -1265,6 +1294,75 @@ async function refreshChanges(tab) {
   } catch {} finally { tab.changesBusy = false; }
 }
 setInterval(() => { if (active && document.hasFocus()) refreshChanges(active); }, 10000);
+
+// ── 설정 창 (APP-19, #59) ─────────────────────────────────────────────────────────────────────
+// the main process keeps ui/settings.json; this window shows it and sends changes (it answers with
+// the checked settings, broadcast to the overlay too)
+let settingsNow = null;
+const settingsOpen = () => !$("#settings").hidden;
+const getPath = (o, k) => k.split(".").reduce((x, p) => x?.[p], o);
+function applySettings(s) {
+  settingsNow = s;
+  applyTheme();
+  document.body.classList.toggle("no-tab-glow", !s.tabGlow);
+  for (const el of document.querySelectorAll("#settings [data-set]")) {
+    const v = getPath(s, el.dataset.set);
+    if (el.type === "checkbox") el.checked = !!v; else el.value = v;
+  }
+  for (const el of document.querySelectorAll("#settings [data-val]")) el.textContent = `${getPath(s, el.dataset.val)}%`;
+  $("#settings .set-group").classList.toggle("off", !s.overlay.on);
+}
+const PRESETS = { // 빠른 선택
+  all: { on: true, partner: true, alerts: true, wild: true }, pokemon: { on: true, partner: true, alerts: false, wild: true },
+  wild: { on: true, partner: false, alerts: false, wild: true }, off: { on: false },
+};
+async function setSetting(key, value) {
+  const [a, b] = key.split(".");
+  applySettings(await invoke("settings_set", { patch: b ? { [a]: { [b]: value } } : { [a]: value } }));
+}
+async function openSettings() { applySettings(await invoke("settings_get")); $("#settings").hidden = false; $("#settings").focus(); }
+function closeSettings() { $("#settings").hidden = true; focusBig(active); }
+$("#settings").addEventListener("change", (e) => {
+  const k = e.target.dataset?.set, t = e.target.type;
+  if (k) setSetting(k, t === "checkbox" ? e.target.checked : t === "range" ? Number(e.target.value) : e.target.value);
+});
+$("#settings").addEventListener("input", (e) => { const k = e.target.dataset?.set; if (k && e.target.type === "range") $(`#settings [data-val="${k}"]`).textContent = `${e.target.value}%`; });
+$("#settings").addEventListener("click", async (e) => {
+  const p = e.target.dataset?.preset;
+  if (p) applySettings(await invoke("settings_set", { patch: { overlay: PRESETS[p] } }));
+});
+$("#settings").addEventListener("mousedown", (e) => { if (e.target.id === "settings") closeSettings(); });
+$("#settings-close").addEventListener("click", closeSettings);
+listen("open-settings", () => openSettings());
+listen("settings", (e) => applySettings(e.payload));
+invoke("settings_get").then(applySettings).catch(() => {});
+
+// ── the right column's width (#58): drag the border, double-click for 40% again; one width for every
+// tab, kept in this Mac's page storage (a per-viewer convenience — the app works without it)
+const SIDE_KEY = "tamer.side", SIDE_DEFAULT = 40;
+function setSide(pct, keep = true) {
+  const w = innerWidth, min = Math.max(20, (260 / w) * 100), max = Math.min(60, 100 - (360 / w) * 100);
+  const v = Math.round(Math.min(max, Math.max(min, Number(pct) || SIDE_DEFAULT)) * 10) / 10;
+  document.documentElement.style.setProperty("--side", `${v}%`);
+  if (keep) { try { localStorage.setItem(SIDE_KEY, String(v)); } catch {} }
+  return v;
+}
+try { const v = localStorage.getItem(SIDE_KEY); if (v) setSide(v, false); } catch {}
+function sideSplit(e) {
+  const grid = e.target.closest(".grid"), box = grid.getBoundingClientRect();
+  document.body.classList.add("side-drag");
+  let moved = false; // a plain press (no move) keeps the width
+  const move = (ev) => { moved = true; setSide(((box.right - ev.clientX) / box.width) * 100, false); };
+  const up = (ev) => { removeEventListener("mousemove", move); removeEventListener("mouseup", up); document.body.classList.remove("side-drag"); if (moved) setSide(((box.right - ev.clientX) / box.width) * 100); };
+  addEventListener("mousemove", move); addEventListener("mouseup", up);
+  e.preventDefault();
+}
+// the second press of a double-click resets (a dblclick event doesn't come: the drag owns the presses)
+$("#views").addEventListener("mousedown", (e) => {
+  if (!e.target.classList?.contains("side-split") || e.button !== 0) return;
+  if (e.detail >= 2) { e.preventDefault(); setSide(SIDE_DEFAULT); return; }
+  sideSplit(e);
+});
 // git's state changed in that folder (branch, commit, staging, fetch — #52): read again now
 listen("changes-dirty", (e) => { const t = byId.get(e.payload.ws); if (t) refreshChanges(t); });
 
@@ -2130,7 +2228,7 @@ function startKey(e) {
 window.addEventListener("keydown", (e) => {
   // the keys belong to the top layer: the Pokémon window (z 20) only when no dialog / menu is over it
   // (first launch: 에이전트 연결 opens over 파트너 고르기 — Esc there must close that one)
-  const pokeOnTop = dexOpen() && !agentsOpen() && !diffOpen() && $("#menu").hidden;
+  const pokeOnTop = dexOpen() && !agentsOpen() && !settingsOpen() && !diffOpen() && $("#menu").hidden;
   if (pokeOnTop && e.metaKey && e.code === "KeyF") { e.preventDefault(); $("#dex-search").focus(); return; }
   if (pokeOnTop && e.target === $("#dex-search") && !e.metaKey) {
     if (dexSearchKey(e)) { e.preventDefault(); e.stopPropagation(); }
@@ -2152,6 +2250,7 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (agentsOpen() && !e.metaKey) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAgents(); } return; }
+  if (settingsOpen() && !e.metaKey) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeSettings(); } return; } // the keys are the 설정 창's
   if (diffOpen() && !e.metaKey) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeDiff(); } return; }
   if (startOpen() && !e.metaKey) {
     if (startKey(e)) { e.preventDefault(); e.stopPropagation(); }
@@ -2681,12 +2780,12 @@ async function wildTest() {
 //   { click: "css selector" } · { probe: "name" } · { shot: "name" } · { call: "openDex" | … }
 function labState() {
   const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
-  const top = el?.closest("#menu") ? "menu" : el?.closest("#agents") ? "agents" : el?.closest("#diffview") ? "diff"
+  const top = el?.closest("#menu") ? "menu" : el?.closest("#agents") ? "agents" : el?.closest("#settings") ? "settings" : el?.closest("#diffview") ? "diff"
     : el?.closest("#dex") ? "poke" : el?.closest("#start") ? "start" : "main";
   const st = dexState?.chooseOpts?.starter;
   return {
     tabs: tabs.map((t) => base(t.cwd)), active: active ? base(active.cwd) : null, start: startOpen(),
-    poke: dexOpen() ? dexState?.view || "dex" : null, choose: chooseOpen(), agents: agentsOpen(), menu: !$("#menu").hidden, diff: diffOpen(), top,
+    poke: dexOpen() ? dexState?.view || "dex" : null, choose: chooseOpen(), agents: agentsOpen(), settings: settingsOpen(), menu: !$("#menu").hidden, diff: diffOpen(), top,
     starters: st ? { ready: !!st.ready, n: st.set.length } : null, cards: document.querySelectorAll("#box-grid .pk-card[data-i]").length,
     partner: active?.partner?.name || null, choosePending: !!active && !active.partner?.uid, wild: wild.active(),
     toast: $("#toast")?.classList.contains("show") ? $("#toast").textContent : null,
@@ -2706,6 +2805,12 @@ function labState() {
     branch: active ? { text: $(".changes-branch", active.view)?.textContent || "", title: $(".changes-branch", active.view)?.title || "" } : null, // TRM-18
     doing: $("#doing")?.textContent || "", // the top bar's state sentence (STA-20 times)
     tabTitle: active ? $(`#tabs .tab[data-ws="${active.id}"]`)?.title || "" : null,
+    noTabGlow: document.body.classList.contains("no-tab-glow"), // #59 설정
+    theme: document.documentElement.dataset.theme || null, termBg: active ? bigPane(active)?.term.options.theme?.background || null : null, // #60
+    bodyBg: getComputedStyle(document.body).backgroundColor,
+    side: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side")) || null, // #58 the right column's % (null = default)
+    sideW: active ? Math.round($(".side", active.view)?.getBoundingClientRect().width || 0) : null,
+    tabWorking: active ? !!$(`#tabs .tab[data-ws="${active.id}"]`)?.classList.contains("working") : null, // #61
     recent: startOpen() ? [...document.querySelectorAll("#recent li:not(.dim) span:nth-child(2)")].map((x) => x.textContent) : null,
     startSel: startOpen() ? startSel : null,
     menuItems: $("#menu").hidden ? null : [...$("#menu").querySelectorAll("button")].map((b) => b.textContent),
@@ -2729,7 +2834,7 @@ function fakeUsage(tab) {
     usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
   renderBar(tab); renderTab(tab); // the tab too: else the 15 s redraw (STA-20) decides when it changes
 }
-const LAB_CALLS = { home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
+const LAB_CALLS = { openSettings: () => openSettings(), home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
@@ -2752,19 +2857,25 @@ async function labRun(steps) {
         const el = document.querySelector(s.click);
         if (!el) { await log(`lab-missing ${s.click}`); continue; }
         const r = el.getBoundingClientRect();
-        await invoke("click_test", { x: r.left + r.width / 2, y: r.top + r.height / 2, ...(s.button ? { button: s.button } : {}) });
+        await invoke("click_test", { x: r.left + r.width / 2, y: r.top + r.height / 2, ...(s.button ? { button: s.button } : {}), ...(s.count ? { count: s.count } : {}) });
+      } else if (s.dragSplit != null) { // drag the right column's border to this fraction of the window's width (#58)
+        const el = $("main.grid:not([hidden]) .side-split"), r = el.getBoundingClientRect(), g = el.closest(".grid").getBoundingClientRect(), y = r.top + 200;
+        await invoke("drag_test", { x1: r.left + r.width / 2, y1: y, x2: g.left + g.width * s.dragSplit, y2: y });
       } else if (s.drop) { // Finder paths dropped on an element: { drop: "css", files: ["/abs", …] } ("$dir/x" = the case's sandbox)
         const el = document.querySelector(s.drop);
         if (!el) { await log(`lab-missing ${s.drop}`); continue; }
         const r = el.getBoundingClientRect();
         await invoke("drop_test", { x: r.left + Math.min(r.width / 2, 60), y: r.top + r.height / 2, files: s.files });
-      } else if (s.select != null) { // drag the mouse over the first on-screen run of this text in the big pane (TRM-04)
+      } else if (s.select != null || s.clickText != null) { // the last on-screen run of this text in the big pane:
+        // select = drag the mouse over it (TRM-04) · clickText = click its middle, mods 4 = ⌘ (TRM-08)
+        const want = s.select ?? s.clickText;
         const t = bigPane(active).term, b = t.buffer.active, scr = t.element.querySelector(".xterm-screen").getBoundingClientRect();
         let at = null;
-        for (let y = b.viewportY; y < b.viewportY + t.rows && !at; y++) { const x = (b.getLine(y)?.translateToString(true) || "").indexOf(s.select); if (x >= 0) at = { x, y: y - b.viewportY }; }
-        if (!at) { await log(`lab-missing select ${s.select}`); continue; }
+        for (let y = b.viewportY; y < b.viewportY + t.rows; y++) { const x = (b.getLine(y)?.translateToString(true) || "").indexOf(want); if (x >= 0 && (!at || s.clickText != null)) at = { x, y: y - b.viewportY }; }
+        if (!at) { await log(`lab-missing text ${want}`); continue; }
         const cw = scr.width / t.cols, ch = scr.height / t.rows, cy = scr.top + (at.y + 0.5) * ch;
-        await invoke("drag_test", { x1: scr.left + (at.x + 0.2) * cw, y1: cy, x2: scr.left + (at.x + s.select.length - 0.2) * cw, y2: cy });
+        if (s.select != null) await invoke("drag_test", { x1: scr.left + (at.x + 0.2) * cw, y1: cy, x2: scr.left + (at.x + want.length - 0.2) * cw, y2: cy });
+        else { await invoke("click_test", { x: scr.left + (at.x + want.length / 2) * cw, y: cy, modifiers: s.mods || 0 }); await wait(400); }
       } else if (s.probe) await log(`lab-probe ${s.probe} +${Math.round(performance.now())}ms ${JSON.stringify(labState())}`); // ms since the page began
       else if (s.shot) await invoke("shot_test", { name: s.shot });
       else if (s.ime != null) await invoke("ime_compose", { text: s.ime }); // Hangul being composed
@@ -2834,7 +2945,10 @@ async function uiScenes(set) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line: `ui-scenes ${line}` });
   document.body.classList.add("ui-test"); // no animation, no blinking: same picture every run
-  const shot = async (name) => { await invoke("mouse_park_test"); await wait(700); const r = await invoke("ui_shot", { name }); await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`); };
+  const frame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))); // painted, not just laid out
+  // the fake usage's reset time counts down while the scenes run (2h00m → 1h59m): set it again each picture
+  const fresh = () => { const f = active?.state?.usage?.five_hour; if (f?.resets_at) { f.resets_at = Math.floor(Date.now() / 1000) + 7230; renderBar(active); } };
+  const shot = async (name) => { await invoke("mouse_park_test"); fresh(); await wait(700); await frame(); const r = await invoke("ui_shot", { name }); await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`); };
   const search = async (q) => { const b = $("#dex-search"); b.value = q; b.dispatchEvent(new Event("input", { bubbles: true })); await wait(200); };
   try {
     const tab = active;
@@ -2877,6 +2991,11 @@ async function uiScenes(set) {
       await showStart(false, ["dev/tamer", "dev/blog", "work/api-server", "Documents/notes"].map((d) => `${info.home}/${d}`));
       startSel = 1; markStart();
       await shot("start-screen"); hideStart();
+      // 설정 창 (APP-19, #59): the defaults
+      await openSettings(); await shot("settings-window"); closeSettings();
+      // a working tab (#61): the gradient border (still in scenes — body.ui-test stops animations)
+      { const kept = tab.state; tab.state = { ...tab.state, state: "coding", detail: "src/app.ts", turn_at: null, event_at: null, state_at: null }; renderTab(tab); renderBar(tab);
+        await shot("tab-working"); tab.state = kept; renderTab(tab); renderBar(tab); }
       // a failed turn (#53): 💥 실패 · 서버 과부하
       const kept = tab.state;
       tab.state = { ...tab.state, state: "error", detail: "server_overloaded" }; renderBar(tab); renderTab(tab);
@@ -2886,18 +3005,41 @@ async function uiScenes(set) {
       const keep = tab.changes;
       tab.changes = { repo: true, branch: { name: "feature/unattended-run-display", upstream: "origin/feature/unattended-run-display", ahead: 2, behind: 1 },
         items: [{ path: "src/elapsed.js", status: "new", add: 27, del: 0 }, { path: "src/main.js", status: "modified", add: 48, del: 12 }] };
-      renderChanges(tab); await shot("changes-branch");
+      tab.changesFrozen = true; renderChanges(tab); await shot("changes-branch");
       await invoke("win_resize_test", { w: 720, h: 700 }); await shot("changes-branch-720"); await invoke("win_resize_test", { w: 1100, h: 700 });
-      tab.changes = keep; renderChanges(tab);
+      tab.changes = keep; tab.changesFrozen = false; renderChanges(tab);
       // 무인 실행 (STA-20): working 32 min, no new event for 12 — the top bar and the overlay card
       const now = Date.now(), times = { turn_at: now - 32 * 60000 - 5000, state_at: now - 12 * 60000 - 5000, event_at: now - 12 * 60000 - 5000, watch: true };
       tab.state = { ...tab.state, state: "coding", detail: "src/app.ts", ...times };
       renderBar(tab); renderTab(tab);
       await shot("bar-stall");
-      await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "coding", times });
-      await invoke("overlay_show_test", { on: true }); await wait(1200);
+      // the overlay first (a test app shows it only when asked), then the state right before the picture —
+      // the core's own idle for this tab may come meanwhile
+      await invoke("overlay_show_test", { on: true }); await wait(1000);
+      await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "coding", times, hold: true }); await wait(500);
       const r = await invoke("ui_shot", { name: "overlay-stall", target: "overlay" });
       await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
+      // the cards' background at 20 % (설정 창, #59)
+      await invoke("settings_set", { patch: { overlay: { alpha: 20 } } }); await wait(500);
+
+      const r2 = await invoke("ui_shot", { name: "overlay-clear", target: "overlay" });
+      await log(`shot ${r2.name} diff=${r2.diff == null ? "-" : r2.diff.toFixed(5)} block=${(r2.block ?? 0).toFixed(3)}${r2.note ? ` ${r2.note}` : ""}`);
+      await invoke("settings_set", { patch: { overlay: { alpha: 82 } } });
+      await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" }); // let go of the held state
+      // 라이트 테마 (APP-20, #60): the main window, the 설정 창, the Pokémon window, the overlay
+      await invoke("settings_set", { patch: { theme: "light" } }); await wait(700);
+      await invoke("win_resize_test", { w: 1400, h: 600 });
+      fakeUsage(tab); await shot("light-main");
+      await invoke("win_resize_test", { w: 1100, h: 700 });
+      await openSettings(); await shot("light-settings"); closeSettings();
+      await openDex(); await shot("light-dex"); closeDex();
+      await invoke("overlay_show_test", { on: true }); await wait(800);
+      await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "coding", times, hold: true }); await wait(500);
+      const r3 = await invoke("ui_shot", { name: "light-overlay", target: "overlay" });
+      await log(`shot ${r3.name} diff=${r3.diff == null ? "-" : r3.diff.toFixed(5)} block=${(r3.block ?? 0).toFixed(3)}${r3.note ? ` ${r3.note}` : ""}`);
+      await invoke("overlay_show_test", { on: false });
+      await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" });
+      await invoke("settings_set", { patch: { theme: "dark" } });
       await invoke("overlay_show_test", { on: false });
     }
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }

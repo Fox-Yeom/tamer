@@ -38,7 +38,7 @@
         <section class="pane pane-agent"><div class="title agent-title"><span class="agent-name">Agent</span><span class="grow"></span><button class="sess-add" title="이 폴더에 셸 하나 더 (⌘⇧T) · 셸 이동 ⌃⌘1~9">＋ 셸</button></div><div class="where-banner" data-pane="agent" hidden></div><div class="term"></div></section>
         <!-- M1: this folder's agent sessions (shown when there are 2 or more) -->
         <nav class="rail" hidden></nav>
-        <aside class="side">
+        <aside class="side"><div class="side-split" title="끌어서 오른쪽 칸 너비 · 두 번 눌러 처음대로"></div>
           <section class="pane pane-avatar"><div class="title">🐾 Avatar</div><div class="avatar-box"><div class="stage"><div class="pokeball" title="불러오는 중…"></div><div class="empty-ball" title="파트너가 없어요" hidden></div><img class="poke" alt="" hidden /><div class="fx"></div></div><div class="caption"><span class="poke-label"></span> <span class="state-line dim"></span></div><div class="poke-exp dim"></div></div><ul class="activity"></ul></section>
           <section class="pane pane-changes"><div class="title">📝 변경 사항 <span class="changes-count"></span><span class="changes-branch dim"></span><span class="grow"></span><button class="changes-refresh" title="새로 고침">↻</button></div><ul class="changes"></ul></section>
           <section class="pane pane-shell"><div class="title">🐚 Shell</div><div class="where-banner" data-pane="shell" hidden></div><div class="term"></div></section>
@@ -72,6 +72,28 @@
         <div class="dlg-body"><ul id="agents-list"></ul>
           <p class="dim agents-note">🟢 전체: 생각 중·도구·입력 필요·완료·중단까지, 파트너 EXP·야생 포켓몬 · 🟡 기본: 작업 중/대기 — 오래 일하다 조용해지면 완료로 보고 EXP(절반 속도, 야생 없음) · 목록에 없는 에이전트는 <code>~/.cvim/agents.json</code>에 이름·명령을 적으면 🟡 기본으로 따라가요(그 밖의 프로그램은 상태·EXP 대상이 아님)</p></div>
         <footer class="dim">셸 환경(PATH 등)은 사용자 터미널과 같아요 · Esc 닫기</footer>
+      </div>
+    </section>
+    <!-- 설정 창 (APP-19, #59): the overlay, the tab effect — more to come (theme, menu bar) -->
+    <section id="settings" tabindex="-1" hidden>
+      <div class="dlg">
+        <header><span>설정</span><button id="settings-close" title="닫기 (Esc)">✕</button></header>
+        <div class="dlg-body">
+          <h4>바탕화면 오버레이 <span class="dim">— 다른 앱을 쓰는 동안 화면 구석의 카드</span></h4>
+          <label class="set-row"><input type="checkbox" data-set="overlay.on" /> 오버레이 켜기</label>
+          <div class="set-group">
+            <label class="set-row"><input type="checkbox" data-set="overlay.partner" /> 파트너 <span class="dim">지금 탭 카드</span></label>
+            <label class="set-row"><input type="checkbox" data-set="overlay.alerts" /> 알림 <span class="dim">입력 필요·완료 말풍선, 나를 기다리는 다른 탭, 아이콘 줄</span></label>
+            <label class="set-row"><input type="checkbox" data-set="overlay.wild" /> 야생 포켓몬 <span class="dim">끄면 Tamer 창에서만</span></label>
+            <div class="set-row set-presets">빠른 선택 <button data-preset="all">전부</button><button data-preset="pokemon">포켓몬만</button><button data-preset="wild">야생 포켓몬만</button><button data-preset="off">끄기</button></div>
+            <label class="set-row">카드 배경 <input type="range" min="0" max="100" step="5" data-set="overlay.alpha" /> <span class="set-val" data-val="overlay.alpha"></span></label>
+          </div>
+          <h4>테마 <span class="dim">— 에이전트 화면 색은 그 에이전트 설정(Claude Code는 /theme)</span></h4>
+          <label class="set-row"><select data-set="theme"><option value="system">시스템 따라가기</option><option value="dark">다크</option><option value="light">라이트</option></select></label>
+          <h4>탭</h4>
+          <label class="set-row"><input type="checkbox" data-set="tabGlow" /> 일하는 탭 테두리 효과 <span class="dim">에이전트가 일하는 동안 색이 돌며 감쌈</span></label>
+        </div>
+        <footer class="dim">바꾸면 바로 적용, 다음에도 그대로 · ⌘, 열기 · Esc 닫기</footer>
       </div>
     </section>
     <!-- a changed file, side by side (E1b) -->

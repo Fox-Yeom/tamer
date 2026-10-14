@@ -15,7 +15,8 @@
       "scenes": [
         "dex-grid",
         "dex-search",
-        "dex-empty"
+        "dex-empty",
+        "light-dex"
       ]
     },
     "box": {
@@ -39,6 +40,14 @@
         "agents-window"
       ]
     },
+    "settings": {
+      "what": "설정 창 (⌘, · 메뉴 Tamer → 설정…) — 오버레이 켜기·보일 것·투명도, 탭 효과 (APP-19, #59)",
+      "entry": "openSettings",
+      "scenes": [
+        "settings-window",
+        "light-settings"
+      ]
+    },
     "start": {
       "what": "시작 화면 (폴더 없이 열 때 · 마지막 탭을 닫을 때 · ⌘T) — 최근 폴더·다른 폴더·홈",
       "entry": "showStart",
@@ -55,17 +64,21 @@
         "bar-900",
         "bar-720",
         "term-search",
+        "tab-working",
         "bar-failed",
         "changes-branch",
         "changes-branch-720",
-        "bar-stall"
+        "bar-stall",
+        "light-main"
       ]
     },
     "overlay": {
       "what": "바탕화면 오버레이 — 다른 앱을 쓰는 동안 지금 탭·가장 급한 탭 카드, 아이콘 줄 (STA-15, STA-20)",
       "entry": "bigCard",
       "scenes": [
-        "overlay-stall"
+        "overlay-stall",
+        "overlay-clear",
+        "light-overlay"
       ]
     },
     "home": {
@@ -344,6 +357,26 @@
       ],
       "screens": [
         "home"
+      ]
+    },
+    "side-split": {
+      "what": "큰 칸과 오른쪽 칸 사이 경계 — 끌어서 너비, 두 번 눌러 40% (#58)",
+      "files": [
+        "index.html",
+        "src/style.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".side-split",
+        ".side",
+        ".grid"
+      ],
+      "functions": [
+        "sideSplit",
+        "setSide"
+      ],
+      "screens": [
+        "main"
       ]
     }
   },

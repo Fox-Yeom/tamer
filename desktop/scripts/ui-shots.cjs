@@ -22,9 +22,13 @@ if (!args.includes("--no-build") || !fs.existsSync(T.APP)) { console.log("buildi
 
 // each data set: the app puts every scene of it on screen (src/main.js uiScenes) and captures it
 async function run(set) {
-  const box = T.sandbox(`ui-${set}`, { data: set });
+  const TODAY = "2026-10-07"; // a Wednesday: the home scene's weekdays never move with the calendar
+  const box = T.sandbox(`ui-${set}`, { data: set, today: TODAY });
+  // scenes are dark whatever this Mac's appearance is (the light ones switch on purpose — #60)
+  fs.mkdirSync(path.join(box.data, "ui"), { recursive: true });
+  fs.writeFileSync(path.join(box.data, "ui", "settings.json"), JSON.stringify({ theme: "dark" }));
   fs.mkdirSync(SHOTS, { recursive: true });
-  const env = { ...box.env, CVIM_DESKTOP_UI_SCENES: set, CVIM_DESKTOP_SHOTS: SHOTS, ...(saveBaseline ? {} : { CVIM_UI_BASELINE: BASE }) };
+  const env = { ...box.env, CVIM_TEST_TODAY: TODAY, CVIM_DESKTOP_UI_SCENES: set, CVIM_DESKTOP_SHOTS: SHOTS, ...(saveBaseline ? {} : { CVIM_UI_BASELINE: BASE }) };
   const { log } = await T.launch({ env, mode: "direct", folders: [box.folder()], until: "ui-scenes done", timeoutMs: 95000 });
   const out = [...log.matchAll(/ui-scenes shot (\S+) diff=(\S+) block=(\S+)(.*)/g)].map((m) => ({ scene: m[1], diff: m[2] === "-" ? null : Number(m[2]), block: Number(m[3]), note: m[4].trim() }));
   return { out, err: log.match(/ui-scenes ERROR.*/)?.[0], shots: SHOTS };

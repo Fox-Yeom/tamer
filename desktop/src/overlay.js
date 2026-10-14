@@ -46,7 +46,8 @@ async function bigCard(t, extra = "") {
   const took = t.ended === "done" && t.times?.took >= MINUTE ? ` · ${dur(t.times.took)}` // STA-20
     : t.ended === "error" && failLabel(t.endedKind || t.times?.kind) ? ` · ${failLabel(t.endedKind || t.times?.kind)}` : ""; // #53
   const endBubble = end ? `<div class="bubble ${end[0]}${t.state === "waiting" ? " second" : ""}">${t.endedN ? `셸 ${t.endedN} ` : ""}${end[1]}${took}</div>` : "";
-  const bubble = (t.state === "waiting" ? '<div class="bubble bad">❗ 입력 필요</div>' : "") + endBubble;
+  // 알림 off (#59): no "입력 필요" / "완료!" bubbles — the partner stays
+  const bubble = show.alerts === false ? "" : (t.state === "waiting" ? '<div class="bubble bad">❗ 입력 필요</div>' : "") + endBubble;
   const motion = t.state === "waiting" ? "st-waiting" : ["done", "interrupted", "error", "idle", "sleep"].includes(t.state) ? `st-${t.state}` : "st-working";
   return `<div class="card hit${t.active ? " current" : ""}" data-ws="${esc(t.ws)}" title="클릭: 이 탭으로 · 드래그: 이동${t.active ? " · 더블클릭: 접기/펴기" : ""}">
     ${bubble}
@@ -57,10 +58,18 @@ async function bigCard(t, extra = "") {
   </div>`;
 }
 
+// 테마 (#60): the app sets macOS's appearance for itself — follow it like the main window
+const darkMedia = matchMedia("(prefers-color-scheme: dark)");
+const applyTheme = () => { document.documentElement.dataset.theme = darkMedia.matches ? "dark" : "light"; };
+applyTheme();
+darkMedia.addEventListener("change", applyTheme);
 let last = null;
+let show = {}; // what the 설정 창 lets through (#59): partner · alerts · wild, and the cards' background
 async function render(p) {
   last = p;
   stallMs = p.stallMs;
+  show = p.show || {};
+  document.documentElement.style.setProperty("--ov-alpha", String((show.alpha ?? 82) / 100));
   const box = document.getElementById("cards");
   // every other tab: a small icon + state dot, then the counts (same as the top bar)
   const minis = await Promise.all((p.minis || []).map(async (t) => {
@@ -70,12 +79,12 @@ async function render(p) {
   const c = p.counts || {};
   const counts = [["bad", "❗", c.waiting], ["", "⌨️", c.working], ["ok", "✅", c.done], ["bad", "💥", c.error]]
     .filter(([, , n]) => n > 0).map(([cls, icon, n]) => `<span class="${cls}">${icon}${n}</span>`).join(" ");
-  const strip = minis.length || p.more || (counts && !p.collapsed)
+  const strip = show.alerts !== false && (minis.length || p.more || (counts && !p.collapsed))
     ? `<div class="minis">${minis.join("")}${p.more ? `<span class="more">+${p.more}</span>` : ""}<span class="counts">${counts}</span></div>` : "";
   const cards = [];
-  if (p.urgent) cards.push(await bigCard(p.urgent));
-  if (p.current) cards.push(await bigCard(p.current, strip));
-  else if (strip) cards.push(`<div class="card">${strip}</div>`);
+  if (p.urgent && show.alerts !== false) cards.push(await bigCard(p.urgent)); // the tab that needs you: an alert
+  if (p.current && show.partner !== false) cards.push(await bigCard(p.current, strip));
+  else if (strip) cards.push(`<div class="card">${strip}</div>`); // no partner card: the icon row alone
   box.innerHTML = cards.join("");
   box.querySelectorAll(".poke").forEach((img) => img.decode().then(() => {
     const k = img.closest(".current") ? 2 : 1;
@@ -86,7 +95,7 @@ async function render(p) {
 listen("overlay", (e) => render(e.payload));
 // the times move on their own (STA-20): redraw the last state now and then
 setInterval(() => { if (last && !drag) render(last); }, 15000);
-listen("wild", (e) => wild.show(e.payload));
+listen("wild", (e) => { if (show.wild !== false) wild.show(e.payload); }); // 야생 포켓몬 off (#59): in the main window only
 listen("wild-throw", (e) => wild.play(e.payload));
 listen("wild-end", (e) => wild.end(e.payload));
 

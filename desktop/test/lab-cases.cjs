@@ -623,6 +623,7 @@ sleep 30
       const ov = JSON.parse(log.match(/^lab-invoke overlay_payload_test (.*)$/m)?.[1] || "{}");
       return [
         ok(probe.early?.astate === "reading" && !/변화 없음/.test(probe.early?.doing || ""), `처음 ${probe.early?.astate} "${probe.early?.doing}"`),
+        ok(probe.early?.tabWorking === true && probe.stall?.tabWorking === false && probe.bash?.tabWorking === true && probe.done?.tabWorking === false, `탭 테두리 효과 일하는 중 ${probe.early?.tabWorking} · 멈춤 의심 ${probe.stall?.tabWorking} · 실행 ${probe.bash?.tabWorking} · 끝 ${probe.done?.tabWorking} (#61)`),
         ok(/⏳ 변화 없음 0분 · 마지막 읽기 rg needle/.test(probe.stall?.doing || "") || /⏳ 변화 없음/.test(probe.stall?.doing || ""), `멈춤 의심 상단 바 "${probe.stall?.doing}"`),
         ok(/새 이벤트 없음/.test(probe.stall?.tabTitle || ""), `탭 말풍선 "${probe.stall?.tabTitle}"`),
         ok(ov.current?.times?.watch === true && ov.current?.times?.event_at > 0 && ov.stallMs === 8000, `오버레이 시각 ${JSON.stringify(ov.current?.times)} stallMs ${ov.stallMs}`),
@@ -711,6 +712,85 @@ sleep 40
       ok(probe.after?.branch?.text === "⎇ live-branch", `바꾼 뒤 ${JSON.stringify(probe.after?.branch)}`),
       ok(probe.after && probe.after._ms - probe.before._ms < 4500, `바뀌기까지 ${probe.after && probe.after._ms - probe.before._ms}ms (10초 틱 아님 — 시험 창은 포커스가 없어 틱이 돌지 않음)`),
     ],
+  },
+  {
+    id: "open-file-kinds", tags: ["smoke", "terminal"], what: "⌘-클릭한 파일: index.html·그림은 기본 앱(브라우저 등), 코드는 편집기 그 줄로 (#57, TRM-08)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    setup: (box) => { const d = box.folder("proj"); fs.mkdirSync(path.join(d, "src"), { recursive: true }); fs.writeFileSync(path.join(d, "index.html"), "<p>x</p>\n"); fs.writeFileSync(path.join(d, "src", "a.ts"), "1\n2\n3\n"); fs.writeFileSync(path.join(d, "shot.png"), ""); },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "clear; printf 'see index.html and src/a.ts:3 and shot.png\\n'" }, { wait: 200 }, { key: "Enter" }, { wait: 1200 },
+      { clickText: "index.html", mods: 4 }, { clickText: "src/a.ts:3", mods: 4 }, { clickText: "shot.png", mods: 4 }, { invoke: "links_opened_test", log: true }],
+    check: ({ log, box }) => {
+      const got = JSON.parse(log.match(/^lab-invoke links_opened_test (.*)$/m)?.[1] || "[]");
+      const d = fs.realpathSync(box.folder("proj"));
+      return [
+        ok(got.length === 3, `열린 것 ${got.length}개 ${JSON.stringify(got)}`),
+        ok(got[0]?.startsWith("default:") && got[0].includes("index.html"), `index.html → ${got[0]} (기본 앱이어야)`),
+        ok(!/^default:|^finder:/.test(got[1] || "") && /src\/a\.ts:3:1$/.test(got[1] || ""), `a.ts:3 → ${got[1]} (편집기 그 줄이어야)`),
+        ok(got[2]?.startsWith("default:") && got[2].includes("shot.png"), `shot.png → ${got[2]}`),
+        ok(got.every((g) => g.includes(d) || g.includes(box.folder("proj"))), "다른 곳의 파일을 엶"),
+      ];
+    },
+  },
+  {
+    id: "side-resize", tags: ["smoke", "tabs"], what: "오른쪽 칸 경계를 끌면 너비가 바뀌고(20~60%, 최소 폭), 두 번 누르면 40%로, 다른 탭도 같은 너비 (#58)",
+    data: "owner", mode: "direct", folders: ["a", "b"],
+    steps: [{ until: "tabs.1" }, { wait: 1500 }, { call: "closeDex" }, { wait: 300 }, { probe: "start" },
+      { dragSplit: 0.5 }, { wait: 300 }, { probe: "half" },
+      { dragSplit: 0.05 }, { wait: 300 }, { probe: "wide" },
+      { key: "1", mods: 4 }, { wait: 400 }, { probe: "other" }, { call: "closeDex" }, { wait: 300 },
+      { click: "main.grid:not([hidden]) .side-split", count: 2 }, { wait: 300 }, { probe: "reset" }],
+    check: ({ probe }) => [
+      ok(probe.start?.side === null || probe.start?.side === 40, `처음 ${probe.start?.side}`),
+      ok(Math.abs((probe.half?.side || 0) - 50) <= 1.5, `절반 위치로 끈 뒤 ${probe.half?.side}% (50 근처여야)`),
+      ok(probe.wide?.side === 60, `왼쪽 끝까지 끈 뒤 ${probe.wide?.side}% (최대 60이어야)`),
+      ok(probe.other?.sideW === probe.wide?.sideW, `다른 탭 너비 ${probe.other?.sideW}px vs ${probe.wide?.sideW}px (같아야)`),
+      ok(probe.reset?.side === 40, `두 번 누른 뒤 ${probe.reset?.side}%`),
+    ],
+  },
+  {
+    id: "settings-overlay", tags: ["smoke", "app"], what: "설정 창: 오버레이 켜기·보일 것·빠른 선택·투명도, 탭 효과 — 바로 적용되고 settings.json에 남음, Esc 닫기 (APP-19, #59)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 },
+      { invoke: "overlay_show_test", args: { on: true } }, { wait: 600 }, { invoke: "overlay_visible_test", log: true },
+      { call: "openSettings" }, { wait: 400 }, { probe: "open" },
+      { click: "#settings [data-set='overlay.alerts']" }, { wait: 400 }, { invoke: "overlay_payload_test", log: true },
+      { click: "#settings [data-preset='off']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
+      { click: "#settings [data-preset='wild']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
+      { click: "#settings [data-preset='all']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
+      { click: "#settings [data-set='tabGlow']" }, { wait: 300 }, { probe: "glow" },
+      { key: "Escape" }, { wait: 300 }, { probe: "closed" }, { invoke: "overlay_show_test", args: { on: false } }],
+    check: ({ probe, log, box }) => {
+      const vis = [...log.matchAll(/^lab-invoke overlay_visible_test (\w+)$/gm)].map((m) => m[1]);
+      const pay = JSON.parse(log.match(/^lab-invoke overlay_payload_test (.*)$/m)?.[1] || "{}");
+      let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
+      return [
+        ok(probe.open?.settings === true && probe.open?.top !== "main", `설정 창 열림 ${probe.open?.settings}`),
+        ok(pay.show?.alerts === false && pay.show?.partner === true, `알림 끈 뒤 오버레이 ${JSON.stringify(pay.show)}`),
+        ok(JSON.stringify(vis) === '["true","false","false","true"]', `오버레이 보임 처음·끄기·야생만(야생 없음)·전부 ${JSON.stringify(vis)} (true,false,false,true여야)`),
+        ok(probe.glow?.noTabGlow === true, "탭 효과를 꺼도 화면에 반영 안 됨"),
+        ok(probe.closed?.settings === false, "Esc로 안 닫힘"),
+        ok(saved?.overlay?.on === true && saved?.overlay?.partner === true && saved?.tabGlow === false, `settings.json ${JSON.stringify(saved)}`),
+      ];
+    },
+  },
+  {
+    id: "theme-switch", tags: ["smoke", "app"], what: "테마: 라이트·다크를 고르면 화면·터미널 색이 바로 바뀌고 settings.json에 남음 (APP-20, #60)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 },
+      { invoke: "settings_set", args: { patch: { theme: "light" } } }, { wait: 700 }, { probe: "light" },
+      { invoke: "settings_set", args: { patch: { theme: "dark" } } }, { wait: 700 }, { probe: "dark" },
+      { invoke: "settings_set", args: { patch: { theme: "nonsense" } } }, { wait: 400 }, { invoke: "settings_get", log: true }],
+    check: ({ probe, log, box }) => {
+      const got = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
+      let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
+      return [
+        ok(probe.light?.theme === "light" && probe.light?.termBg === "#ffffff" && probe.light?.bodyBg === "rgb(244, 244, 246)", `라이트 ${probe.light?.theme} 터미널 ${probe.light?.termBg} 바탕 ${probe.light?.bodyBg}`),
+        ok(probe.dark?.theme === "dark" && probe.dark?.termBg === "#1b1b22" && probe.dark?.bodyBg === "rgb(22, 22, 28)", `다크 ${probe.dark?.theme} 터미널 ${probe.dark?.termBg} 바탕 ${probe.dark?.bodyBg}`),
+        ok(got.theme === "system", `모르는 값은 기본값(system)이어야 — ${got.theme}`),
+        ok(saved?.theme === "system", `settings.json ${saved?.theme}`),
+      ];
+    },
   },
   {
     id: "claude-typed-unlinked", tags: ["smoke", "agents"], what: "연결 안 한 셸에서 친 Claude: 대화 기록 방식, 상단 바에 \"5h·7d ?\" 안내 (#45)",

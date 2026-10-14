@@ -62,14 +62,16 @@ const SEED_IDS = [[1], [4], [7], [16], [25], [37], [134], [222], [418], [422, tr
 //       the app copies it into its own folder on the first launch) · "corrupt" (newuser whose
 //       box.json, pokedex.json and folders.json are cut off mid-write)
 // session: last time's tabs ({ tabs: [folder names], active, shell, quit }) in ui/desktop_session.json
-function sandbox(name, { data = "empty", folders = ["proj"], session = null } = {}) {
+// today: a fixed date (YYYY-MM-DD) for data seeded relative to "today" — UI scenes, whose 7-day row
+// shows weekdays (the app reads the same date from CVIM_TEST_TODAY)
+function sandbox(name, { data = "empty", folders = ["proj"], session = null, today = null } = {}) {
   const dir = path.join(WORK, "runs", name);
   fs.rmSync(dir, { recursive: true, force: true });
   for (const d of ["cache", "state", "codex", "claudecfg", "profile", "shots", "other", ...folders]) fs.mkdirSync(path.join(dir, d), { recursive: true });
   const folder = (f = folders[0]) => path.join(dir, f);
   const legacy = data === "legacy";
   const C = legacy ? path.join(dir, "home", "tamer") : path.join(dir, "cache"); // where the app keeps its data
-  seed(data, dir, folder);
+  seed(data, dir, folder, today);
   if (session) {
     fs.mkdirSync(path.join(C, "ui"), { recursive: true });
     const abs = (l) => (l || []).map(folder);
@@ -87,7 +89,7 @@ function sandbox(name, { data = "empty", folders = ["proj"], session = null } = 
   };
   return { dir, env, folder, data: C };
 }
-function seed(data, dir, folder) {
+function seed(data, dir, folder, today = null) {
   if (data === "empty") return;
   const C = data === "legacy" ? path.join(dir, "home", "cvim") : path.join(dir, "cache");
   fs.mkdirSync(C, { recursive: true });
@@ -130,7 +132,7 @@ function seed(data, dir, folder) {
   ] });
   put("folders.json", { [other]: { id: 222, uid: 3, pinned: true } });
   // 🏠 홈 (#44): tasks finished in the last 7 days (today last)
-  const day = (n) => { const t = new Date(); t.setDate(t.getDate() - n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
+  const day = (n) => { const t = today ? new Date(`${today}T12:00`) : new Date(); t.setDate(t.getDate() - n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
   put("stats.json", { days: Object.fromEntries([3, 0, 5, 2, 7, 4, 6].map((n, i) => [day(6 - i), n]).filter(([, n]) => n)) });
   put("pokedex.json", { 134: entry(134), 37: entry(37), 222: entry(222), 418: entry(418), 422: entry(422, true), 25: entry(25), 16: entry(16, false, { caught: false }) });
 }

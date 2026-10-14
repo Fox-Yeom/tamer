@@ -2,7 +2,7 @@
 // cvim-core (Rust, desktop/core-rs), which owns the agent state machine, the adapters (Claude
 // hooks, Codex log, activity) and the path policy. Partner Pokémon data is still here (partner.cjs).
 // Data: ~/.cache/tamer (copied once from the Neovim CVIM's ~/.cache/cvim — core/paths.cjs).
-const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, powerMonitor, shell, nativeImage } = require("electron");
+const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, powerMonitor, shell, nativeImage, nativeTheme } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const pty = require("node-pty");
@@ -453,7 +453,9 @@ function shownState(ws) {
   return ws.sessions.map((x) => x.agentState || "idle").sort((a, b) => URGENCY(a) - URGENCY(b))[0] || "idle";
 }
 
+const heldStates = new Set(); // tests only (agent_state_test hold)
 function onCoreEvent(msg) {
+  if (heldStates.size && !msg.test && heldStates.has(msg.ws)) return;
   // "<ws>~shell" = the agent started by hand in that tab's shell pane
   const fromShell = shellOf.has(msg.ws);
   const sess = fromShell ? null : sessions.get(msg.ws); // an agent session ("<ws>" or "<ws>~s<n>")
@@ -803,6 +805,35 @@ function setShellAgent(ws, d, cwd = null, args = "") {
 // another app: the current tab's partner, tabs that are working / need you / just finished, and
 // wild encounters. Click → back to that tab; drag → move (position remembered).
 const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
+// 설정 창 (APP-19, #59): only known keys, each checked — anything else falls back to the default,
+// which is how the app behaved before (everything on)
+const SETTINGS = path.join(CACHE, "ui", "settings.json");
+const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, alpha: 82 }, tabGlow: true, theme: "system" };
+const THEMES = ["system", "dark", "light"]; // 테마 (APP-20, #60)
+function readSettings(raw = readJsonSafe(SETTINGS)) {
+  const o = raw?.overlay || {}, d = SETTINGS_DEFAULT.overlay, b = (v, def) => (typeof v === "boolean" ? v : def);
+  const a = Number(o.alpha);
+  return {
+    overlay: { on: b(o.on, d.on), partner: b(o.partner, d.partner), alerts: b(o.alerts, d.alerts), wild: b(o.wild, d.wild),
+      alpha: Number.isFinite(a) ? Math.round(Math.min(100, Math.max(0, a))) : d.alpha },
+    tabGlow: b(raw?.tabGlow, SETTINGS_DEFAULT.tabGlow),
+    theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
+  };
+}
+let settings = readSettings();
+nativeTheme.themeSource = settings.theme;
+// macOS switched between dark and light: "시스템 따라가기" pages re-pick their colours (#60)
+nativeTheme.on("updated", () => { broadcast("settings", settings); overlayUpdate(); });
+function setSettings(patch) {
+  settings = readSettings({ ...settings, ...patch, overlay: { ...settings.overlay, ...(patch?.overlay || {}) } });
+  nativeTheme.themeSource = settings.theme; // menus, dialogs, scroll bars follow too (#60)
+  writeFile(SETTINGS, JSON.stringify(settings));
+  broadcast("settings", settings);
+  overlaySync();
+  overlayUpdate();
+  appMenu();
+  return settings;
+}
 // the window is sized to its cards (overlay_fit) and anchored at its bottom-right corner: a big
 // see-through window would stop the cards short of the screen top (macOS keeps windows below the
 // menu bar). Starts at OVERLAY_W × OVERLAY_H until the page measures itself.
@@ -835,7 +866,7 @@ function overlayPayload() {
     minis: overlayCollapsed ? [] : rest.slice(0, MINI_MAX), more: overlayCollapsed ? 0 : Math.max(0, rest.length - MINI_MAX),
     counts: { waiting: count((t) => t.state === "waiting"), working: count((t) => WORKING.includes(t.state)),
       done: count((t) => t.ended === "done"), error: count((t) => t.ended === "error") },
-    wild: wild.current(), stallMs: STALL_MS,
+    wild: settings.overlay.wild ? wild.current() : null, stallMs: STALL_MS, show: settings.overlay, theme: settings.theme, // #59 #60
   };
 }
 
@@ -892,8 +923,11 @@ function createOverlay() {
 function overlaySync() {
   if (!overlay || overlay.isDestroyed()) return;
   if (draining) { overlay.hide(); return; } // quitting (#54): the hidden window's blur mustn't bring it back
-  const away = !BrowserWindow.getFocusedWindow();
-  if ((away || overlayForced) && workspaces.size) {
+  // a test window never has focus: its overlay shows only when a test asks (it sat on the user's screen)
+  const away = !BrowserWindow.getFocusedWindow() && !QUIET_TEST;
+  // the 설정 창 (#59): off, or nothing chosen to show (a wild card counts only while one is out)
+  const o = settings.overlay, something = o.partner || o.alerts || (o.wild && wild.current());
+  if ((away || overlayForced) && workspaces.size && o.on && something) {
     overlayUpdate();
     if (!overlay.isVisible()) overlay.showInactive();
   } else if (overlay.isVisible()) overlay.hide();
@@ -953,7 +987,13 @@ const overlayCommands = {
 // ── commands from the UI ────────────────────────────────────────────────────
 // What the UI may ask for. The UI never names a program: the main process decides what runs in
 // each pane, and folders must be real directories (docs/policy POL-SEC-02). A compromised page can't do more.
+// ⌘-clicked files opened with macOS's default app (a browser for index.html, Preview …) instead of
+// the editor, as in iTerm2 (#57); code and text keep going to the editor at their line
+const OPEN_DEFAULT = new Set([".html", ".htm", ".svg", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a"]);
 const commands = {
+  // 설정 창 (APP-19): read, and change (only known keys survive readSettings)
+  settings_get: () => settings,
+  settings_set: ({ patch }) => setSettings(patch && typeof patch === "object" ? patch : {}),
   startup_mark({ what }) { logLine(`startup ${String(what).slice(0, 40)} +${since()}ms`); },
   app_info() {
     uiReady = true;
@@ -1170,10 +1210,10 @@ const commands = {
     let st;
     try { st = fs.statSync(p); } catch { throw new Error("no such file"); }
     const ln = Math.max(1, Number(line) || 1), cl = Math.max(1, Number(col) || 1);
-    const editor = st.isDirectory() ? "finder" : editorApp();
+    const editor = st.isDirectory() ? "finder" : OPEN_DEFAULT.has(path.extname(p).toLowerCase()) ? "default" : editorApp();
     logLine(`open file (${editor})`); // not the path: the log goes into the diagnostics
     if (TEST) { linksOpened.push(`${editor}:${p}:${ln}:${cl}`); return; }
-    if (editor === "finder") return shell.openPath(p);
+    if (editor === "finder" || editor === "default") return shell.openPath(p); // a folder in Finder, a web page / picture / video in its own app (#57)
     if (editor === "text") return execFile("open", ["-t", p]);
     return shell.openExternal(`${editor}://file${encodeURI(p)}:${ln}:${cl}`);
   },
@@ -1241,7 +1281,8 @@ const commands = {
   box_list: ({ ws }) => partner.boxList(ws && workspaces.has(ws) ? wsOf(ws).cwd : null) // "내 포켓몬" (#27)
     .map((m) => (m.caughtBy ? { ...m, caughtBy: agents.all()[m.caughtBy]?.name || m.caughtBy } : m)), // the agent's name (#44)
   // 🏠 Home (#44): tasks finished today, the streak, the last 7 days
-  home_state: () => stats.summary(),
+  // tests: a fixed "today" (CVIM_TEST_TODAY, YYYY-MM-DD) so the 7-day row's weekdays don't move with the calendar
+  home_state: () => stats.summary(TEST && process.env.CVIM_TEST_TODAY ? new Date(`${process.env.CVIM_TEST_TODAY}T12:00`) : undefined),
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
   pane_swap({ ws: id, on }) {
@@ -1282,7 +1323,9 @@ const testCommands = {
   // from $CVIM_UI_BASELINE/<name>.png (share of pixels whose colour moved more than a little)
   async ui_shot({ name, target }) {
     const n = String(name).replace(/[^\w-]/g, "");
-    const img = await (target === "overlay" && overlay ? overlay : win).webContents.capturePage(); // the overlay's own page (STA-20)
+    const wc = (target === "overlay" && overlay ? overlay : win).webContents; // the overlay's own page (STA-20)
+    wc.invalidate(); await new Promise((r) => setTimeout(r, 120)); // paint the current scene first, not a stale frame
+    const img = await wc.capturePage();
     if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${n}.png`), img.toPNG());
     const basePath = process.env.CVIM_UI_BASELINE && path.join(process.env.CVIM_UI_BASELINE, `${n}.png`);
     if (!basePath || !fs.existsSync(basePath)) return { name: n, diff: null };
@@ -1305,13 +1348,15 @@ const testCommands = {
   // the overlay's "도감에서 보기" (#25), as if pressed there
   wild_dex_test({ id }) { overlayCommands.wild_dex({ id }); },
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)
-  async click_test({ x, y, modifiers = 0, button = "left" }) {
+  async click_test({ x, y, modifiers = 0, button = "left", count = 1 }) {
     const dbg = win.webContents.debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
     await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
     await new Promise((r) => setTimeout(r, 120)); // the link under the pointer is looked up on move
-    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, modifiers, button, clickCount: 1 });
-    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button, clickCount: 1 });
+    for (let n = 1; n <= count; n++) { // count 2 = a double-click (the second press says clickCount 2)
+      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, modifiers, button, clickCount: n });
+      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button, clickCount: n });
+    }
   },
   // the (test) pointer to a corner of the page: no :hover left on a scene by wherever the real mouse is
   async mouse_park_test() {
@@ -1373,9 +1418,12 @@ const testCommands = {
   // #45: the opt-in shell line without its dialog (lab: the line goes into the sandbox shell's ZDOTDIR)
   claude_link_test({ on }) { const r = on ? agents.claudeLink() : agents.claudeUnlink(); relinkShown(); return r; },
   // an agent's state changes as the core would report it
-  agent_state_test({ ws, from, to, times }) {
-    onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to), ...(times || {}) } });
-    onCoreEvent({ event: "transition", ws: String(ws), from: String(from), to: String(to) });
+  // hold: keep this state — the core's own updates for that tab are ignored until a call without hold
+  // (UI scenes: the core's idle came between setting a state and the picture)
+  agent_state_test({ ws, from, to, times, hold }) {
+    if (hold) heldStates.add(String(ws)); else heldStates.delete(String(ws));
+    onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to), ...(times || {}) }, test: true });
+    onCoreEvent({ event: "transition", ws: String(ws), from: String(from), to: String(to), test: true });
   },
   // throws land as given: "caught" / "broke" / "fled" (random otherwise)
   wild_rig_test({ result }) {
@@ -1391,6 +1439,7 @@ const testCommands = {
     fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${String(name).replace(/[^\w-]/g, "")}.png`), img.toPNG());
   },
   overlay_bounds_test: () => overlay.getBounds(),
+  overlay_visible_test: () => !!overlay && !overlay.isDestroyed() && overlay.isVisible(),
   overlay_payload_test: () => overlayPayload(),
   diag_test: () => diagnostics(),
   // the app menu's first submenu labels, and whether the notices ship with the app
@@ -1509,6 +1558,9 @@ app.whenReady().then(() => {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true,
       devTools: TEST, // debugger-driven tests need it; regular runs don't
+      // a test window is never in front (an accessory app): Chromium would put off painting it, and a
+      // picture could show the scene before (UI scenes, 2026-10-14)
+      backgroundThrottling: !TEST,
     },
   });
   if (QUIET_TEST) win.showInactive(); // a test window never takes the keyboard from the user's apps
@@ -1545,7 +1597,11 @@ function shellEscape(p) { return p.replace(/([\s!"#$&'()*,;<=>?[\]\\^`{|}~])/g, 
 // tab, font size), and a default menu would catch them first.
 function appMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
-    { label: app.name, submenu: [{ role: "about" }, { type: "separator" }, ...helpItems, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] },
+    { label: app.name, submenu: [{ role: "about" }, { type: "separator" },
+      // 설정 창 (APP-19) — ⌘, as in every Mac app; the overlay on/off right here too (#59)
+      { label: "설정…", accelerator: "Cmd+,", click: () => send("open-settings", {}) },
+      { label: "바탕화면 오버레이", type: "checkbox", checked: settings.overlay.on, click: (m) => setSettings({ overlay: { on: m.checked } }) },
+      { type: "separator" }, ...helpItems, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] },
     { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
     { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "togglefullscreen" }] },
   ]));
