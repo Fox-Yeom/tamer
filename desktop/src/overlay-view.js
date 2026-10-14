@@ -41,7 +41,7 @@ export function stateLine(t, stallMs) {
   if (x.stall && t.state !== "waiting") return `⏳ 변화 없음 ${x.stall}`;
   return `${ICON[t.state] || ""} ${DOING[t.state] || ""}${x.run ? ` · ${x.run}` : x.wait ? ` · ${x.wait}째` : ""}`;
 }
-// the hover line of the minimal mode: "폴더 — 상태"
+// the hover line of the minimal mode: "폴더 — 상태" (src/overlay.js shows it in #tip)
 const tip = (t, stallMs) => `${t.partner && t.active ? `${t.partner.name} · ` : ""}${t.name} — ${stateLine(t, stallMs).trim()}`;
 
 async function bigCard(t, { show, stallMs, spriteUrl, extra = "" }) {
@@ -57,7 +57,7 @@ async function bigCard(t, { show, stallMs, spriteUrl, extra = "" }) {
   const motion = t.state === "waiting" ? "st-waiting" : ["done", "interrupted", "error", "idle", "sleep"].includes(t.state) ? `st-${t.state}` : "st-working";
   const sprite = url ? `<img class="poke ${motion}" src="${url}" alt="" />` : t.partner ? '<div class="pokeball"></div>' : '<div class="empty-ball" title="파트너가 없어요"></div>';
   return `<div class="card hit${t.active ? " current" : ""}" data-ws="${esc(t.ws)}" data-tip="${esc(tip(t, stallMs))}" title="${min ? "" : `클릭: 이 탭으로 · 드래그: 이동${t.active ? " · 더블클릭: 접기/펴기" : ""}`}">
-    ${bubble}${min ? '<div class="tip"></div>' : ""}
+    ${bubble}
     <div class="row"><div class="sprite">${sprite}</div>
     ${min ? "" : `<div class="meta"><div class="name">${esc(t.partner ? `${t.partner.shiny ? "✨" : ""}${t.partner.name}` : "파트너 없음")}${t.sessions > 1 ? ` <span class="sess-badge" title="이 폴더의 셸 수">셸 ${t.sessions}개</span>` : ""}</div>
       <div class="folder">${esc(t.name)}</div><div class="state${stall && t.state !== "waiting" ? " stall" : ""}" title="${stall ? "새 이벤트가 없어요 — 멈췄을 수 있어요(추정)" : ""}">${esc(stateLine(t, stallMs))}</div></div>`}</div>
@@ -82,7 +82,7 @@ export async function cardsHtml(p, { spriteUrl }) {
   const cards = [];
   if (p.urgent && show.alerts !== false) cards.push(await bigCard(p.urgent, { show, stallMs, spriteUrl })); // the tab that needs you: an alert
   if (p.current && show.partner !== false) cards.push(await bigCard(p.current, { show, stallMs, spriteUrl, extra: strip }));
-  else if (strip) cards.push(`<div class="card">${min ? '<div class="tip"></div>' : ""}${strip}</div>`); // no partner card: the icon row alone
+  else if (strip) cards.push(`<div class="card">${strip}</div>`); // no partner card: the icon row alone
   return cards.join("");
 }
 

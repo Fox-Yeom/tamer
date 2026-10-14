@@ -71,8 +71,9 @@
 @keyframes ov-glow { 50% { box-shadow: 0 0 0 2px var(--warn), 0 0 2px 0 var(--warn); } }
 @keyframes ov-wiggle { 25% { transform: rotate(-18deg); } 75% { transform: rotate(18deg); } }
 .ov.ov-minimal .more { font-weight: 700; color: var(--ov-text); }
-/* the hover line: "폴더 — 상태" above the partner (it pushes the card up, the balls stay put) */
-.ov .tip { display: none; align-self: flex-end; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis;
+/* the hover line: "폴더 — 상태", floating above the card under the pointer — out of the layout, so the
+   window never changes size on hover (a resize draws one frame from the top-left: the partner jumped, #68) */
+.ov .tip { position: absolute; display: none; z-index: 3; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis; pointer-events: none;
   padding: 2px 8px; border-radius: 8px; font-size: 11px; background: var(--raised); border: 1px solid var(--border); color: var(--fg); }
 .ov .tip:not(:empty) { display: block; }
 /* where a click goes (#68): the card under the pointer shows its edge — in the minimal mode a faint box */
@@ -90,5 +91,6 @@
 .ov .wild-note .pokeball { width: 22px; height: 22px; }
 .ov .wild-note-text { font-size: 12px; white-space: nowrap; }
 .ov .wild-note-sub { color: var(--ov-dim); font-size: 11px; margin-top: 1px; }
+.ov .wild-note-timer { display: inline-block; min-width: 3.4em; font-variant-numeric: tabular-nums; } /* 10초 → 9초 keeps the width (#68) */
 .ov .wild-note-close { border: 0; background: transparent; color: var(--ov-dim); cursor: pointer; font-size: 12px; padding: 2px 4px; align-self: flex-start; }
 .ov .wild-note-close:hover { color: var(--ov-text); }

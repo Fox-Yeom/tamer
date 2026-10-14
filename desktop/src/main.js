@@ -3049,6 +3049,11 @@ async function uiScenes(set) {
 
       const r2 = await invoke("ui_shot", { name: "overlay-clear", target: "overlay" });
       await log(`shot ${r2.name} diff=${r2.diff == null ? "-" : r2.diff.toFixed(5)} block=${(r2.block ?? 0).toFixed(3)}${r2.note ? ` ${r2.note}` : ""}`);
+      // the pointer over the partner (#68): the line floats above, the box shows where a click goes
+      await invoke("overlay_hover_test", { on: true }); await wait(400);
+      const r5 = await invoke("ui_shot", { name: "overlay-hover", target: "overlay" });
+      await log(`shot ${r5.name} diff=${r5.diff == null ? "-" : r5.diff.toFixed(5)} block=${(r5.block ?? 0).toFixed(3)}${r5.note ? ` ${r5.note}` : ""}`);
+      await invoke("overlay_hover_test", { on: false });
       // no shadow (#65), the background as it was
       await invoke("settings_set", { patch: { overlay: { alpha: 82, shadow: false } } }); await wait(500);
       const r4 = await invoke("ui_shot", { name: "overlay-noshadow", target: "overlay" });

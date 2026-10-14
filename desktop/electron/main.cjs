@@ -1350,20 +1350,25 @@ const testCommands = {
   // the Pokédex on a species, as the wild card's "도감에서 보기" (#25) asks
   wild_dex_test({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); },
   wild_open_test: () => overlayCommands.wild_open(),
-  // the minimal mode's hover line (#68): where the partner sits from the cards' right edge, without
-  // and with a long line — it must not move
-  overlay_tip_test: () => overlay.webContents.executeJavaScript(`(async () => {
-    const card = document.querySelector("#cards .card.current"), sprite = card?.querySelector(".sprite"), tip = card?.querySelector(".tip");
-    if (!sprite || !tip) return null;
-    const box = document.getElementById("cards");
-    const at = () => { const a = box.getBoundingClientRect(), b = sprite.getBoundingClientRect(); return [Math.round(a.right - b.right), Math.round(a.bottom - b.bottom)]; };
-    const before = at(), w0 = Math.round(card.getBoundingClientRect().width);
-    tip.textContent = "마기라스 · a-rather-long-project-folder-name — 😌 대기 · 12분";
-    await new Promise((r) => requestAnimationFrame(() => r()));
-    const after = at(), w1 = Math.round(card.getBoundingClientRect().width);
-    tip.textContent = "";
-    return { before, after, widened: w1 > w0 };
-  })()`),
+  // the pointer over the current tab's partner / gone (scenes, #68)
+  overlay_hover_test: ({ on }) => overlay.webContents.executeJavaScript(on
+    ? `document.querySelector("#cards .card.current .sprite")?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }))`
+    : `document.dispatchEvent(new MouseEvent("mouseleave"))`),
+  // the minimal mode's hover line (#68): the pointer over the partner — the line shows, and neither the
+  // window (a resize draws a frame from the top-left: the partner jumped) nor the partner moves
+  async overlay_tip_test() {
+    const js = (code) => overlay.webContents.executeJavaScript(code);
+    const where = () => js(`(() => { const s = document.querySelector("#cards .card.current .sprite")?.getBoundingClientRect();
+      return s ? [Math.round(innerWidth - s.right), Math.round(innerHeight - s.bottom)] : null; })()`);
+    const b0 = overlay.getBounds(), p0 = await where();
+    await js(`document.querySelector("#cards .card.current .sprite")?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }))`);
+    await new Promise((r) => setTimeout(r, 400));
+    const tip = await js(`document.getElementById("tip").textContent`), b1 = overlay.getBounds(), p1 = await where();
+    await js(`document.dispatchEvent(new MouseEvent("mouseleave"))`);
+    await new Promise((r) => setTimeout(r, 400));
+    const b2 = overlay.getBounds();
+    return { tip, same: [b0, b1, b2].every((b) => JSON.stringify(b) === JSON.stringify(b0)), bounds: [b0, b1, b2].map((b) => `${b.x},${b.y},${b.width}x${b.height}`), partner: [p0, p1] };
+  },
   // what the overlay page shows (#63 #66): minimal mode, balls, words, the wild notice, the shadow
   overlay_dom_test: () => overlay.webContents.executeJavaScript(`(() => {
     const st = document.getElementById("stack"), card = document.querySelector("#cards .card"), note = document.querySelector(".wild-note");

@@ -6,4 +6,7 @@ html, body { margin: 0; height: 100%; background: transparent; overflow: hidden;
 /* sized by its content and pinned to the bottom-right; overlay.js fits the window to it */
 #stack { position: absolute; right: 0; bottom: 0; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; padding: 16px 8px 8px;
   width: max-content; } /* its own width, not the window's: the window follows it, never the other way */
-#stack > :empty { display: none; }
+#stack > :empty:not(#tip) { display: none; }
+/* 최소 모드: room for the hover line kept all the time (it is see-through and lets clicks pass) — showing it
+   must not resize the window (#68) */
+#stack.ov-minimal { min-width: 276px; padding-top: 40px; }

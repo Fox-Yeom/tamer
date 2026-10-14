@@ -803,7 +803,7 @@ sleep 40
         ok(flat && !flat.minimal && none(flat.shadow), `그림자 끔이면 82%여도 그림자 없어야 ${JSON.stringify(flat)}`),
         ok(always && always.minimal && !always.meta, `항상이면 82%여도 최소 모드여야 ${JSON.stringify(always)}`),
         (() => { const t = JSON.parse(log.match(/^lab-invoke overlay_tip_test (.*)$/m)?.[1] || "null");
-          return ok(t?.widened && JSON.stringify(t.before) === JSON.stringify(t.after), `마우스 한 줄이 생겨도 파트너 위치가 그대로여야 (#68) ${JSON.stringify(t)}`); })(),
+          return ok(t?.tip && t.same && JSON.stringify(t.partner[0]) === JSON.stringify(t.partner[1]), `마우스를 올려 한 줄이 떠도 창 크기·위치와 파트너가 그대로여야 (#68) ${JSON.stringify(t)}`); })(),
         ok(/^wild appeared 16 /m.test(log) && wild?.note && /야생의/.test(wild.note) && /등장/.test(wild.note) && none(wild.noteShadow), `야생 알림(글·그림자 없음)이 떠야 ${JSON.stringify(wild?.note)} ${wild?.noteShadow}`),
         ok(/^wild open from overlay$/m.test(log) && probe.opened?.wild === true, `알림 누르면 Tamer 창의 야생 카드여야 — wild=${probe.opened?.wild}`),
         ok(got.overlay?.minimal === "auto" && got.overlay?.shadow === false, `모르는 최소 모드 값은 기본값(auto)이어야 ${JSON.stringify(got.overlay)}`),

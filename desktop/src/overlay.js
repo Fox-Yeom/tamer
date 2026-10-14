@@ -28,7 +28,7 @@ async function render(p) {
   const box = document.getElementById("cards");
   box.innerHTML = await cardsHtml(p, { spriteUrl });
   sizePokes(box);
-  if (hoverTip) showTip(hoverTip.ws, hoverTip.text);
+  if (hoverTip && stack.classList.contains("ov-minimal")) showTip(hoverTip.ws, hoverTip.text); else setTip(null);
   if (!show.wild) note.hide(); // 야생 포켓몬 off (#59): in the main window only
 }
 
@@ -63,19 +63,24 @@ listen("wild", (e) => note.show(e.payload));
 listen("wild-throw", (e) => note.throw(e.payload));
 listen("wild-end", (e) => note.end(e.payload));
 
-// ── 최소 모드 (#63): the hover line "폴더 — 상태" over the card under the pointer ──
+// ── 최소 모드 (#63): the hover line "폴더 — 상태" floating above the card under the pointer. It is
+// out of the layout and its room is kept (overlay.css), so the window keeps its size (#68) ──
 let hoverTip = null;
+const tipEl = document.getElementById("tip");
 function showTip(ws, text) {
-  for (const t of document.querySelectorAll(".tip")) t.textContent = "";
-  const card = [...document.querySelectorAll("#cards .card")].find((c) => c.querySelector(`[data-ws="${CSS.escape(ws)}"]`) || c.dataset.ws === ws);
-  const tip = card?.querySelector(".tip");
-  if (tip) tip.textContent = text;
+  const card = [...document.querySelectorAll("#cards .card")].find((c) => c.dataset.ws === ws || c.querySelector(`[data-ws="${CSS.escape(ws)}"]`));
+  if (!card) { tipEl.textContent = ""; return; }
+  tipEl.textContent = text;
+  // its right edge on the card's, just above it (over the card above, if any)
+  tipEl.style.right = `${stack.clientWidth - card.offsetLeft - card.offsetWidth}px`;
+  const lift = card.querySelector(":scope > .bubble") ? 12 : 0; // a bubble sticks out above the card
+  tipEl.style.top = `${Math.max(2, card.offsetTop - lift - tipEl.offsetHeight - 3)}px`;
 }
 function setTip(el) {
   const next = el ? { ws: el.dataset.ws, text: el.dataset.tip } : null;
   if (next?.ws === hoverTip?.ws && next?.text === hoverTip?.text) return;
   hoverTip = next;
-  if (next) showTip(next.ws, next.text); else for (const t of document.querySelectorAll(".tip")) t.textContent = "";
+  if (next) showTip(next.ws, next.text); else tipEl.textContent = "";
 }
 
 // ── pointer: see-through except over cards; click = go to the tab; drag = move ──

@@ -79,6 +79,7 @@
       "scenes": [
         "overlay-stall",
         "overlay-clear",
+        "overlay-hover",
         "overlay-noshadow",
         "light-overlay"
       ]
