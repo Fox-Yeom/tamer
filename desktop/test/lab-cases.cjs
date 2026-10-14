@@ -775,7 +775,7 @@ sleep 40
     },
   },
   {
-    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 Tamer로 (#63 #65 #66)",
+    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 Tamer로, 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: true, next: { id: 16, shiny: false } })),
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
@@ -784,6 +784,7 @@ sleep 40
       { invoke: "settings_set", args: { patch: { overlay: { minimal: "never" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
       { invoke: "settings_set", args: { patch: { overlay: { alpha: 82, shadow: false } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
       { invoke: "settings_set", args: { patch: { overlay: { minimal: "always" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "overlay_tip_test", log: true },
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 1500 },
       { invoke: "overlay_dom_test", log: true }, { invoke: "wild_open_test" }, { wait: 500 }, { probe: "opened" },
       { invoke: "settings_set", args: { patch: { overlay: { minimal: "bogus" } } } }, { invoke: "settings_get", log: true },
@@ -801,6 +802,8 @@ sleep 40
         ok(never && !never.minimal && never.meta, `안 씀이면 20%여도 보통 카드여야 ${JSON.stringify(never)}`),
         ok(flat && !flat.minimal && none(flat.shadow), `그림자 끔이면 82%여도 그림자 없어야 ${JSON.stringify(flat)}`),
         ok(always && always.minimal && !always.meta, `항상이면 82%여도 최소 모드여야 ${JSON.stringify(always)}`),
+        (() => { const t = JSON.parse(log.match(/^lab-invoke overlay_tip_test (.*)$/m)?.[1] || "null");
+          return ok(t?.widened && JSON.stringify(t.before) === JSON.stringify(t.after), `마우스 한 줄이 생겨도 파트너 위치가 그대로여야 (#68) ${JSON.stringify(t)}`); })(),
         ok(/^wild appeared 16 /m.test(log) && wild?.note && /야생의/.test(wild.note) && /등장/.test(wild.note) && none(wild.noteShadow), `야생 알림(글·그림자 없음)이 떠야 ${JSON.stringify(wild?.note)} ${wild?.noteShadow}`),
         ok(/^wild open from overlay$/m.test(log) && probe.opened?.wild === true, `알림 누르면 Tamer 창의 야생 카드여야 — wild=${probe.opened?.wild}`),
         ok(got.overlay?.minimal === "auto" && got.overlay?.shadow === false, `모르는 최소 모드 값은 기본값(auto)이어야 ${JSON.stringify(got.overlay)}`),

@@ -55,6 +55,8 @@
 
 /* 최소 모드 (#63): no box, no words — the partner, and a Poké Ball per other tab in its state's colour */
 .ov.ov-minimal .card { background: transparent; border-color: transparent; box-shadow: none; padding: 4px; }
+/* the partner and its balls sit at the card's right: the hover line widens the card leftwards, never moves them (#68) */
+.ov.ov-minimal .card .row { justify-content: flex-end; }
 .ov.ov-minimal .card:has(> .bubble) { padding-top: 16px; }
 .ov.ov-minimal .bubble { padding: 1px 5px; font-size: 12px; }
 .ov.ov-minimal .minis { border-top: 0; padding-top: 0; justify-content: flex-end; gap: 5px; }
@@ -73,6 +75,12 @@
 .ov .tip { display: none; align-self: flex-end; white-space: nowrap; max-width: 260px; overflow: hidden; text-overflow: ellipsis;
   padding: 2px 8px; border-radius: 8px; font-size: 11px; background: var(--raised); border: 1px solid var(--border); color: var(--fg); }
 .ov .tip:not(:empty) { display: block; }
+/* where a click goes (#68): the card under the pointer shows its edge — in the minimal mode a faint box */
+.ov .card.hit, .ov .wild-note { transition: background-color .15s, border-color .15s; }
+.ov .card.hit:hover, .ov .wild-note:hover { border-color: color-mix(in srgb, var(--accent) 60%, transparent); }
+.ov.ov-minimal .card.hit:hover { background: rgba(var(--ov-rgb), .35); border-color: color-mix(in srgb, var(--ov-text) 30%, transparent); }
+.ov .ball { transition: transform .12s; }
+.ov .ball:hover { transform: scale(1.3); }
 
 /* 야생 알림 (#66): a small notice — the overlay's background and shadow */
 .ov .wild-note { display: flex; align-items: center; gap: 8px; padding: 6px 8px 6px 6px; border-radius: 10px; cursor: pointer; max-width: 280px;
