@@ -812,6 +812,40 @@ sleep 40
     },
   },
   {
+    id: "menubar", tags: ["smoke", "app"], what: "메뉴바: 기다리는 탭 수·5시간 한도 글자, 탭 상태 줄·한도 줄, 메뉴로 설정 바꾸기·아이콘 숨기기, 시험 앱은 아이콘을 안 띄움 (STA-19, #64)",
+    data: "owner", mode: "direct", folders: ["a", "b"],
+    steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "tray_test", log: true },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "waiting" } }, { wait: 500 }, { invoke: "tray_test", log: true },
+      { invoke: "usage_seen", args: { key: "claude", five_hour: { pct: 42, resets_at: 4102444800 }, seven_day: { pct: 18 } } },
+      { invoke: "usage_seen", args: { key: "codex", five_hour: { pct: 90, resets_at: 1000 } } },
+      { invoke: "usage_seen", args: { key: "nope", five_hour: { pct: 77 } } },
+      { invoke: "settings_set", args: { patch: { menubar: { text: "limit" } } } }, { wait: 300 }, { invoke: "tray_test", log: true },
+      { invoke: "tray_click_test", args: { path: ["오버레이 보일 것", "파트너"] }, log: true },
+      { invoke: "tray_click_test", args: { path: ["최소 모드", "항상"] }, log: true },
+      { invoke: "tray_click_test", args: { path: ["메뉴바 아이콘 숨기기"] }, log: true }, { wait: 300 },
+      { invoke: "settings_get", log: true },
+      { call: "openSettings" }, { wait: 400 }, { click: "#settings [data-set='menubar.on']" }, { wait: 400 }, { key: "Escape" },
+      { invoke: "settings_set", args: { patch: { menubar: { text: "bogus" } } } }, { invoke: "tray_test", log: true }],
+    check: ({ log, box }) => {
+      const t = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const [idle, waiting, limit, last] = t;
+      const got = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
+      const clicks = [...log.matchAll(/^lab-invoke tray_click_test (\w+)$/gm)].map((m) => m[1]);
+      let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
+      const labels = (m) => (m?.items || []).map((i) => i.label || "—");
+      return [
+        ok(t.length === 4 && t.every((x) => x.shown === false), `시험 앱은 메뉴바 아이콘을 안 띄워야 ${JSON.stringify(t.map((x) => x.shown))}`),
+        ok(idle?.title === "" && labels(idle).filter((l) => / — /.test(l)).length === 2, `처음: 글자 없음, 탭 줄 2개 ${JSON.stringify(idle?.title)} ${JSON.stringify(labels(idle).slice(0, 3))}`),
+        ok(waiting?.title === "1" && /^❗ /.test(labels(waiting)[0]), `입력 필요 1개면 "1"·첫 줄 ❗ ${JSON.stringify(waiting?.title)} ${labels(waiting)[0]}`),
+        ok(limit?.title === "42%" && labels(limit).some((l) => /Claude Code\s+5시간 42%.*주간 18%/.test(l)) && !labels(limit).some((l) => /Codex|77/.test(l)), `한도 글자 42%·Claude 줄, 지난 Codex·모르는 에이전트는 없음 ${JSON.stringify(limit?.title)} ${JSON.stringify(labels(limit).filter((l) => /%/.test(l)))}`),
+        ok(JSON.stringify(clicks) === '["true","true","true"]' && got.overlay?.partner === false && got.overlay?.minimal === "always" && got.menubar?.on === false, `메뉴로 바꾼 설정 ${JSON.stringify(clicks)} ${JSON.stringify(got.overlay)} ${JSON.stringify(got.menubar)}`),
+        ok(saved?.menubar?.on === true && saved?.menubar?.text === "waiting", `설정 창에서 다시 켜고, 모르는 글자 값은 기본(waiting)이어야 ${JSON.stringify(saved?.menubar)}`),
+        ok(last?.title === "1", `기본으로 돌아간 글자 ${JSON.stringify(last?.title)}`),
+      ];
+    },
+  },
+  {
     id: "theme-switch", tags: ["smoke", "app"], what: "테마: 라이트·다크를 고르면 화면·터미널 색이 바로 바뀌고 settings.json에 남음 (APP-20, #60)",
     data: "owner", mode: "direct", folders: ["proj"],
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 },

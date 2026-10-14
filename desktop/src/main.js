@@ -983,7 +983,13 @@ function rememberUsage(key, u) {
   if (u.model_id && u.ctx_window) windows[u.model_id] = u.ctx_window;
   const next = { model: u.model || l.model, five_hour: u.five_hour || l.five_hour, seven_day: u.seven_day || l.seven_day, windows };
   try { localStorage.setItem(lastKey(key), JSON.stringify(next)); } catch {}
+  tellUsage(key, next);
 }
+// 메뉴바 (STA-19, #64): the menu bar shows the same remembered limits — the main process keeps them in memory
+function tellUsage(key, l = lastUsage(key)) {
+  if (l.five_hour || l.seven_day) invoke("usage_seen", { key, five_hour: l.five_hour || null, seven_day: l.seven_day || null }).catch(() => {});
+}
+for (const k of ["claude", "codex"]) tellUsage(k);
 const live = (w) => w && (w.resets_at == null || w.resets_at * 1000 > Date.now());
 function withLast(st, tab) {
   const key = st.shellKey || st.agent?.key || tab.agent?.key;
@@ -1312,6 +1318,7 @@ function applySettings(s) {
   }
   for (const el of document.querySelectorAll("#settings [data-val]")) el.textContent = `${getPath(s, el.dataset.val)}%`;
   $("#settings .set-group").classList.toggle("off", !s.overlay.on);
+  $("#settings .set-mb").classList.toggle("off", !s.menubar.on);
   if (settingsOpen()) renderPreview(s.overlay);
 }
 // 미리보기 (#67): the overlay as these settings would draw it — this tab's partner, a tab that needs

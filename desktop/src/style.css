@@ -172,6 +172,8 @@ body.away #wild { visibility: hidden; }
 /* the overlay's controls, and next to them its 미리보기 (#67): a bit of desktop, the cards at its corner */
 #settings .set-ov { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 14px; align-items: start; }
 #settings .set-preview { margin: 0; position: relative; }
+#settings .set-side .set-mb-head { margin-top: 16px; }
+#settings .set-side .set-mb { margin-left: 0; }
 #settings .set-preview figcaption { font-size: 11px; margin-bottom: 4px; }
 #settings .set-preview-desk { position: relative; height: 260px; border-radius: 10px; overflow: hidden; border: 1px solid var(--border);
   background: linear-gradient(160deg, #6f8fc9 0%, #9d8fc2 45%, #d99a7c 100%); } /* a wallpaper (an object colour, both themes) */

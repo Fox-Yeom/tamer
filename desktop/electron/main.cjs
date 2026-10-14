@@ -2,7 +2,7 @@
 // cvim-core (Rust, desktop/core-rs), which owns the agent state machine, the adapters (Claude
 // hooks, Codex log, activity) and the path policy. Partner Pokémon data is still here (partner.cjs).
 // Data: ~/.cache/tamer (copied once from the Neovim CVIM's ~/.cache/cvim — core/paths.cjs).
-const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, powerMonitor, shell, nativeImage, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, Tray, powerMonitor, shell, nativeImage, nativeTheme } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const pty = require("node-pty");
@@ -11,6 +11,7 @@ const { HOME, CACHE, STATE, TABS, ROOT, writeFile, mkdirPrivate, tighten, pruneT
 const agents = require("./core/agents.cjs");
 const partner = require("./core/partner.cjs");
 const wild = require("./core/wild.cjs");
+const { trayModel, trayIcon, AGENTS: TRAY_AGENTS } = require("./tray.cjs");
 const prices = require("./core/prices.cjs");
 const stats = require("./core/stats.cjs");
 const { RustCore } = require("./core/rust.cjs");
@@ -808,7 +809,9 @@ const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
 // 설정 창 (APP-19, #59): only known keys, each checked — anything else falls back to the default,
 // which is how the app behaved before (everything on)
 const SETTINGS = path.join(CACHE, "ui", "settings.json");
-const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, alpha: 82, shadow: true, minimal: "auto" }, tabGlow: true, theme: "system" };
+const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, alpha: 82, shadow: true, minimal: "auto" }, tabGlow: true, theme: "system",
+  menubar: { on: true, text: "waiting" } }; // 메뉴바 (STA-19, #64)
+const MENUBAR_TEXT = ["waiting", "limit", "none"];
 const MINIMAL = ["auto", "always", "never"]; // 최소 모드 (#63): by the background (≤ 30 %), always, never
 const THEMES = ["system", "dark", "light"]; // 테마 (APP-20, #60)
 function readSettings(raw = readJsonSafe(SETTINGS)) {
@@ -819,6 +822,7 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
       alpha: Number.isFinite(a) ? Math.round(Math.min(100, Math.max(0, a))) : d.alpha,
       shadow: b(o.shadow, d.shadow), minimal: MINIMAL.includes(o.minimal) ? o.minimal : d.minimal }, // #65 #63
     tabGlow: b(raw?.tabGlow, SETTINGS_DEFAULT.tabGlow),
+    menubar: { on: b(raw?.menubar?.on, SETTINGS_DEFAULT.menubar.on), text: MENUBAR_TEXT.includes(raw?.menubar?.text) ? raw.menubar.text : SETTINGS_DEFAULT.menubar.text },
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
   };
 }
@@ -827,14 +831,50 @@ nativeTheme.themeSource = settings.theme;
 // macOS switched between dark and light: "시스템 따라가기" pages re-pick their colours (#60)
 nativeTheme.on("updated", () => { broadcast("settings", settings); overlayUpdate(); });
 function setSettings(patch) {
-  settings = readSettings({ ...settings, ...patch, overlay: { ...settings.overlay, ...(patch?.overlay || {}) } });
+  settings = readSettings({ ...settings, ...patch, overlay: { ...settings.overlay, ...(patch?.overlay || {}) }, menubar: { ...settings.menubar, ...(patch?.menubar || {}) } });
   nativeTheme.themeSource = settings.theme; // menus, dialogs, scroll bars follow too (#60)
   writeFile(SETTINGS, JSON.stringify(settings));
   broadcast("settings", settings);
   overlaySync();
   overlayUpdate();
   appMenu();
+  trayUpdate();
   return settings;
+}
+
+// ── 메뉴바 (STA-19, #64): an icon (+ who waits / the 5-hour limit) and a menu made fresh on each click ──
+let tray = null;
+const usageSeen = {}; // agent → its last 5h · 7d, as the window remembers them (memory only, POL-DATA-02)
+let trayTimer = null;
+const trayTabs = () => [...workspaces.values()].map((ws) => ({ ws: ws.id, name: path.basename(ws.cwd), state: ws.state || "idle", active: ws.id === activeWs,
+  ended: ws.ended && Date.now() - ws.ended.at < 15000 ? ws.ended.how : null }));
+const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings });
+function trayAct(act) {
+  if (act?.tab) focusMain(String(act.tab));
+  else if (act?.set) setSettings(act.set);
+  else if (act === "settings") { focusMain(); send("open-settings", {}); }
+  else if (act === "open") focusMain();
+  else if (act === "hide") setSettings({ menubar: { on: false } });
+  else if (act === "quit") app.quit();
+  logLine(`menubar ${typeof act === "string" ? act : Object.keys(act || {})[0] || "-"}`);
+}
+const trayTemplate = (items) => items.map(({ act, submenu, ...it }) => ({ ...it, ...(submenu ? { submenu: trayTemplate(submenu) } : {}), ...(act ? { click: () => trayAct(act) } : {}) }));
+function trayUpdate() {
+  // a test app never puts an icon on the menu bar (it would sit on the tester's own) — tray_test reads the model
+  if (TEST || draining || !app.isReady()) return;
+  if (!settings.menubar.on) { if (tray) { tray.destroy(); tray = null; } return; }
+  if (!tray) {
+    tray = new Tray(trayIcon(nativeImage));
+    tray.setToolTip("Tamer");
+    const open = () => tray.popUpContextMenu(Menu.buildFromTemplate(trayTemplate(trayNow().items)));
+    tray.on("click", open);
+    tray.on("right-click", open);
+  }
+  tray.setTitle(trayNow().title, { fontType: "monospacedDigit" });
+}
+function trayUpdateSoon() {
+  if (trayTimer) return;
+  trayTimer = setTimeout(() => { trayTimer = null; trayUpdate(); }, 100);
 }
 // the window is sized to its cards (overlay_fit) and anchored at its bottom-right corner: a big
 // see-through window would stop the cards short of the screen top (macOS keeps windows below the
@@ -874,6 +914,7 @@ function overlayPayload() {
 
 let overlayTimer = null;
 function overlayUpdate() {
+  trayUpdateSoon(); // the same changes move the menu bar's count
   if (!overlay || overlay.isDestroyed() || overlayTimer) return;
   overlayTimer = setTimeout(() => {
     overlayTimer = null;
@@ -996,6 +1037,13 @@ const commands = {
   // 설정 창 (APP-19): read, and change (only known keys survive readSettings)
   settings_get: () => settings,
   settings_set: ({ patch }) => setSettings(patch && typeof patch === "object" ? patch : {}),
+  // 메뉴바 (STA-19): the last 5h · 7d the window remembers for an agent — numbers only, kept in memory
+  usage_seen({ key, five_hour, seven_day }) {
+    if (!TRAY_AGENTS.some(([k]) => k === key)) return;
+    const win = (w) => (w && Number.isFinite(Number(w.pct)) ? { pct: Number(w.pct), resets_at: Number.isFinite(Number(w.resets_at)) && w.resets_at != null ? Number(w.resets_at) : null } : null);
+    usageSeen[key] = { five_hour: win(five_hour), seven_day: win(seven_day) };
+    trayUpdateSoon();
+  },
   startup_mark({ what }) { logLine(`startup ${String(what).slice(0, 40)} +${since()}ms`); },
   app_info() {
     uiReady = true;
@@ -1351,6 +1399,14 @@ const testCommands = {
   wild_dex_test({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); },
   wild_open_test: () => overlayCommands.wild_open(),
   // the pointer over the current tab's partner / gone (scenes, #68)
+  // 메뉴바 (#64): the icon's text and the menu as data (a test app shows no icon); a menu item's click by its labels
+  tray_test: () => ({ shown: !!tray, ...trayNow() }),
+  tray_click_test({ path: labels }) {
+    let items = trayNow().items, it = null;
+    for (const l of labels || []) { it = items.find((x) => x.label === l); items = it?.submenu || []; }
+    if (it?.act) trayAct(it.act);
+    return !!it?.act;
+  },
   overlay_hover_test: ({ on }) => overlay.webContents.executeJavaScript(on
     ? `document.querySelector("#cards .card.current .sprite")?.dispatchEvent(new MouseEvent("mousemove", { bubbles: true }))`
     : `document.dispatchEvent(new MouseEvent("mouseleave"))`),
@@ -1604,6 +1660,7 @@ app.whenReady().then(() => {
   win.on("focus", overlaySync);
   win.on("blur", () => setTimeout(overlaySync, 250)); // focus may be moving to our own dialog
   createOverlay();
+  trayUpdate(); // 메뉴바 (STA-19)
   wild.setOnEnd((e) => { logLine(`wild end ${e.reason}`); broadcast("wild-end", e); overlayUpdate(); });
   if (wild.enabled()) wild.prefetch();
   // S1: owner-only data, old hook logs pruned (7 days without changes)
