@@ -697,14 +697,19 @@ function foreground(p) {
   return new Promise((resolve) => {
     const tty = String(p.ptsName || "").replace(/^\/dev\//, "");
     if (!tty) return resolve(null);
-    execFile("ps", ["-t", tty, "-o", "pid=,stat=,args="], { timeout: 2000 }, (err, out) => {
-      if (err) return resolve(null);
-      // the job in front: "+" in the state column (the shell itself waits in the background)
-      const line = String(out).split("\n").map((l) => l.trim()).find((l) => /^\d+\s+\S*\+/.test(l));
-      const m = line && line.match(/^(\d+)\s+\S+\s+(.*)$/);
-      resolve(m ? { pid: Number(m[1]), args: m[2] } : null);
-    });
+    execFile("ps", ["-t", tty, "-o", "pid=,ppid=,tpgid=,stat=,args="], { timeout: 2000 }, (err, out) => resolve(err ? null : fgOf(out)));
   });
+}
+// the job in front (AGT-07): the leader of the terminal's foreground process group — the command the
+// shell started. Not the first "+" line: ps lists by pid, and once pids wrap around an agent's own
+// child (Claude Code's caffeinate, an MCP server) can come first — the agent was lost while it
+// worked (#69). No leader (it exited): the member whose parent is outside the group.
+function fgOf(out) {
+  const rows = String(out).split("\n").map((l) => l.trim().match(/^(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)\s+(.*)$/)).filter(Boolean)
+    .map((m) => ({ pid: Number(m[1]), ppid: Number(m[2]), tpgid: Number(m[3]), front: m[4].includes("+"), args: m[5] }));
+  const group = rows.filter((r) => r.front);
+  const lead = group.find((r) => r.pid === r.tpgid) || group.find((r) => !group.some((x) => x.pid === r.ppid)) || group[0];
+  return lead ? { pid: lead.pid, args: lead.args } : null;
 }
 
 // the folders a pane's relative paths are from (#26): the program in front (an agent after `cd`),

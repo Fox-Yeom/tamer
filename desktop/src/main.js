@@ -33,6 +33,9 @@ const TERM_THEMES = {
     brightMagenta: "#b05ad0", brightCyan: "#168f9c", brightWhite: "#3a3a44",
   },
 };
+// light: the least contrast of text on its background (dim text half of it) — an agent drawing its
+// dark-theme colours (light grey) on white stays readable; xterm darkens just that text (#70)
+const TERM_CONTRAST = { dark: 1, light: 4.5 };
 // 테마: the main process sets macOS's appearance for the app (설정 "시스템 따라가기 / 다크 / 라이트"),
 // so the page just follows prefers-color-scheme — and so does the overlay
 const darkMedia = matchMedia("(prefers-color-scheme: dark)");
@@ -42,7 +45,7 @@ function applyTheme() {
   const t = themeNow();
   document.documentElement.dataset.theme = t;
   THEME = TERM_THEMES[t];
-  for (const p of panes.values()) p.term.options.theme = THEME;
+  for (const p of panes.values()) { p.term.options.theme = THEME; p.term.options.minimumContrastRatio = TERM_CONTRAST[t]; }
 }
 darkMedia.addEventListener("change", applyTheme);
 document.documentElement.dataset.theme = themeNow(); // before the first paint: no dark flash on a light Mac
@@ -203,7 +206,7 @@ function makePane(tab, kind, opts = {}) {
   const el = opts.el || $(".term", section);
   const term = new Terminal({
     fontFamily: '"Fira Code", "CVIM Hangul", Menlo, monospace',
-    fontSize, theme: THEME, macOptionIsMeta: true, scrollback: 100000, allowProposedApi: true,
+    fontSize, theme: THEME, minimumContrastRatio: TERM_CONTRAST[themeNow()], macOptionIsMeta: true, scrollback: 100000, allowProposedApi: true,
     // links a program marks itself (OSC 8, e.g. an agent's "출처" list): ⌘-click opens (#19)
     linkHandler: { activate: (e, uri) => openLink(e, uri) },
   });
@@ -2840,6 +2843,8 @@ function labState() {
     noTabGlow: document.body.classList.contains("no-tab-glow"), // #59 설정
     theme: document.documentElement.dataset.theme || null, termBg: active ? bigPane(active)?.term.options.theme?.background || null : null, // #60
     bodyBg: getComputedStyle(document.body).backgroundColor,
+    // #70: the colour the big pane really drew a lab word in (LABFAINT · LABDIM)
+    drawn: active ? Object.fromEntries(["LABFAINT", "LABDIM"].map((w) => { const el = [...$(".xterm-rows", bigPane(active)?.term.element || document)?.querySelectorAll("span") || []].find((x) => x.textContent === w); return [w, el ? getComputedStyle(el).color : null]; })) : null,
     side: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side")) || null, // #58 the right column's % (null = default)
     sideW: active ? Math.round($(".side", active.view)?.getBoundingClientRect().width || 0) : null,
     tabWorking: active ? !!$(`#tabs .tab[data-ws="${active.id}"]`)?.classList.contains("working") : null, // #61

@@ -37,6 +37,13 @@ function gitRepo(dir, cmds) {
   const git = (...a) => execFileSync("git", ["-c", "user.name=lab", "-c", "user.email=lab@example.com", "-c", "init.defaultBranch=main", "-c", "commit.gpgsign=false", ...a], { cwd: dir, env, stdio: "pipe" });
   for (const c of cmds) typeof c === "function" ? c(dir) : git(...c);
 }
+// a CSS rgb() colour's contrast with white (WCAG), null if none (#70)
+function contrast(css) {
+  const m = String(css || "").match(/rgba?\((\d+), (\d+), (\d+)/);
+  if (!m) return null;
+  const lum = [m[1], m[2], m[3]].map((v) => { const c = v / 255; return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4; });
+  return 1.05 / (0.2126 * lum[0] + 0.7152 * lum[1] + 0.0722 * lum[2] + 0.05);
+}
 const envMs = (log) => { const m = log.match(/env ready .*?\+(\d+)ms/); return m ? Number(m[1]) : null; };
 
 module.exports = [
@@ -846,9 +853,31 @@ sleep 40
     },
   },
   {
+    id: "typed-agent-low-pid", tags: ["smoke", "agents"], what: "셸에서 친 에이전트의 앞 그룹에 pid가 더 작은 프로세스가 있어도(pid가 한 바퀴 돈 맥의 caffeinate 같은) 에이전트로 계속 잡힘 (#69)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
+    // labhelper starts first (smaller pid), then joins labagent's process group — it lists before
+    // the agent in `ps`, the way Claude Code's caffeinate does once pids have wrapped
+    files: { "agents-user.json": JSON.stringify({ labagent: { name: "LabAgent", cmd: ["labagent"], state: "activity" } }),
+      "fakebin/labagent": "#!/bin/sh\necho $$ > .agentpid\necho lab agent running\nsleep 30\n",
+      "fakebin/labhelper": "#!/usr/bin/perl\nfor (1..80) { last if -s '.agentpid'; select(undef, undef, undef, 0.1); }\nopen(my $f, '<', '.agentpid') or exit 1; my $l = <$f>; chomp $l;\nsetpgrp(0, $l) or die \"setpgrp: $!\";\nopen(my $o, '>', '.joined'); print $o \"$$ $l\\n\"; close $o;\nsleep 30;\n" },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: "labhelper & labagent" }, { wait: 200 }, { key: "Enter" }, { wait: 5000 }, { probe: "typed" }],
+    check: ({ probe, log, box }) => {
+      let joined = null; try { joined = fs.readFileSync(path.join(box.folder("proj"), ".joined"), "utf8").trim().split(" ").map(Number); } catch {}
+      return [
+        ok(joined && joined[0] < joined[1], `도우미가 더 작은 pid로 에이전트 그룹에 들어가지 못함 (${joined}) — 시험 준비 실패`),
+        ok(/host-agent \S+ labagent kind=activity/.test(log), "셸에서 친 에이전트가 안 잡힘"),
+        ok(!/^host-agent \S+ -$/m.test(log.slice(log.search(/host-agent \S+ labagent/))), `잡힌 뒤 놓침 (${log.match(/^host-agent \S+ -$/m)?.[0]})`),
+        ok(probe.typed?.agent === "labagent", `큰 칸 에이전트 ${probe.typed?.agent} (labagent여야)`),
+      ];
+    },
+  },
+  {
     id: "theme-switch", tags: ["smoke", "app"], what: "테마: 라이트·다크를 고르면 화면·터미널 색이 바로 바뀌고 settings.json에 남음 (APP-20, #60)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 },
+    // #70: a dark-theme agent's light grey (RGB) and dim text, printed in the shell
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 }, { call: "focusShell" },
+      { text: "printf '\\033[38;2;215;215;215mLABFAINT\\033[0m \\033[2;38;2;200;200;200mLABDIM\\033[0m\\n'" }, { key: "Enter" }, { wait: 800 },
       { invoke: "settings_set", args: { patch: { theme: "light" } } }, { wait: 700 }, { probe: "light" },
       { invoke: "settings_set", args: { patch: { theme: "dark" } } }, { wait: 700 }, { probe: "dark" },
       { invoke: "settings_set", args: { patch: { theme: "nonsense" } } }, { wait: 400 }, { invoke: "settings_get", log: true }],
@@ -858,6 +887,9 @@ sleep 40
       return [
         ok(probe.light?.theme === "light" && probe.light?.termBg === "#ffffff" && probe.light?.bodyBg === "rgb(244, 244, 246)", `라이트 ${probe.light?.theme} 터미널 ${probe.light?.termBg} 바탕 ${probe.light?.bodyBg}`),
         ok(probe.dark?.theme === "dark" && probe.dark?.termBg === "#1b1b22" && probe.dark?.bodyBg === "rgb(22, 22, 28)", `다크 ${probe.dark?.theme} 터미널 ${probe.dark?.termBg} 바탕 ${probe.dark?.bodyBg}`),
+        ok(contrast(probe.light?.drawn?.LABFAINT) >= 4.4, `라이트: 옅은 회색 글자 ${probe.light?.drawn?.LABFAINT} 대비 ${contrast(probe.light?.drawn?.LABFAINT)?.toFixed(2)} (4.5 이상이어야, #70)`),
+        ok(contrast(probe.light?.drawn?.LABDIM) >= 2, `라이트: 흐린 글자 ${probe.light?.drawn?.LABDIM} 대비 ${contrast(probe.light?.drawn?.LABDIM)?.toFixed(2)} (2 이상이어야, #70)`),
+        ok(probe.dark?.drawn?.LABFAINT === "rgb(215, 215, 215)", `다크: 글자색은 그대로여야 — ${probe.dark?.drawn?.LABFAINT}`),
         ok(got.theme === "system", `모르는 값은 기본값(system)이어야 — ${got.theme}`),
         ok(saved?.theme === "system", `settings.json ${saved?.theme}`),
       ];
