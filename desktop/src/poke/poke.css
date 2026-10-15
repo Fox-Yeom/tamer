@@ -7,6 +7,7 @@
   --pk-hover: rgba(120, 200, 110, .14); --pk-sel: rgba(120, 200, 110, .2); --pk-chip: rgba(120, 200, 110, .1);
   --pk-card: rgba(0, 0, 0, .18); --pk-field: rgba(0, 0, 0, .25);
   --pk-new: #f5c542; --pk-new-soft: rgba(245, 197, 66, .14); --pk-recent: 90, 160, 255; --pk-here: var(--accent);
+  --pk-coin: #f2c14e; --pk-coin-soft: rgba(242, 193, 78, .1); --pk-coin-line: #6b5a2a; /* 🪙 포켓코인 (#72) */
   --pk-radius: 10px; --pk-gap: 8px;
 }
 
@@ -139,3 +140,18 @@
 #dex .pk-bar i { display: block; height: 100%; background: var(--pk-title); }
 #dex .pk-meter.mid .pk-bar i { background: var(--pk-new); }
 #dex .pk-meter.low .pk-bar i { background: #e5484d; }
+
+/* 🪙 포켓코인 (#72, PKM-18, docs/SCREENS_P3.md): the chip left of ✕, today's coins and the 시작 코인 band
+   on Home, "+5₽" rising by the main window's partner (pk-float) */
+#dex .pk-coin { margin-left: auto; border: 1px solid var(--pk-coin-line); border-radius: 8px; padding: 2px 10px; font: inherit; font-size: 12px; font-weight: 700;
+  color: var(--pk-coin); background: var(--pk-coin-soft); cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }
+#dex .pk-coin.bump { font-weight: 900; }
+#dex .pk-coin ~ .pk-close { margin-left: 0; }
+#dex .pk-today > .pk-coins b { color: var(--pk-coin); }
+#dex .pk-band { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border: 1px solid var(--pk-coin-line); border-radius: var(--pk-radius); background: var(--pk-coin-soft); font-size: 13px; }
+#dex .pk-band b { color: var(--pk-coin); }
+#dex .pk-band span { flex: 1; }
+#dex .pk-band-x { border: 0; background: transparent; color: var(--pk-dim); font: inherit; cursor: pointer; }
+#dex .pk-band-x:hover { color: var(--pk-fg); }
+.pk-float { position: absolute; right: 8px; top: 6px; font-size: 13px; font-weight: 800; color: var(--pk-coin); pointer-events: none; animation: pk-float 1.2s ease-out forwards; }
+@keyframes pk-float { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-14px); } }

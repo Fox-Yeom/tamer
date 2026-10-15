@@ -128,4 +128,4 @@ function updateJson(file, fn) {
   return out;
 }
 
-module.exports = { HOME, CACHE, STATE, TABS, ROOT, readJson, writeJson, writeFile, updateJson, mkdirPrivate, tighten, pruneTabs };
+module.exports = { HOME, CACHE, STATE, TABS, ROOT, readJson, keepCorrupt, writeJson, writeFile, updateJson, mkdirPrivate, tighten, pruneTabs };

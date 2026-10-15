@@ -100,7 +100,7 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
     if (r.result === "caught") {
       ball.classList.add("caught");
       burst("✨", 8);
-      say(`신난다! ${nm(enc, "을", "를")} 잡았다!`);
+      say(`신난다! ${nm(enc, "을", "를")} 잡았다!${r.coins ? ` 🪙 +₽${r.coins} 새 종` : ""}`); // a species never caught before (#72)
       btn.hidden = true;
       clearInterval(tick); timer.textContent = "";
       adopt.enc = { ...enc };

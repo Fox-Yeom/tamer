@@ -97,8 +97,8 @@ function throwBall(token) {
   let checks = 0;
   while (checks < 4 && rng() < p) checks++;
   const shakes = Math.min(3, checks);
-  let result = "broke";
-  if (checks === 4) { result = "caught"; partner.addCaught(c); }
+  let result = "broke", newdex = false;
+  if (checks === 4) { result = "caught"; newdex = partner.addCaught(c); }
   else if (rng() < (c.legendary ? FLEE * 2.5 : FLEE)) result = "fled";
   // the animation (src/wild.js play: 1100 ms + 600 ms a shake) plays out before the next ball,
   // and the clock stops while it plays: after a miss it goes on from where it was (at least 8 s
@@ -109,7 +109,7 @@ function throwBall(token) {
   arm(c, result === "broke" ? anim + left : ANIM);
   setTimeout(() => { c.busy = false; }, anim);
   if (result !== "broke") setTimeout(() => end(result), ANIM - 500);
-  return { result, shakes, token, name: c.name, id: c.id, shiny: c.shiny, left: result === "broke" ? left : 0 };
+  return { result, shakes, token, name: c.name, id: c.id, shiny: c.shiny, left: result === "broke" ? left : 0, newdex };
 }
 
 function setEnabled(on) {

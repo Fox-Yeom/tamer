@@ -85,10 +85,11 @@
       ]
     },
     "home": {
-      "what": "🏠 홈 (⌘P · 포켓몬 창 첫 탭): 지금 탭 파트너(미리보기) · 오늘 끝낸 작업·연속 일수·최근 7일 · 에이전트별 5시간·주간 남은 비율 (#44)",
+      "what": "🏠 홈 (⌘P · 포켓몬 창 첫 탭): 지금 탭 파트너(미리보기) · 오늘 끝낸 작업·연속 일수·최근 7일 · 에이전트별 5시간·주간 남은 비율 (#44) · 🪙 오늘 번 코인·상한까지, 시작 코인 띠 (#72)",
       "entry": "dexView(\"home\")",
       "scenes": [
-        "home"
+        "home",
+        "home-start-coins"
       ]
     }
   },
@@ -141,6 +142,31 @@
         "dex",
         "box",
         "home"
+      ]
+    },
+    "pk-coin": {
+      "what": "🪙 포켓코인 칩(제목 줄 ✕ 왼쪽, 누르면 홈 — E3부터 상점)과 메인 창 파트너 옆 \"+5₽\" 떠오름(pk-float) (#72, PKM-18)",
+      "files": [
+        "src/poke/poke.css",
+        "src/theme.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".pk-coin",
+        ".pk-float",
+        "--pk-coin"
+      ],
+      "functions": [
+        "coinChip",
+        "dexTitle",
+        "coinFloat"
+      ],
+      "screens": [
+        "choose",
+        "dex",
+        "box",
+        "home",
+        "main"
       ]
     },
     "pk-card": {
@@ -339,7 +365,7 @@
       ]
     },
     "pk-home": {
-      "what": "홈 본문: 오늘·연속 카드, 7일 막대, 에이전트 한도 막대 (#44)",
+      "what": "홈 본문: 오늘·연속 카드, 7일 막대, 에이전트 한도 막대 (#44) · 🪙 오늘 번 코인 칸·시작 코인 띠 (#72)",
       "files": [
         "src/poke/poke.css",
         "src/main.js"
@@ -352,7 +378,10 @@
         ".pk-agent",
         ".pk-meter",
         ".pk-bar",
-        "#dex.homeview"
+        "#dex.homeview",
+        ".pk-coins",
+        ".pk-band",
+        ".pk-band-x"
       ],
       "functions": [
         "homeRender"

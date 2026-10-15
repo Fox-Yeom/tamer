@@ -14,6 +14,7 @@ const wild = require("./core/wild.cjs");
 const { trayModel, trayIcon, AGENTS: TRAY_AGENTS } = require("./tray.cjs");
 const prices = require("./core/prices.cjs");
 const stats = require("./core/stats.cjs");
+const economy = require("./core/economy.cjs"); // 포켓코인 (#72)
 const { RustCore } = require("./core/rust.cjs");
 
 const ptys = new Map(); // pane id "<ws>:<agent|shell>" -> IPty
@@ -499,6 +500,15 @@ function onCoreEvent(msg) {
       logLine(`guessed done ws=${msg.ws} n=${ws.guessed}`);
       if (ws.guessed % 2) return;
     }
+    // 🪙 포켓코인 (#72, PKM-18): +5 (+1 for a turn under 30 s), the day's first +20, ₽300 a day.
+    // The core sends the transition before the "done" state: the times are still the turn's
+    // (turn_at = when it started); a test sends the state first, with its own times.
+    const t = (fromShell ? ws.shell?.times : sess?.times) || {};
+    const coins = economy.onDone({ turnAt: t.turn_at || null, took: t.took ?? (t.turn_at ? Date.now() - t.turn_at : null) });
+    if (coins) {
+      logLine(`coins ws=${ws.id} +${coins.gained} (${coins.pay}${coins.first ? `+${coins.first}` : ""}${coins.capped ? " capped" : ""})`);
+      send("economy", { ...economy.summary(), ws: ws.id, gained: coins.gained });
+    }
     // sometimes a wild Pokémon comes out (PLAN 3.6)
     // where and during whose task it showed up: kept with the individual if it's caught (#44)
     const w = msg.guess ? null : wild.onDone(ws.id, { empty: !ws.partner, folder: ws.cwd, agent: fromShell ? ws.shell?.key : sess?.agent });
@@ -507,8 +517,9 @@ function onCoreEvent(msg) {
     const t0 = Date.now();
     partner.onDone(ws.cwd).then(({ evolved, from }) => {
       logLine(`exp ws=${ws.id} ${JSON.stringify(partner.progress(ws.cwd))} evolved=${evolved?.id ?? "-"} ${Date.now() - t0}ms`);
-      if (evolved) { ws.partner = { ...evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); }
-      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null });
+      const coins = evolved ? economy.onEvolve() : 0; // 🪙 +₽30 (#72)
+      if (evolved) { ws.partner = { ...evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); send("economy", economy.summary()); }
+      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins });
     }).catch((e) => logLine(`exp error ${e}`));
   }
 }
@@ -853,7 +864,8 @@ const usageSeen = {}; // agent → its last 5h · 7d, as the window remembers th
 let trayTimer = null;
 const trayTabs = () => [...workspaces.values()].map((ws) => ({ ws: ws.id, name: path.basename(ws.cwd), state: ws.state || "idle", active: ws.id === activeWs,
   ended: ws.ended && Date.now() - ws.ended.at < 15000 ? ws.ended.how : null }));
-const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings });
+const coinsNow = () => { try { return economy.summary(); } catch { return null; } };
+const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow() });
 function trayAct(act) {
   if (act?.tab) focusMain(String(act.tab));
   else if (act?.set) setSettings(act.set);
@@ -1338,6 +1350,9 @@ const commands = {
   // 🏠 Home (#44): tasks finished today, the streak, the last 7 days
   // tests: a fixed "today" (CVIM_TEST_TODAY, YYYY-MM-DD) so the 7-day row's weekdays don't move with the calendar
   home_state: () => stats.summary(TEST && process.env.CVIM_TEST_TODAY ? new Date(`${process.env.CVIM_TEST_TODAY}T12:00`) : undefined),
+  // 🪙 포켓코인 (#72): the balance, today's, the 시작 코인 band (until closed) — read only, the main process writes
+  economy_state: () => economy.summary(),
+  economy_start_seen: () => economy.dismissStart(),
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
   pane_swap({ ws: id, on }) {
@@ -1352,7 +1367,8 @@ const commands = {
   wild_toggle() { const on = wild.setEnabled(!wild.enabled()); overlayUpdate(); return on; },
   wild_throw({ token }) {
     const r = wild.throwBall(String(token));
-    logLine(`wild throw ${r.result} shakes=${r.shakes}`);
+    if (r.newdex) { r.coins = economy.onNewDex(); send("economy", economy.summary()); } // a species never caught before: 🪙 +₽30 (#72)
+    logLine(`wild throw ${r.result} shakes=${r.shakes}${r.coins ? ` coins=${r.coins}` : ""}`);
     if (r.result !== "gone") broadcast("wild-throw", r);
     return r;
   },
@@ -1517,6 +1533,12 @@ const testCommands = {
     onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to), ...(times || {}) }, test: true });
     onCoreEvent({ event: "transition", ws: String(ws), from: String(from), to: String(to), test: true });
   },
+  // 🪙 finishes counted straight into the ledger (UI scenes: today's coins without touching EXP or stats)
+  economy_earn_test({ n = 1, took = null }) {
+    for (let i = 0; i < Math.min(500, Number(n) || 0); i++) economy.onDone({ took });
+    send("economy", economy.summary());
+    return economy.summary();
+  },
   // throws land as given: "caught" / "broke" / "fled" (random otherwise)
   wild_rig_test({ result }) {
     const seq = { caught: [0, 0, 0, 0], broke: [0, 0.999, 0.999], fled: [0.999, 0] }[result];
@@ -1675,6 +1697,7 @@ app.whenReady().then(() => {
     logLine(`privacy: ${fixed} permissions tightened, ${pruned} old hook files removed`);
   } catch (e) { logLine(`privacy error ${e}`); }
   partner.migrate(); // box.json (first run: from folders.json / pokedex.json, backed up)
+  try { const e = economy.init(); logLine(`economy balance=${e.balance}${e.start ? ` start=${e.start.amount}` : ""}`); } catch (e) { logLine(`economy init error ${e}`); } // 🪙 (#72)
   loadStarter(); // the first partner's starters (only while the box is empty)
   setInterval(() => { if (workspaces.size) scanShells().catch((e) => logLine(`scan error ${e}`)); }, 1500);
 });

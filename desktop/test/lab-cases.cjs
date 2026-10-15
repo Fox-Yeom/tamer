@@ -46,6 +46,13 @@ function contrast(css) {
 }
 const envMs = (log) => { const m = log.match(/env ready .*?\+(\d+)ms/); return m ? Number(m[1]) : null; };
 
+// 🪙 포켓코인 (#72): today as the app counts it (this Mac's midnight), the economy files of a sandbox
+const todayLocal = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
+const econ = (box, f) => path.join(box.data, "economy", f);
+const ledgerRows = (box) => { try { return fs.readFileSync(econ(box, "ledger.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return null; } };
+const putEcon = (box, files) => { fs.mkdirSync(path.join(box.data, "economy"), { recursive: true }); for (const [f, v] of Object.entries(files)) fs.writeFileSync(econ(box, f), typeof v === "string" ? v : JSON.stringify(v)); };
+const DONE = (ws, times) => [{ invoke: "agent_state_test", args: { ws, from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws, from: "thinking", to: "done", ...(times ? { times } : {}) } }];
+
 module.exports = [
   {
     id: "launch-empty", tags: ["smoke", "launch"], what: "아무것도 없는 맥에서 실행 → 시작 화면이 1초 안에",
@@ -311,6 +318,76 @@ module.exports = [
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
       { text: "env | sort > env.txt" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { probe: "done" }],
     check: ({ box }) => [ok(fs.existsSync(path.join(box.folder("proj"), "env.txt")), "env.txt가 안 생김")],
+  },
+  // ── 🪙 포켓코인 E1 (#72, PKM-18, POL-FUT-01) ──
+  {
+    id: "economy-earn", tags: ["smoke", "poke", "data"], what: "포켓코인: 처음 켤 때 시작 코인(지난 완료 27 × 2 = ₽54), 완료 +5 · 하루 첫 +20 · 30초 미만 턴 +1, 같은 턴이 두 번 와도 한 번 — 칩·홈·띠·메뉴바, 원장엔 하루·종류별 합계만 (#72)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+      ...DONE("$ws", { turn_at: 1700000000000, took: 120000 }), ...DONE("$ws", { turn_at: 1700000000000, took: 120000 }), // the same turn twice
+      ...DONE("$ws", { turn_at: 1700000100000, took: 5000 }), { wait: 400 }, // a 5-second turn
+      { key: "p", mods: 4 }, { wait: 900 }, { probe: "home" }, { click: "#box-grid .pk-band-x" }, { wait: 600 }, { probe: "closed" },
+      { invoke: "economy_state", log: true }, { invoke: "tray_test", log: true }],
+    check: ({ probe, log, box }) => {
+      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      const tray = JSON.parse(log.match(/^lab-invoke tray_test (.*)$/m)?.[1] || "{}");
+      const rows = ledgerRows(box) || [], d = todayLocal();
+      const by = Object.fromEntries(rows.map((r) => [r.kind, r]));
+      let seen = null, wallet = null, state = null;
+      try { seen = JSON.parse(fs.readFileSync(econ(box, "today.json"), "utf8")); wallet = JSON.parse(fs.readFileSync(econ(box, "wallet.json"), "utf8")); state = JSON.parse(fs.readFileSync(econ(box, "state.json"), "utf8")); } catch {}
+      return [
+        ok(/^economy balance=54 start=54$/m.test(log), `시작 코인 ${log.match(/^economy [^\n]*/m)?.[0]} (stats 27번 × 2 = 54)`),
+        ok(st.balance === 80 && st.today?.earned === 26 && st.today?.capLeft === 294, `잔액·오늘 ${JSON.stringify(st)} (54 + 5 + 20 + 1 = 80, 오늘 26, 상한까지 294)`),
+        ok((log.match(/^coins ws=/gm) || []).length === 2, `적립 ${(log.match(/^coins ws=/gm) || []).length}번 — 같은 턴은 한 번만(2번이어야)`),
+        ok(probe.home?.coin === "🪙 ₽80", `제목 줄 칩 ${probe.home?.coin}`),
+        ok(/₽26오늘 번 코인 · 상한까지 ₽294/.test(probe.home?.coinToday || ""), `홈 코인 칸 ${probe.home?.coinToday}`),
+        ok(/지난 완료 27번으로 ₽54 받았어요/.test(probe.home?.coinBand || "") && probe.closed?.coinBand === null && state?.startSeen === true, `시작 코인 띠 ${probe.home?.coinBand} → 닫은 뒤 ${probe.closed?.coinBand} ${JSON.stringify(state)}`),
+        ok((tray.items || []).some((i) => i.label === "🪙 포켓코인 ₽80 · 오늘 +26"), `메뉴바 코인 줄 ${JSON.stringify((tray.items || []).filter((i) => /₽/.test(i.label || "")))}`),
+        ok(rows.length === 4 && rows.every((r) => JSON.stringify(Object.keys(r)) === '["day","kind","n","amount"]' && r.day === d)
+          && by.start?.n === 27 && by.start?.amount === 54 && by.done?.amount === 5 && by.first?.amount === 20 && by.fast?.n === 1 && by.fast?.amount === 1, `원장 ${JSON.stringify(rows)}`),
+        ok(!filesWith(path.join(box.data, "economy"), "proj").length && !filesWith(path.join(box.data, "economy"), box.dir).length, "원장·캐시에 폴더 이름·경로가 남음"),
+        ok(seen?.day === d && JSON.stringify(seen?.seen) === "[1700000000000,1700000100000]" && wallet?.balance === 80, `확인 표시 ${JSON.stringify(seen)} · 지갑 ${JSON.stringify(wallet)}`),
+      ];
+    },
+  },
+  {
+    id: "economy-cap", tags: ["smoke", "poke"], what: "포켓코인 하루 상한: 완료 적립은 ₽300에서 멈춤(마지막은 남은 만큼), 홈 \"오늘 상한 · 보너스만\" — 새 종을 잡은 +₽30은 상한 밖 (#72)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    setup: (box) => {
+      const d = todayLocal();
+      putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 0 }, { day: d, kind: "done", n: 60, amount: 298 }, { day: d, kind: "first", n: 1, amount: 20 }].map((r) => JSON.stringify(r)).join("\n") + "\n", "state.json": { startSeen: true } });
+      fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })); // 구구: seen, never caught (owner data)
+    },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "wild_rig_test", args: { result: "caught" } }, ...DONE("$ws"), { wait: 600 }, ...DONE("$ws"), { wait: 400 },
+      { key: "b", mods: 4 }, { wait: 3500 }, { key: "p", mods: 4 }, { wait: 900 }, { probe: "home" }, { invoke: "economy_state", log: true }],
+    check: ({ probe, log }) => {
+      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      const coins = [...log.matchAll(/^coins ws=\S+ (.*)$/gm)].map((m) => m[1]);
+      return [
+        ok(JSON.stringify(coins) === '["+2 (2 capped)","+0 (0 capped)"]', `완료 적립 ${JSON.stringify(coins)} (298 → 300에 2, 그다음은 0)`),
+        ok(/^wild throw caught .*coins=30$/m.test(log), `새 종 포획 ${log.match(/^wild throw [^\n]*/m)?.[0]}`),
+        ok(st.balance === 350 && st.today?.capLeft === 0 && st.today?.earned === 350, `잔액·오늘 ${JSON.stringify(st)} (298 + 20 + 2 + 30 = 350)`),
+        ok(/오늘 상한 · 보너스만/.test(probe.home?.coinToday || "") && probe.home?.coinBand === null, `홈 ${probe.home?.coinToday} · 띠 ${probe.home?.coinBand}`),
+      ];
+    },
+  },
+  {
+    id: "economy-corrupt", tags: ["smoke", "poke", "data"], what: "포켓코인 원장에 못 읽는 줄 → 사본(backup/corrupt) 뒤 읽은 줄로 다시 쓰고, 다른 지갑 캐시는 원장으로 다시 만듦 (#72, POL-DATA-05)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    setup: (box) => putEcon(box, { "ledger.jsonl": JSON.stringify({ day: "2026-10-01", kind: "start", n: 50, amount: 100 }) + "\n{\"day\":\"2026-10-0\n", "wallet.json": { balance: 999 } }),
+    steps: [{ until: "tabs.0" }, { wait: 800 }, { invoke: "economy_state", log: true }],
+    check: ({ log, box }) => {
+      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      const corrupt = path.join(box.data, "backup", "corrupt");
+      const copies = fs.existsSync(corrupt) ? fs.readdirSync(corrupt).filter((f) => f.startsWith("ledger.jsonl.")) : [];
+      let wallet = null; try { wallet = JSON.parse(fs.readFileSync(econ(box, "wallet.json"), "utf8")); } catch {}
+      return [
+        ok(st.balance === 100 && st.start === null, `잔액 ${JSON.stringify(st)} (읽은 줄 ₽100, 시작 코인을 다시 주지 않음)`),
+        ok(copies.length === 1, `깨진 원장 사본 ${copies.length}개`),
+        ok(ledgerRows(box)?.length === 1 && wallet?.balance === 100, `다시 쓴 원장 ${JSON.stringify(ledgerRows(box))} · 지갑 ${JSON.stringify(wallet)}`),
+      ];
+    },
   },
   // ── 🏠 홈 · 포획 기록 (#44) ──
   {
@@ -843,6 +920,7 @@ sleep 40
       const labels = (m) => (m?.items || []).map((i) => i.label || "—");
       return [
         ok(t.length === 4 && t.every((x) => x.shown === false), `시험 앱은 메뉴바 아이콘을 안 띄워야 ${JSON.stringify(t.map((x) => x.shown))}`),
+        ok(labels(idle).includes("🪙 포켓코인 ₽54 · 오늘 +0") && !/₽/.test(idle?.title || ""), `코인 한 줄(시작 코인 27 × 2)이 메뉴에, 아이콘 글자엔 없음 ${JSON.stringify(labels(idle).filter((l) => /₽/.test(l)))}`),
         ok(idle?.title === "" && labels(idle).filter((l) => / — /.test(l)).length === 2, `처음: 글자 없음, 탭 줄 2개 ${JSON.stringify(idle?.title)} ${JSON.stringify(labels(idle).slice(0, 3))}`),
         ok(waiting?.title === "1" && /^❗ /.test(labels(waiting)[0]), `입력 필요 1개면 "1"·첫 줄 ❗ ${JSON.stringify(waiting?.title)} ${labels(waiting)[0]}`),
         ok(limit?.title === "42%" && labels(limit).some((l) => /Claude Code\s+5시간 42%.*주간 18%/.test(l)) && !labels(limit).some((l) => /Codex|77/.test(l)), `한도 글자 42%·Claude 줄, 지난 Codex·모르는 에이전트는 없음 ${JSON.stringify(limit?.title)} ${JSON.stringify(labels(limit).filter((l) => /%/.test(l)))}`),

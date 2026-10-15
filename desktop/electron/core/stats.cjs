@@ -29,4 +29,7 @@ function summary(now = new Date()) {
   return { today: n(0), streak, week };
 }
 
-module.exports = { recordDone, summary, dayOf };
+// every finish still on record (the last 120 days) — the 시작 코인 (#72)
+const total = () => Object.values(readJson(FILE, {}).days || {}).reduce((s, n) => s + (Number.isInteger(n) ? n : 0), 0);
+
+module.exports = { recordDone, summary, dayOf, total };

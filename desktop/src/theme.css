@@ -29,5 +29,6 @@
   --pk-hover: rgba(70, 140, 60, .12); --pk-sel: rgba(70, 140, 60, .2); --pk-chip: rgba(70, 140, 60, .08);
   --pk-card: rgba(255, 255, 255, .55); --pk-field: rgba(255, 255, 255, .7);
   --pk-new: #a87800; --pk-new-soft: rgba(168, 120, 0, .12);
+  --pk-coin: #845b00; --pk-coin-soft: rgba(132, 91, 0, .1); --pk-coin-line: #c9a227;
   color-scheme: light;
 }

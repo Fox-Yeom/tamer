@@ -55,14 +55,18 @@ function recordDex(sprite, caught = true) {
 }
 const recordSeen = (sprite) => recordDex(sprite, false);
 
-// caught one: count stays (it was counted when seen)
+// caught one: count stays (it was counted when seen). true = the first of its species ever caught
+// (seen before, never caught) — 🪙 +₽30 (#72)
 function recordCaught(sprite) {
+  let fresh = false;
   updateJson(DEX, (t) => {
     const e = t[sprite.id];
     if (!e) return;
+    fresh = e.caught === false;
     delete e.caught;
     if (sprite.shiny) e.shiny = true;
   });
+  return fresh;
 }
 
 // ── the box ─────────────────────────────────────────────────────────────────
@@ -249,12 +253,12 @@ function take(cwd, { starter: starterId, uid }) {
 }
 
 // a wild one caught: a new individual, resting in the box — marked new until you look at it in
-// the Pokédex (#10)
+// the Pokédex (#10). true = a species never caught before (#72)
 function addCaught(sprite) {
   migrate();
   // the catch log (#44): the folder it showed up in and whose task it was (from now on; older ones have none)
   updateBox((b) => { Object.assign(addMon(b, sprite, "wild"), { new: true, ...(sprite.caughtIn ? { caught_in: sprite.caughtIn } : {}), ...(sprite.caughtBy ? { caught_by: sprite.caughtBy } : {}) }); });
-  recordCaught(sprite);
+  return recordCaught(sprite);
 }
 
 // the Pokédex showed this species: its new individuals aren't new any more

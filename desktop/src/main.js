@@ -1075,6 +1075,16 @@ async function showPartner(tab, pk) {
   showProgress(tab, pk);
 }
 
+// "+5₽" rising by the partner for 1.2 s (pk-float, #72) — never in UI scenes (same picture every run)
+function coinFloat(tab, n) {
+  const stage = $(".pane-avatar .stage", tab.view);
+  if (!stage || document.body.classList.contains("ui-test")) return;
+  const f = document.createElement("span");
+  f.className = "pk-float";
+  f.textContent = `+${n}₽`;
+  stage.append(f);
+  setTimeout(() => f.remove(), 1300);
+}
 function showProgress(tab, p) {
   if (p.pinned != null) tab.pinned = p.pinned;
   $(".poke-exp", tab.view).textContent = `EXP ${p.xp ?? 0}${p.toEvolve != null ? ` · 진화까지 ${p.toEvolve}` : " · 최종 진화"}`;
@@ -1122,7 +1132,7 @@ async function evolve(tab, from, to) {
   await showPartner(tab, to);
   pokeClass(tab);
   burst(tab, "✨", 10);
-  toast(`축하합니다! ${from?.name ?? ""}는 ${to.name}(으)로 진화했다!`);
+  toast(`축하합니다! ${from?.name ?? ""}는 ${to.name}(으)로 진화했다!${to.coins ? ` 🪙 +₽${to.coins}` : ""}`); // #72
 }
 
 // ── choosing a partner (#29: a view of the Pokémon window — 🌟 파트너 고르기; box rules in
@@ -1549,6 +1559,7 @@ async function openDex(sel, view, chooseOpts) {
   const ri = sel ? d.recent?.findIndex((m) => m.id === sel) ?? -1 : d.recent?.findIndex((m) => m.new) ?? -1;
   dexState = { ...d, byNo, opts, chooseOpts, view: "dex", zone: ri >= 0 ? "recent" : "grid", ri: Math.max(0, ri),
     sel: sel || d.recent?.[ri]?.id || active?.partner?.id || d.entries[0]?.id || 1 };
+  coins = await invoke("economy_state").catch(() => coins);
   dexTitle();
   $("#dex-regions").innerHTML = (d.recent?.length ? `<button data-a="new" class="new-tab">🆕 새로 잡은 <span class="dim">${d.recent.length}</span></button>` : "")
     + REGIONS.map(([name, a, b]) => {
@@ -1732,6 +1743,11 @@ function dexSearchKey(e) {
   return false; // typing: the box gets it
 }
 
+// 🪙 포켓코인 (#72, PKM-18): the balance as the main process last told (economy_state / "economy")
+let coins = null, coinsShown = null;
+const won = (n) => Number(n || 0).toLocaleString("en-US");
+// the pk-coin chip, left of ✕ on every tab — opens 🏠 홈 (🛒 상점 from E3)
+const coinChip = () => (coins ? `<button class="pk-coin" data-view="home" title="포켓코인 — 작업을 끝낼 때마다 쌓여요">🪙 ₽${won(coins.balance)}</button>` : "");
 function dexTitle() {
   const d = dexState;
   const owned = d.entries.reduce((n, e) => n + (e.owned || 0), 0);
@@ -1742,9 +1758,13 @@ function dexTitle() {
   $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button>${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
     + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button></span>`
     + (view === "choose" && tab ? `<span class="pk-sub">${esc(base(tab.cwd))}의 파트너 — ${cur ? `지금 ${cur.shiny ? "✨" : ""}${esc(cur.name)} · EXP ${cur.xp}` : "아직 없어요"}</span>`
-      + '<button class="pk-close" title="닫기 (Esc)">✕</button>' : `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
+      + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>' : `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
     + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`
-    + (fresh ? `<span class="chip new">NEW ${fresh}</span>` : "") + '<button class="pk-close" title="닫기 (Esc)">✕</button>');
+    + (fresh ? `<span class="chip new">NEW ${fresh}</span>` : "") + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>');
+  // the number changed while the window was open: bold for a moment
+  const chip = $("#dex-title .pk-coin");
+  if (chip && coinsShown != null && coins.balance !== coinsShown) { chip.classList.add("bump"); setTimeout(() => chip.classList.remove("bump"), 400); }
+  if (coins) coinsShown = coins.balance;
 }
 
 // ── "내 포켓몬" (#27): every individual you have — in the box or a folder's partner — as cards,
@@ -1805,9 +1825,14 @@ async function dexView(v) {
 const HOME_AGENTS = [["claude", "✻ Claude Code"], ["codex", "◎ Codex"]];
 async function homeRender() {
   const d = dexState;
-  const [st, box] = await Promise.all([invoke("home_state").catch(() => null), d.box ? d.box : invoke("box_list", { ws: active?.id }).catch(() => [])]);
+  const [st, box, c] = await Promise.all([invoke("home_state").catch(() => null), d.box ? d.box : invoke("box_list", { ws: active?.id }).catch(() => []), invoke("economy_state").catch(() => coins)]);
   if (dexState !== d || d.view !== "home") return;
   d.box = box;
+  if (c) { coins = c; dexTitle(); }
+  // 🪙 today's coins (bonuses too) and how much of the day's ₽300 for finishes is left (#72)
+  const coinBox = coins ? `<div class="pk-coins"><b>₽${won(coins.today.earned)}</b><span>오늘 번 코인 · ${coins.today.capLeft > 0 ? `상한까지 ₽${won(coins.today.capLeft)}` : "오늘 상한 · 보너스만"}</span></div>` : "";
+  // the 시작 코인, once — until ✕ (#72, SCREENS_P3 S2)
+  const band = coins?.start ? `<div class="pk-band"><span>🪙 포켓코인이 생겼어요 — 지난 완료 ${won(coins.start.n)}번으로 <b>₽${won(coins.start.amount)}</b> 받았어요 · 작업을 끝낼 때마다 쌓여요</span><button class="pk-band-x" title="닫기" aria-label="안내 닫기">✕</button></div>` : "";
   const mine = box.find((m) => m.folder === "here");
   const max = Math.max(1, ...(st?.week || []).map((x) => x.n));
   const wd = ["일", "월", "화", "수", "목", "금", "토"];
@@ -1820,8 +1845,8 @@ async function homeRender() {
     return `<div class="pk-meter ${lv}"><b>${label}</b><span class="pk-bar"><i style="width:${p}%"></i></span><span>${p}% 남음</span><span class="dim">${untilReset(w.resets_at).replace(/^\s*↻/, "") ? `${untilReset(w.resets_at).replace(/^\s*↻/, "")} 뒤 회복` : ""}</span></div>`;
   };
   const agentsHtml = HOME_AGENTS.map(([k, name]) => { const l = lastUsage(k); return (l.five_hour || l.seven_day) ? `<div class="pk-agent"><h5>${name}${l.model ? ` <span class="dim">${esc(l.model)}</span>` : ""}</h5>${meter("5시간", l.five_hour)}${meter("주간", l.seven_day)}</div>` : ""; }).join("");
-  $("#box-grid").innerHTML = `<div class="pk-home">
-    <section class="pk-today"><div><b>${st?.today ?? 0}</b><span>오늘 끝낸 작업</span></div><div><b>${st?.streak ? `🔥 ${st.streak}` : "0"}</b><span>일 연속</span></div>
+  $("#box-grid").innerHTML = `<div class="pk-home">${band}
+    <section class="pk-today"><div><b>${st?.today ?? 0}</b><span>오늘 끝낸 작업</span></div><div><b>${st?.streak ? `🔥 ${st.streak}` : "0"}</b><span>일 연속</span></div>${coinBox}
       <div class="pk-week" title="최근 7일 끝낸 작업">${week}</div></section>
     <section><h4 class="pk-group">사용 한도<span class="dim">남은 비율 · 마지막으로 알려 준 값</span></h4>${agentsHtml || '<p class="pk-note">아직 한도 정보가 없어요 — Claude Code나 Codex가 한 번 응답하면 보여요</p>'}</section>
   </div>`;
@@ -2194,7 +2219,10 @@ $("#dex-title").addEventListener("click", (e) => {
   const b = e.target.closest("button[data-view]");
   if (b) dexView(b.dataset.view);
 });
-$("#box-grid").addEventListener("click", (e) => { const c = e.target.closest(".pk-card[data-i]"); if (c && Number(c.dataset.i) >= 0) boxSelect(Number(c.dataset.i)); });
+$("#box-grid").addEventListener("click", async (e) => {
+  if (e.target.closest(".pk-band-x")) { coins = await invoke("economy_start_seen").catch(() => coins); return homeRender(); } // 시작 코인 band: once (#72)
+  const c = e.target.closest(".pk-card[data-i]"); if (c && Number(c.dataset.i) >= 0) boxSelect(Number(c.dataset.i));
+});
 $("#box-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".pk-card[data-i]")) boxTake(); });
 $("#dex").addEventListener("mousedown", (e) => { if (e.target === $("#dex")) dexEsc(); }); // outside the window
 $("#dex-from").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) dexFrom(Number(b.dataset.i)); });
@@ -2539,8 +2567,15 @@ listen("partner-today", async () => { if (chooseOpen() && chooseFor) renderChoos
 listen("partner-progress", (e) => {
   const t = byId.get(e.payload.ws);
   if (!t) return;
-  if (e.payload.evolved) evolve(t, e.payload.from, { ...e.payload.evolved, xp: e.payload.xp, toEvolve: e.payload.toEvolve, pinned: e.payload.pinned });
+  if (e.payload.evolved) evolve(t, e.payload.from, { ...e.payload.evolved, xp: e.payload.xp, toEvolve: e.payload.toEvolve, pinned: e.payload.pinned, coins: e.payload.coins });
   else showProgress(t, e.payload);
+});
+// 🪙 포켓코인 changed (#72): the chip and Home follow; a finish shows "+5₽" by that tab's partner
+listen("economy", (e) => {
+  const { ws, gained, ...c } = e.payload;
+  coins = c;
+  if (ws && gained) { const t = byId.get(ws); if (t) coinFloat(t, gained); }
+  if (dexOpen() && dexState) { dexTitle(); if (dexState.view === "home") homeRender(); }
 });
 listen("open-folder", (e) => openFolder(e.payload.cwd));
 listen("toast", (e) => toast(e.payload.text, e.payload.ms || 1800)); // from the main process (a shell environment that couldn't be read …)
@@ -2862,6 +2897,9 @@ function labState() {
     hintFits: (() => { const h = $("#hint"); return h.scrollHeight <= h.clientHeight + 1; })(),
     preview: dexOpen() ? $("#dex-meta")?.textContent || null : null,
     pokeTab: dexOpen() ? $("#dex .pk-tabs button.on")?.dataset.view || null : null,
+    coin: dexOpen() ? $("#dex-title .pk-coin")?.textContent || null : null, // 🪙 (#72)
+    coinToday: dexOpen() ? $("#box-grid .pk-coins")?.textContent || null : null,
+    coinBand: dexOpen() ? $("#box-grid .pk-band")?.textContent || null : null,
     pokeFits: dexOpen() ? (() => { const r = $("#dex .pk-window")?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() : null,
   };
 }
@@ -3003,7 +3041,11 @@ async function uiScenes(set) {
       // 🏠 홈 (#44): partner, today, limits — the limits as Claude last reported them (the top bar untouched)
       const soon = Math.floor(Date.now() / 1000);
       rememberUsage("claude", { model: "Opus 5.5", five_hour: { pct: 35, resets_at: soon + 5430 }, seven_day: { pct: 86, resets_at: soon + 3 * 86400 + 7200 } });
-      await dexView("home"); await shot("home");
+      // 🪙 (#72): six finishes today (₽30 + the day's first ₽20 = ₽50, ₽270 left of ₽300), the 시작 코인 band, then closed
+      await invoke("economy_earn_test", { n: 6 });
+      await dexView("home"); await shot("home-start-coins");
+      $("#box-grid .pk-band-x")?.click(); await wait(400);
+      await shot("home");
       await dexView("box"); await shot("box-cards");
       await search("age0"); await shot("box-search");
       await search("zzz"); await shot("box-empty");
