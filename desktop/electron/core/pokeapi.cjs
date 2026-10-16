@@ -3,6 +3,8 @@
 // conversion: the desktop app shows the original animated GIF.
 //   $CVIM_CACHE_DIR/pokemon/<id>[s].json  { id, shiny, name_ko, name_en, legendary, capture_rate, types }
 //   $CVIM_CACHE_DIR/pokemon/<id>[s].gif   Gen-V animated sprite
+//   $CVIM_CACHE_DIR/pokemon/<id>.evo.json { id, reach, next: [{ to, kind, level?, item? }] } — how this
+//                                         form is reached and how it evolves (levels, #74, PKM-21)
 // Pokémon assets are fetched at runtime and cached locally only (unofficial fan feature, POLICY 4.1).
 const fs = require("node:fs");
 const path = require("node:path");
@@ -47,6 +49,38 @@ async function nextEvolution(id) {
   const find = (n) => (sid(n) === id ? n : n.evolves_to.map(find).find(Boolean) || null);
   const options = (find(chain)?.evolves_to || []).map(sid).filter((x) => x <= MAX_GEN5);
   return options.length ? options[Math.floor(rng() * options.length)] : null;
+}
+
+// how an evolution happens, from PokéAPI's evolution_details (PKM-21 rule 3): a level, an item
+// (stone), a trade, friendship — anything else (a move, a place, the time …) is "other" (Lv 30)
+function kindOf(details = []) {
+  const d = details.find((x) => x.min_level) || details[0];
+  if (!d) return { kind: "other" };
+  const t = d.trigger?.name;
+  if (t === "level-up") {
+    if (d.min_level) return { kind: "level", level: d.min_level };
+    if (d.min_happiness || d.min_affection) return { kind: "friend" };
+    return { kind: "other" };
+  }
+  if (t === "use-item") return { kind: "stone", item: d.item?.name || null };
+  if (t === "trade") return { kind: "trade" };
+  return { kind: "other" };
+}
+// the species' place in its chain: how it is reached (null = a first form) and its next stages
+// (only ones with Gen-V sprites) → cached as <id>.evo.json
+async function evoFacts(id) {
+  const sp = await get(SPECIES(id));
+  const chain = (await get(sp.evolution_chain.url)).chain;
+  const sid = (n) => Number(n.species.url.replace(/\/$/, "").split("/").pop());
+  const find = (n, parent = null) => (sid(n) === id ? { n, parent } : n.evolves_to.map((c) => find(c, n)).find(Boolean) || null);
+  const at = find(chain);
+  if (!at) throw new Error(`#${id} not in its chain`);
+  const facts = { id, reach: at.parent ? kindOf(at.n.evolution_details) : null,
+    next: at.n.evolves_to.filter((c) => sid(c) <= MAX_GEN5).map((c) => ({ to: sid(c), ...kindOf(c.evolution_details) })) };
+  mkdirPrivate(SPRITES);
+  const file = path.join(SPRITES, `${id}.evo.json`);
+  writeJson(file, facts);
+  return file;
 }
 
 // legendary / mythical (or very hard to catch) are re-rolled most of the time
@@ -103,12 +137,13 @@ async function fetchOne(id, shiny, info = null) {
 const shinyRoll = () => Math.floor(rng() * SHINY_ODDS) === 0;
 
 // the commands (v1 fetch.py's command line): ["random"] ["wild"] ["starter", …types] ["<id>", "shiny"?]
-// ["evolve", "<id>"] → a JSON path / the next id as text / "none" (it has no next stage) / "" (offline,
+// ["evolve", "<id>"] ["evo", "<id>"] (cached evolution facts) → a JSON path / the next id as text / "none" (it has no next stage) / "" (offline,
 // failed — not the same as "none": an offline evolution must not mark it final, PKM-04)
 async function run(args) {
   try {
     const [a = "random", ...rest] = args.map(String);
     if (a === "evolve") return String((await nextEvolution(Number(rest[0]))) ?? "none");
+    if (a === "evo") { const f = path.join(SPRITES, `${Number(rest[0])}.evo.json`); return fs.existsSync(f) ? f : await evoFacts(Number(rest[0])); }
     if (a === "starter") { const [id, info] = await pickStarter(rest); return await fetchOne(id, shinyRoll(), info); }
     if (a === "random" || a === "wild") { const [id, info] = await (a === "random" ? pickRandom() : pickWild()); return await fetchOne(id, shinyRoll(), info); }
     return await fetchOne(Number(a), rest[0] === "shiny");

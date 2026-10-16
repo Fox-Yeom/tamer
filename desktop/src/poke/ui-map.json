@@ -169,8 +169,24 @@
         "main"
       ]
     },
+    "pk-mile": {
+      "what": "10레벨 이정표 말풍선 \"Lv 30! 🪙 +₽20\" — 메인 창 파트너 위 2초 (#74, PKM-21 규칙 7, SCREENS_P3 S8)",
+      "files": [
+        "src/poke/poke.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".pk-mile"
+      ],
+      "functions": [
+        "mileBubble"
+      ],
+      "screens": [
+        "main"
+      ]
+    },
     "pk-card": {
-      "what": "포켓몬 카드 (이름·EXP·진화까지·위치·NEW·✨·번호 키)",
+      "what": "포켓몬 카드 (이름·레벨 줄(Lv · 진화 Lv/친밀도/교환/졸업까지 — #74)·위치·NEW·✨·번호 키)",
       "files": [
         "src/poke/card.js",
         "src/poke/poke.css"
@@ -182,7 +198,8 @@
       "functions": [
         "pkCard",
         "boxRender",
-        "chooseItems"
+        "chooseItems",
+        "lvLine"
       ],
       "screens": [
         "choose",

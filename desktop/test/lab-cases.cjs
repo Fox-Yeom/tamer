@@ -19,15 +19,15 @@ const path = require("node:path");
 const filesWith = (dir, needle) => { const out = []; if (!fs.existsSync(dir)) return out; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else { try { if (fs.readFileSync(f, "utf8").includes(needle)) out.push(path.relative(dir, f)); } catch {} } } }; walk(dir); return out; };
 // #45: a stand-in Claude for the shell (prints its arguments, feeds a status line through Tamer's script)
 const FAKE_CLAUDE = "#!/bin/sh\n# a stand-in Claude: says what it was started with, then — like the real one, which redraws its status line all the time — reports a status line through Tamer's script every second\necho \"fake-claude args: $*\"\nfor i in $(seq 30); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":12}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $((now+3600)) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n";
-// a partner one task away from evolving (Charmander, EXP 7 of 8) in the case's "proj" folder (PKM-04)
-function evolvePartner(box) {
+// a partner one task away from evolving (Charmander Lv 15, evolves at 16 — #74) in the case's "proj" folder (PKM-04, PKM-21)
+function evolvePartner(box, extra = {}) {
   const C = box.data, proj = box.folder("proj"), now = Math.floor(Date.now() / 1000);
   const b = JSON.parse(fs.readFileSync(path.join(C, "box.json"), "utf8"));
-  b.mons.push({ uid: 99, id: 4, shiny: false, xp: 7, since_evo: 7, how: "starter", at: now - 3600, folder: proj });
+  b.mons.push({ uid: 99, id: 4, shiny: false, xp: 7, since_evo: 7, lv: 15, mile: 10, friend: 0, last_folder: proj, how: "starter", at: now - 3600, folder: proj, ...extra });
   b.mons = b.mons.map((m) => (m.uid === 99 ? { ...m, uid: 1 } : m.uid === 1 ? { ...m, uid: 98 } : m));
   fs.writeFileSync(path.join(C, "box.json"), JSON.stringify(b));
   const f = JSON.parse(fs.readFileSync(path.join(C, "folders.json"), "utf8"));
-  f[proj] = { id: 4, uid: 1, pinned: true };
+  f[proj] = { id: extra.id ?? 4, uid: 1, pinned: true }; // the mirror's species (else the Neovim-CVIM reconcile takes it back)
   fs.writeFileSync(path.join(C, "folders.json"), JSON.stringify(f));
 }
 // a scratch git repository (never the user's git config: no global/system config, so no hooks)
@@ -46,6 +46,14 @@ function contrast(css) {
 }
 const envMs = (log) => { const m = log.match(/env ready .*?\+(\d+)ms/); return m ? Number(m[1]) : null; };
 
+// 🆙 levels (#74): a species the seed doesn't have, without the network — its card data, how it
+// evolves and a borrowed picture (Charmander's), in the sandbox's cache
+function fakeSpecies(box, id, name, evo) {
+  const P = path.join(box.data, "pokemon");
+  fs.writeFileSync(path.join(P, `${id}.json`), JSON.stringify({ id, shiny: false, name_ko: name, name_en: name, legendary: false, capture_rate: 45, types: ["normal"] }));
+  fs.copyFileSync(path.join(P, "4.gif"), path.join(P, `${id}.gif`));
+  if (evo) fs.writeFileSync(path.join(P, `${id}.evo.json`), JSON.stringify({ id, ...evo }));
+}
 // 🪙 포켓코인 (#72): today as the app counts it (this Mac's midnight), the economy files of a sandbox
 const todayLocal = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
 const econ = (box, f) => path.join(box.data, "economy", f);
@@ -318,6 +326,59 @@ module.exports = [
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
       { text: "env | sort > env.txt" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { probe: "done" }],
     check: ({ box }) => [ok(fs.existsSync(path.join(box.folder("proj"), "env.txt")), "env.txt가 안 생김")],
+  },
+  // ── 🆙 레벨 E2 (#74, PKM-21) ──
+  {
+    id: "levels-migrate", tags: ["smoke", "poke", "data"], what: "EXP → 레벨 이전(한 번): Lv = 5 + 2 × EXP, 그 모습이 되는 레벨(돌·친밀도 = 30)보다 낮으면 그 레벨 — 지난 이정표엔 ₽ 없음, 이전 전 box.json 사본 (#74)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { wait: 800 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true }],
+    check: ({ log, box }) => {
+      const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]");
+      const lv = Object.fromEntries(list.map((m) => [m.uid, m.lv]));
+      const backups = fs.readdirSync(path.join(box.data, "backup")).filter((d) => d.startsWith("box-levels-"));
+      const copy = backups[0] && JSON.parse(fs.readFileSync(path.join(box.data, "backup", backups[0], "box.json"), "utf8"));
+      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      return [
+        ok(JSON.stringify(lv) === JSON.stringify({ 1: 30, 2: 5, 3: 11, 4: 5, 5: 5, 6: 30 }), `레벨 ${JSON.stringify(lv)} (샤미드 EXP 12 → 29지만 돌 진화형이라 30 · 식스테일 5 · 코산호 EXP 3 → 11 · 브이젤·깝질무 5 · 피카츄 EXP 7 → 19지만 친밀도 진화형이라 30)`),
+        ok(backups.length === 1 && copy?.mons?.every((m) => m.lv == null && m.xp != null), `이전 전 사본 ${backups.join()}`),
+        ok(st.balance === 54, `잔액 ${st.balance} (시작 코인 54뿐 — 이전된 레벨의 이정표는 ₽ 없음)`),
+        ok(list.find((m) => m.uid === 3)?.final === true && list.find((m) => m.uid === 2)?.next?.level === 30, `코산호 최종(5세대까지 진화 없음) ${list.find((m) => m.uid === 3)?.final} · 식스테일 다음 ${JSON.stringify(list.find((m) => m.uid === 2)?.next)} (불꽃의 돌 → 돌 전엔 Lv 30)`),
+      ];
+    },
+  },
+  {
+    id: "evolve-trade", tags: ["smoke", "poke"], what: "교환 진화: 다른 폴더에서 옮겨 온 근육몬은 그 폴더의 첫 완료에 괴력몬으로 — 레벨은 그대로 (#74, PKM-21 규칙 3)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      fakeSpecies(box, 67, "근육몬", { reach: { kind: "level", level: 28 }, next: [{ to: 68, kind: "trade" }] });
+      fakeSpecies(box, 68, "괴력몬", { reach: { kind: "trade" }, next: [] });
+      evolvePartner(box, { id: 67, lv: 28, mile: 20, traded: true });
+    },
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, ...DONE("$ws"), { wait: 1500 }, ...DONE("$ws"), { wait: 1000 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
+    check: ({ log }) => {
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+      return [
+        ok(m?.id === 68 && m.evo?.length === 1 && m.lv === 31 && m.final, `파트너 ${JSON.stringify(m && { id: m.id, lv: m.lv, evo: m.evo?.length, final: m.final })} (괴력몬, Lv 28 + 2 + 1, 최종)`),
+        ok(/^exp ws=.* evolved=68 /m.test(log), "진화 기록 없음"),
+      ];
+    },
+  },
+  {
+    id: "evolve-friend", tags: ["smoke", "poke"], what: "친밀도 진화: 함께한 완료 20번째에 피츄 → 피카츄, 그 전엔 \"친밀도 19/20\" (#74, PKM-21 규칙 3)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      fakeSpecies(box, 172, "피츄", { reach: null, next: [{ to: 25, kind: "friend" }] });
+      evolvePartner(box, { id: 172, lv: 9, mile: 0, friend: 18 });
+    },
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, ...DONE("$ws"), { wait: 800 }, { probe: "before" }, ...DONE("$ws"), { wait: 1500 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
+    check: ({ probe, log }) => {
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+      return [
+        ok(probe.before?.pokeExp === "Lv 11 · 친밀도 19/20", `한 번 전 ${probe.before?.pokeExp}`),
+        ok(m?.id === 25 && m.lv === 13, `파트너 ${JSON.stringify(m && { id: m.id, lv: m.lv })} (피카츄 Lv 13)`),
+        ok(/^exp ws=.* miles=10 /m.test(log), `Lv 10 이정표 ${log.match(/^exp ws=[^\n]*/m)?.[0]}`),
+      ];
+    },
   },
   // ── 🪙 포켓코인 E1 (#72, PKM-18, POL-FUT-01) ──
   {
@@ -658,7 +719,7 @@ sleep 30
       { key: "3" }, { wait: 150 }, { probe: "cute" }, { wait: 1200 },
       { click: "main.grid:not([hidden]) .pane-avatar", button: "right" }, { wait: 300 }, { key: "2" }, { wait: 150 }, { probe: "attack" }],
     check: ({ probe }) => [
-      ok(probe.start?.pokeExp === "EXP 7 · 진화까지 1", `EXP 줄 ${probe.start?.pokeExp}`),
+      ok(probe.start?.pokeExp === "Lv 15 · 진화 Lv 16", `레벨 줄 ${probe.start?.pokeExp}`),
       ok((probe.clicked?.fx || []).length >= 5 && ["💕", "🔥"].includes(probe.clicked?.fx?.[0]), `클릭 반응 ${JSON.stringify(probe.clicked?.fx)} (애교 💕 또는 불꽃 타입 공격 🔥)`),
       ok(["1🔄파트너 바꾸기", "2⚔️공격", "3💕애교", "4📕도감", "5🌿야생 포켓몬"].every((w, i) => (probe.menu?.menuItems?.[i] || "").startsWith(w)) && probe.menu.menuItems.length === 5, `메뉴 ${JSON.stringify(probe.menu?.menuItems)}`),
       ok(probe.cute?.fx?.length === 5 && probe.cute.fx.every((g) => g === "💕") && probe.cute?.menu === false, `3(애교) ${JSON.stringify(probe.cute?.fx)} 메뉴 닫힘 ${probe.cute?.menu === false}`),
@@ -1014,9 +1075,9 @@ sleep 40
   },
   // ── test debt, group A (docs/spec: PKM-04, APP-04, AGT-15, PKM-16) and the hook log (STA-02, POL-DATA-02) ──
   {
-    id: "evolve-offline", tags: ["smoke", "poke"], what: "진화 차례에 오프라인: 최종 진화로 굳지 않고 EXP는 그대로 — 다음에 다시 시도 (PKM-04)",
+    id: "evolve-offline", tags: ["smoke", "poke"], what: "진화 차례에 오프라인: 최종 진화로 굳지 않고 레벨은 그대로 — 다음에 다시 시도, Lv 20 이정표는 ₽20 (PKM-04, PKM-21, #74)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
-    setup: (box) => evolvePartner(box),
+    setup: (box) => evolvePartner(box, { lv: 19 }),
     steps: [{ until: "partner", timeout: 10000 }, { wait: 500 },
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } },
       { wait: 2500 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
@@ -1024,9 +1085,10 @@ sleep 40
       const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
       const raw = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8")).mons.find((x) => x.uid === 1);
       return [
-        ok(m?.id === 4 && m.xp === 8, `파트너 ${JSON.stringify(m && { id: m.id, xp: m.xp })} (파이리 EXP 8이어야)`),
+        ok(m?.id === 4 && m.lv === 21 && m.xp === 8, `파트너 ${JSON.stringify(m && { id: m.id, lv: m.lv, xp: m.xp })} (파이리 Lv 19 + 2 = 21이어야)`),
         ok(!raw?.final, "오프라인인데 최종 진화로 굳음 — 다시는 진화하지 않게 됨"),
-        ok(m?.toEvolve === 0, `진화까지 ${m?.toEvolve} (다음 완료 때 다시 시도 = 0)`),
+        ok(m?.next?.kind === "level" && m.next.level === 16, `다음 진화 ${JSON.stringify(m?.next)} (Lv 16 레벨 진화 — 다음 완료 때 다시 시도)`),
+        ok(/^exp ws=.* miles=20 /m.test(log) && raw?.mile === 20, `Lv 20 이정표 ${log.match(/^exp ws=[^\n]*/m)?.[0]} mile=${raw?.mile}`),
       ];
     },
   },

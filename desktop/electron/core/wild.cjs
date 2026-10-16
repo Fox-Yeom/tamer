@@ -34,13 +34,14 @@ const view = (c) => c && {
 // encounter shows up the moment a task finishes
 function prefetch() {
   const nx = state().next;
-  if (nx && partner.loadSprite(nx.id, nx.shiny)?.gif) return Promise.resolve(nx);
+  if (nx && partner.loadSprite(nx.id, nx.shiny)?.gif) { partner.fetchEvo(nx.id); return Promise.resolve(nx); } // its level when caught (#74)
   if (!prefetching) {
     prefetching = partner.fetchPy(["wild"]).then((p) => {
       const data = p && readJson(p, null);
       if (!data) return null;
       const next = { id: data.id, shiny: !!data.shiny };
       updateJson(FILE, (t) => { t.next = next; });
+      partner.fetchEvo(next.id); // a caught evolved form starts at the level it is reached at (#74, PKM-21 rule 1)
       return next;
     }).finally(() => { prefetching = null; });
   }
@@ -81,9 +82,10 @@ function onDone(ws, { empty = false, folder = null, agent = null } = {}) {
 // Catch odds, games' formula (Gen III–VI): a = catchRate × ball × (3·maxHP − 2·HP) / (3·maxHP),
 // with the wild one at half HP (your partner fought it: factor 2/3). Four shake checks, each
 // passing with (a/255)^(3/16); all four = caught. E.g. catch rate 45 (starters) ≈ 20 % a throw,
-// 255 (Caterpie) ≈ 74 %, 3 (legendaries) ≈ 3 %.
-function catchOdds(captureRate) {
-  const a = Math.max(1, Math.floor(captureRate * BALL * 2 / 3));
+// 255 (Caterpie) ≈ 74 %, 3 (legendaries) ≈ 3 %. The folder's partner helps: a × (1 + 0.3 × Lv/100)
+// — ×1.3 at Lv 100 (#74, PKM-21 rule 6)
+function catchOdds(captureRate, partnerLv = 0) {
+  const a = Math.max(1, Math.floor(captureRate * BALL * 2 / 3 * (1 + 0.3 * Math.min(100, partnerLv) / 100)));
   return a >= 255 ? 1 : Math.pow(a / 255, 3 / 16);
 }
 
@@ -93,7 +95,7 @@ function throwBall(token) {
   if (!c || c.token !== token) return { result: "gone", shakes: 0 };
   if (c.busy) return { result: "busy", shakes: 0 };
   c.throws++;
-  const p = catchOdds(c.captureRate);
+  const p = catchOdds(c.captureRate, partner.levelAt(c.caughtIn));
   let checks = 0;
   while (checks < 4 && rng() < p) checks++;
   const shakes = Math.min(3, checks);

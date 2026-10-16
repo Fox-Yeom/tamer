@@ -515,11 +515,13 @@ function onCoreEvent(msg) {
     if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ws=${ws.id}`); broadcast("wild", w); overlayUpdate(); }
     // a finished task: EXP for the folder's partner, maybe an evolution
     const t0 = Date.now();
-    partner.onDone(ws.cwd).then(({ evolved, from }) => {
-      logLine(`exp ws=${ws.id} ${JSON.stringify(partner.progress(ws.cwd))} evolved=${evolved?.id ?? "-"} ${Date.now() - t0}ms`);
+    partner.onDone(ws.cwd).then(({ evolved, from, miles = [] }) => {
+      logLine(`exp ws=${ws.id} ${JSON.stringify(partner.progress(ws.cwd))} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"} ${Date.now() - t0}ms`);
       const coins = evolved ? economy.onEvolve() : 0; // 🪙 +₽30 (#72)
-      if (evolved) { ws.partner = { ...evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); send("economy", economy.summary()); }
-      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins });
+      const mileCoins = miles.reduce((s) => s + economy.onMilestone(), 0); // every 10 levels ₽20 (#74)
+      if (evolved) { ws.partner = { ...evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); }
+      if (evolved || mileCoins) send("economy", economy.summary());
+      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins, mile: miles.at(-1) || null, mileCoins });
     }).catch((e) => logLine(`exp error ${e}`));
   }
 }

@@ -155,3 +155,6 @@
 #dex .pk-band-x:hover { color: var(--pk-fg); }
 .pk-float { position: absolute; right: 8px; top: 6px; font-size: 13px; font-weight: 800; color: var(--pk-coin); pointer-events: none; animation: pk-float 1.2s ease-out forwards; }
 @keyframes pk-float { from { opacity: 1; transform: translateY(0); } to { opacity: 0; transform: translateY(-14px); } }
+.pk-mile { position: absolute; left: 50%; top: 4px; transform: translateX(-50%); white-space: nowrap; border-radius: 12px; padding: 3px 10px; font-size: 12px; font-weight: 800;
+  color: var(--pk-fg); background: var(--pk-sel); border: 1px solid var(--pk-edge); pointer-events: none; animation: pk-mile 2s ease-out forwards; } /* every 10 levels (#74) */
+@keyframes pk-mile { 0%, 80% { opacity: 1; } 100% { opacity: 0; } }

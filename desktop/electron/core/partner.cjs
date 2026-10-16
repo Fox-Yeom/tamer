@@ -3,7 +3,10 @@
 //   2. a folder's partner is one individual; an individual is the partner of one folder at most
 //   3. new ones: your first partner (one of 3 starters, once, while the box is empty), then wild
 //      catches (more often in folders without a partner — wild.cjs); eggs from the shop later (P3)
-//   4. EXP and evolution belong to the individual (they move with it)
+//   4. the level and evolution belong to the individual (they move with it) — Lv 5~100, +2 a finished
+//      task (+1 after its last form), evolving as in the games (#74, PKM-21): at its level, or Lv 30
+//      for a stone / anything else, after 20 finishes together (friendship), or on the first finish
+//      after moving to another folder (trade). The old EXP still counts up for folders.json (PKM-17)
 // A folder without a partner shows an empty state (2026-10-02 decision).
 // box.json holds the individuals; folders.json keeps a mirror (id, shiny, xp …, uid) so the
 // Neovim CVIM still shows and levels the partner (it can't change partners any more).
@@ -16,8 +19,9 @@ const pokeapi = require("./pokeapi.cjs");
 const FOLDERS = path.join(CACHE, "folders.json");
 const DEX = path.join(CACHE, "pokedex.json");
 const SPRITES = path.join(CACHE, "pokemon");
-const EVOLVE_EVERY = 8;
-const BOX = path.join(CACHE, "box.json"); // { next, mons: [{ uid, id, shiny, xp, since_evo, final, how, at, folder }] }
+const EVOLVE_EVERY = 8; // the old pace (before levels, #74) — only for folders.json's mirror
+const BOX = path.join(CACHE, "box.json"); // { next, mons: [{ uid, id, shiny, xp, lv, mile, friend, traded, last_folder, final, how, at, folder }] }
+const START_LV = 5, MAX_LV = 100, ALT_LV = 30, FRIEND_N = 20; // PKM-21
 const STARTER = path.join(CACHE, "starters.json"); // { set: [{ id, shiny }] } — the first partner's choice
 const CHOICES = 3;
 const RECENT_HOURS = 24; // the dex "새로 잡은" row
@@ -78,15 +82,74 @@ function updateBox(fn) {
   return out;
 }
 
+// ── levels (#74, PKM-21) ──────────────────────────────────────────────────────
+// how a species evolves (pokeapi.cjs "evo": { reach, next: [{ to, kind, level }] }), null until fetched
+const evoOf = (id) => readJson(path.join(SPRITES, `${id}.evo.json`), null);
+const evoAsked = new Set();
+function fetchEvo(id) { // in the background, once a session per species (the cards show it next time)
+  if (evoOf(id) || evoAsked.has(id)) return;
+  evoAsked.add(id);
+  fetchPy(["evo", String(id)]).then((f) => { if (!f) evoAsked.delete(id); });
+}
+// the lowest level a form can have: the level it is reached at (Lv 30 for any other way), 5 for a first form
+const floorOf = (id) => { const r = evoOf(id)?.reach; return !r ? START_LV : r.kind === "level" ? r.level : ALT_LV; };
+const lvOf = (m) => m.lv ?? START_LV;
+// its last form: marked so, or its facts say there's no next stage (Vaporeon, Corsola …)
+const isFinal = (m) => !!m.final || evoOf(m.id)?.next?.length === 0;
+// is this next stage open now? (a stone is Lv 30 until stones come, PKM-28)
+const open = (o, m, trade) => (o.kind === "level" ? lvOf(m) >= o.level : o.kind === "friend" ? (m.friend || 0) >= FRIEND_N : o.kind === "trade" ? trade : lvOf(m) >= ALT_LV);
+// what the cards say comes next: the nearest level, else friendship, trade, a stone, anything else
+function nextView(m) {
+  if (isFinal(m)) return null;
+  const e = evoOf(m.id);
+  if (!e) { fetchEvo(m.id); return null; }
+  const by = (k) => e.next.filter((o) => o.kind === k);
+  const lv = by("level").map((o) => o.level).sort((a, b) => a - b)[0];
+  if (lv) return { kind: "level", level: lv };
+  if (by("friend").length) return { kind: "friend", friend: Math.min(FRIEND_N, m.friend || 0), of: FRIEND_N };
+  if (by("trade").length) return { kind: "trade" };
+  if (by("stone").length) return { kind: "stone", level: ALT_LV };
+  return e.next.length ? { kind: "other", level: ALT_LV } : null;
+}
+const lvView = (m) => ({ lv: lvOf(m), final: isFinal(m), next: nextView(m) });
+
 function addMon(b, sprite, how, folder = null) {
-  const m = { uid: b.next++, id: sprite.id, shiny: !!sprite.shiny, xp: 0, since_evo: 0, how, at: now(), folder };
+  // a new one starts at Lv 5 — a caught evolved form at the level its form is reached (PKM-21 rule 1)
+  const lv = Math.max(START_LV, floorOf(sprite.id));
+  const m = { uid: b.next++, id: sprite.id, shiny: !!sprite.shiny, xp: 0, since_evo: 0, lv, mile: Math.floor(lv / 10) * 10, friend: 0, how, at: now(), folder };
+  if (folder) m.last_folder = folder;
   b.mons.push(m);
   return m;
 }
 
+// once: EXP → levels (PKM-21 rule 8) — Lv = 5 + 2 × EXP, at least the level its form is reached at
+// (when that's known yet), at most 100; the milestones up to it count as passed (no ₽ for the past).
+// box.json is copied aside first (POL-DATA-05)
+function migrateLevels() {
+  const b = readBox();
+  if (!b.mons.some((m) => m.lv == null)) return 0;
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const dir = path.join(CACHE, "backup", `box-levels-${stamp}`);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.copyFileSync(BOX, path.join(dir, "box.json"));
+  fs.chmodSync(path.join(dir, "box.json"), 0o600);
+  let n = 0;
+  updateBox((x) => {
+    for (const m of x.mons) {
+      if (m.lv != null) continue;
+      m.lv = Math.min(MAX_LV, Math.max(START_LV + 2 * (m.xp || 0), floorOf(m.id)));
+      m.mile = Math.floor(m.lv / 10) * 10;
+      m.friend = 0;
+      if (m.folder) m.last_folder = m.folder;
+      n++;
+    }
+  });
+  return n;
+}
+
 // first run: everything you have becomes individuals ("전부 인정") — one per caught species in the
 // Pokédex, plus each folder's partner (with its EXP). The old files are copied aside first.
-function migrate() {
+function migrateBox() {
   if (fs.existsSync(BOX)) return;
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = path.join(CACHE, "backup", `box-migration-${stamp}`);
@@ -103,23 +166,25 @@ function migrate() {
     if (!rec?.id) continue;
     const m = addMon(b, rec, "legacy", cwd);
     Object.assign(m, { xp: rec.xp || 0, since_evo: rec.since_evo || 0, ...(rec.final ? { final: true } : {}) });
+    delete m.lv; delete m.mile; // its level comes from its EXP (migrateLevels, right after)
     rec.uid = m.uid;
     rec.pinned = true;
   }
   for (const [id, e] of Object.entries(readJson(DEX, {}))) {
     if (e.caught === false) continue;
-    addMon(b, { id: Number(id), shiny: !!e.shiny }, "legacy");
+    const m = addMon(b, { id: Number(id), shiny: !!e.shiny }, "legacy");
+    delete m.lv; delete m.mile;
   }
   writeJson(BOX, b);
   writeJson(FOLDERS, folders);
 }
+const migrate = () => { migrateBox(); migrateLevels(); };
 
 const monOf = (b, uid) => b.mons.find((m) => m.uid === uid);
 // (an individual whose sprite isn't downloaded yet still shows: name from the Pokédex, no picture)
 const monView = (m) => {
   const sp = loadSprite(m.id, m.shiny) || { id: m.id, shiny: !!m.shiny, name: readJson(DEX, {})[m.id]?.name || `#${m.id}`, types: [], gif: null };
-  return { ...sp, uid: m.uid, xp: m.xp || 0, folder: m.folder || null,
-    toEvolve: m.final ? null : Math.max(0, EVOLVE_EVERY - (m.since_evo || 0)) };
+  return { ...sp, uid: m.uid, xp: m.xp || 0, folder: m.folder || null, ...lvView(m) };
 };
 
 // folders.json mirror of the folder's individual (the Neovim CVIM reads / levels this)
@@ -155,6 +220,7 @@ async function assign(cwd) {
   if (!m) return { choose: true };
   if (!loadSprite(m.id, m.shiny)) await fetchPy([String(m.id), ...(m.shiny ? ["shiny"] : [])]);
   if (!loadSprite(m.id, m.shiny)) return null; // offline and not cached: no partner this time
+  fetchEvo(m.id); // how it evolves, ahead of its first finish here (#74)
   const v = monView(m);
   recordDex(v);
   return v;
@@ -162,8 +228,10 @@ async function assign(cwd) {
 
 function progress(cwd) {
   const m = readBox().mons.find((x) => x.folder === cwd);
-  return m ? { xp: m.xp || 0, toEvolve: m.final ? null : Math.max(0, EVOLVE_EVERY - (m.since_evo || 0)), uid: m.uid } : { xp: 0, toEvolve: null };
+  return m ? { xp: m.xp || 0, uid: m.uid, ...lvView(m) } : { xp: 0, lv: null, final: false, next: null };
 }
+// the level of a folder's partner (catch bonus, PKM-21 rule 6), 0 without one
+const levelAt = (cwd) => { const m = cwd && readBox().mons.find((x) => x.folder === cwd); return m ? lvOf(m) : 0; };
 
 // ── the first partner: 3 starters (different first types, unevolved, not legendary — pokeapi.cjs
 // starter), offered once while the box is empty ─────────────────────────────────────────────
@@ -238,7 +306,10 @@ function take(cwd, { starter: starterId, uid }) {
       if (m.folder && m.folder !== cwd) freed = m.folder;
     }
     for (const x of b.mons) if (x.folder === cwd && x !== m) x.folder = null; // the old partner rests
+    // moved to another folder than the last one it worked in: a trade evolution opens on its first finish here (PKM-21 rule 3)
+    if (m.last_folder && m.last_folder !== cwd) m.traded = true;
     m.folder = cwd;
+    m.last_folder = cwd;
     taken = m;
   });
   if (freed) mirror(freed, null);
@@ -276,7 +347,7 @@ function boxList(cwd) {
   return readBox().mons.map((m) => {
     const v = monView(m);
     return { uid: m.uid, id: m.id, shiny: !!m.shiny, name: v.name, gif: v.gif, types: v.types || [], xp: m.xp || 0,
-      toEvolve: v.toEvolve, how: m.how || null, at: m.at || null, new: !!m.new,
+      lv: v.lv, final: v.final, next: v.next, how: m.how || null, at: m.at || null, new: !!m.new,
       caughtIn: m.caught_in ? path.basename(m.caught_in) : null, caughtBy: m.caught_by || null,
       evo: (m.evo || []).map((e) => ({ from: dexName(e.from), to: dexName(e.to), at: e.at })),
       folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder] };
@@ -310,69 +381,71 @@ function dex() {
   return { entries, recent, recentHours: RECENT_HOURS, total: 649, caught: entries.filter((e) => e.caught).length, shiny: entries.filter((e) => e.shiny).length };
 }
 
-// next evolution stage, fetched one task early so the evolution itself is instant
-// (PokéAPI evolution chain + sprite download take ~10 s): id -> Promise<next id | "">
-const nextStage = new Map();
-function prefetchNext(id, shiny) {
-  const key = `${id}${shiny ? "s" : ""}`;
-  if (!nextStage.has(key)) {
-    nextStage.set(key, fetchPy(["evolve", String(id)]).then(async (next) => {
-      if (!next) { nextStage.delete(key); return ""; } // offline: ask again next time (don't remember a failure)
-      if (next !== "none") await fetchPy([next, ...(shiny ? ["shiny"] : [])]);
-      return next;
-    }));
-  }
-  return nextStage.get(key);
+// the next stages' pictures, fetched one finish early so the evolution itself is instant (~10 s)
+function prefetchOpen(m, trade) {
+  const e = evoOf(m.id);
+  if (!e || m.final) return;
+  const soon = { ...m, lv: Math.min(MAX_LV, lvOf(m) + 2), friend: (m.friend || 0) + 1 };
+  for (const o of e.next) if (open(o, soon, trade) && !loadSprite(o.to, m.shiny)) fetchPy([String(o.to), ...(m.shiny ? ["shiny"] : [])]);
 }
 
-// a task finished in this folder: +1 EXP for its individual; every EVOLVE_EVERY, evolve.
-// EXP past the evolution point carries over to the next one (several sessions finishing at once):
-// an evolution takes EVOLVE_EVERY off since_evo instead of resetting it, and only one call per
-// individual evolves at a time — the others just add their EXP (#12).
+// a task finished in this folder (#74, PKM-21): its partner gets +2 levels (+1 after its last form),
+// one more finish together (friendship), a ₽20 milestone every 10 levels — then maybe evolves: any
+// next stage that is open now (two or more: one at random), as often as they keep opening (a high
+// level after the move from EXP). Only one call per individual evolves at a time (#12); offline (no
+// facts / no picture) it keeps its level and tries again on the next finish (PKM-04 rule 6).
 const evolving = new Set(); // uid
 async function onDone(cwd) {
-  let m;
+  let m, miles = [], trade = false;
   updateBox((b) => {
     m = b.mons.find((x) => x.folder === cwd);
     if (!m) return;
-    m.xp = (m.xp || 0) + 1;
-    m.since_evo = (m.since_evo || 0) + 1;
+    m.xp = (m.xp || 0) + 1; // the old EXP (folders.json's mirror, PKM-17)
+    const before = lvOf(m);
+    if (!m.final && isFinal(m)) m.final = true;
+    m.lv = Math.min(MAX_LV, before + (m.final ? 1 : 2));
+    m.friend = (m.friend || 0) + 1;
+    for (let t = (Math.floor(before / 10) + 1) * 10; t <= m.lv; t += 10) if (t > (m.mile || 0)) { miles.push(t); m.mile = t; }
+    trade = !!m.traded;
+    delete m.traded; // the first finish after the move only
   });
-  if (!m) return { evolved: null };
+  if (!m) return { evolved: null, miles: [] };
   mirror(cwd, m);
-  if (m.final) return { evolved: null };
-  if (m.since_evo === EVOLVE_EVERY - 1) prefetchNext(m.id, m.shiny); // one task to go
-  if (m.since_evo < EVOLVE_EVERY || evolving.has(m.uid)) return { evolved: null };
+  if (m.final || evolving.has(m.uid)) return { evolved: null, miles };
   evolving.add(m.uid);
   const first = loadSprite(m.id, m.shiny);
   let to = null;
   try {
-    // more than EVOLVE_EVERY carried over: it may evolve again right away
     for (;;) {
-      const nextId = await prefetchNext(m.id, m.shiny); // a number, "none" (final) or "" (couldn't tell)
-      let next = nextId && nextId !== "none" ? loadSprite(Number(nextId), m.shiny) : null;
-      if (nextId && nextId !== "none" && !next) { await fetchPy([nextId, ...(m.shiny ? ["shiny"] : [])]); next = loadSprite(Number(nextId), m.shiny); } // its picture once more
-      let again = false;
+      if (!evoOf(m.id)) await fetchPy(["evo", String(m.id)]); // "" offline: try again next time
+      const e = evoOf(m.id);
+      if (!e) break;
+      if (!e.next.length) { updateBox((b) => { const x = monOf(b, m.uid); if (x && x.id === m.id) x.final = true; m = x || m; }); break; }
+      const ready = e.next.filter((o) => open(o, m, trade));
+      if (!ready.length) { prefetchOpen(m, false); break; }
+      const pick = ready[Math.floor(Math.random() * ready.length)];
+      let next = loadSprite(pick.to, m.shiny);
+      if (!next) { await fetchPy([String(pick.to), ...(m.shiny ? ["shiny"] : [])]); next = loadSprite(pick.to, m.shiny); }
+      if (!next) break; // its picture couldn't be fetched: next finish
+      let moved = false;
       updateBox((b) => {
         const x = monOf(b, m.uid);
-        if (!x) return;
-        if (x.id === m.id && (x.since_evo || 0) >= EVOLVE_EVERY) {
-          if (nextId === "none") x.final = true; // only a known end; offline ("") keeps the EXP for the next try
-          else if (next) {
-            (x.evo ||= []).push({ from: x.id, to: next.id, at: now() }); // evolution history (#44)
-            x.id = next.id; x.since_evo -= EVOLVE_EVERY; to = next; again = x.since_evo >= EVOLVE_EVERY;
-          }
+        if (x && x.id === m.id) {
+          (x.evo ||= []).push({ from: x.id, to: next.id, at: now() }); // evolution history (#44)
+          x.id = next.id;
+          moved = true;
         }
-        m = x;
+        m = x || m;
       });
-      if (!again) break;
+      if (!moved) break;
+      to = next;
+      trade = false; // a trade opens one evolution
     }
   } finally { evolving.delete(m.uid); }
   if (m.folder) mirror(m.folder, m);
-  if (!to) return { evolved: null };
-  if (!m.final && m.since_evo === EVOLVE_EVERY - 1) prefetchNext(m.id, m.shiny);
+  if (!to) return { evolved: null, miles };
   recordDex(to);
-  return { evolved: to, from: first };
+  return { evolved: to, from: first, miles };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, progress, dex, fetchPy, loadSprite, recordSeen, migrate, EVOLVE_EVERY };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, progress, levelAt, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

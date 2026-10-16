@@ -47,10 +47,12 @@ function buildTestApp() {
 const sprite = (id, shiny) => path.join(SPRITES, "pokemon", `${id}${shiny ? "s" : ""}`);
 function ensureSprites(ids) {
   fs.mkdirSync(path.join(SPRITES, "pokemon"), { recursive: true });
+  const fetch = (args) => execFileSync(process.execPath, ["-e", `require(${JSON.stringify(path.join(ROOT, "electron/core/pokeapi.cjs"))}).run(${JSON.stringify(args)}).then(()=>process.exit(0))`],
+    { env: { ...process.env, CVIM_CACHE_DIR: SPRITES, CVIM_STATE_DIR: SPRITES }, stdio: "inherit", timeout: 60000 });
   for (const [id, shiny] of ids) {
-    if (fs.existsSync(sprite(id, shiny) + ".gif")) continue;
-    execFileSync(process.execPath, ["-e", `require(${JSON.stringify(path.join(ROOT, "electron/core/pokeapi.cjs"))}).run(${JSON.stringify([String(id), ...(shiny ? ["shiny"] : [])])}).then(()=>process.exit(0))`],
-      { env: { ...process.env, CVIM_CACHE_DIR: SPRITES, CVIM_STATE_DIR: SPRITES }, stdio: "inherit", timeout: 60000 });
+    if (!fs.existsSync(sprite(id, shiny) + ".gif")) fetch([String(id), ...(shiny ? ["shiny"] : [])]);
+    // how it evolves (levels, #74): the scenes and cases know it without the network
+    if (!fs.existsSync(path.join(SPRITES, "pokemon", `${id}.evo.json`))) fetch(["evo", String(id)]);
   }
 }
 const SEED_IDS = [[1], [4], [7], [16], [25], [37], [134], [222], [418], [422, true]];

@@ -16,7 +16,7 @@ const WALLET = path.join(DIR, "wallet.json");
 const TODAY = path.join(DIR, "today.json");
 const STATE = path.join(DIR, "state.json");
 
-const PAY = { done: 5, fast: 1, first: 20, evolve: 30, newdex: 30 };
+const PAY = { done: 5, fast: 1, first: 20, evolve: 30, newdex: 30, level: 20 };
 const CAP = 300; // finishes (+5 · +1) a day; the bonuses are outside it
 const FAST_MS = 30 * 1000; // a turn shorter than this earns +1
 const START_PER = 2, START_MAX = 1000; // 시작 코인: past finishes × 2, at most ₽1,000
@@ -97,6 +97,7 @@ function onDone({ turnAt = null, took = null } = {}) {
 const bonus = (kind) => () => { load(); add(kind, 1, PAY[kind]); save(); return PAY[kind]; };
 const onEvolve = bonus("evolve");
 const onNewDex = bonus("newdex"); // a wild one of a species never caught before
+const onMilestone = bonus("level"); // every 10 levels, once an individual (#74, PKM-21 rule 7)
 
 // what the screens show: the balance, today's (bonuses too) and how much of the ₽300 is left
 function summary() {
@@ -110,4 +111,4 @@ function summary() {
 }
 function dismissStart() { writeJson(STATE, { ...readJson(STATE, {}), startSeen: true }); return summary(); }
 
-module.exports = { init, onDone, onEvolve, onNewDex, summary, dismissStart, CAP, PAY, _reset: () => { rows = null; } };
+module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, dismissStart, CAP, PAY, _reset: () => { rows = null; } };

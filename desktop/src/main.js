@@ -11,7 +11,7 @@ import { timing, dur, MINUTE } from "./elapsed.js";
 import { failLabel } from "./fail.js";
 import { cardsHtml, sizePokes, applyShow, wildNoteHtml } from "./overlay-view.js";
 import "./poke/poke.css";
-import { pkCard } from "./poke/card.js";
+import { pkCard, lvLine } from "./poke/card.js";
 
 // diagnostics: surface JS errors in the footer (release builds have no devtools)
 const showErr = (m) => { const h = document.getElementById("hint"); h.textContent = "오류: " + m; h.style.color = "#e5484d"; };
@@ -1087,7 +1087,17 @@ function coinFloat(tab, n) {
 }
 function showProgress(tab, p) {
   if (p.pinned != null) tab.pinned = p.pinned;
-  $(".poke-exp", tab.view).textContent = `EXP ${p.xp ?? 0}${p.toEvolve != null ? ` · 진화까지 ${p.toEvolve}` : " · 최종 진화"}`;
+  $(".poke-exp", tab.view).textContent = lvLine(p);
+}
+// every 10 levels: "Lv 30! 🪙 +₽20" over the partner for 2 s (#74, PKM-21 rule 7) — not in UI scenes
+function mileBubble(tab, lv, coins) {
+  const stage = $(".pane-avatar .stage", tab.view);
+  if (!stage || document.body.classList.contains("ui-test")) return;
+  const b = document.createElement("span");
+  b.className = "pk-mile";
+  b.textContent = `Lv ${lv}!${coins ? ` 🪙 +₽${coins}` : ""}`;
+  stage.append(b);
+  setTimeout(() => b.remove(), 2000);
 }
 
 function loading(tab) {
@@ -1757,7 +1767,7 @@ function dexTitle() {
   const cur = d.chooseOpts?.current;
   $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button>${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
     + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button></span>`
-    + (view === "choose" && tab ? `<span class="pk-sub">${esc(base(tab.cwd))}의 파트너 — ${cur ? `지금 ${cur.shiny ? "✨" : ""}${esc(cur.name)} · EXP ${cur.xp}` : "아직 없어요"}</span>`
+    + (view === "choose" && tab ? `<span class="pk-sub">${esc(base(tab.cwd))}의 파트너 — ${cur ? `지금 ${cur.shiny ? "✨" : ""}${esc(cur.name)} · Lv ${cur.lv ?? "?"}` : "아직 없어요"}</span>`
       + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>' : `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
     + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`
     + (fresh ? `<span class="chip new">NEW ${fresh}</span>` : "") + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>');
@@ -1770,12 +1780,12 @@ function dexTitle() {
 // ── "내 포켓몬" (#27): every individual you have — in the box or a folder's partner — as cards,
 // sorted (newest catch first by default), searched with the same terms, taken from the preview ──
 let dexLastView = "dex";
-let boxSort = (() => { try { return localStorage.getItem("tamer.box.sort") || "recent"; } catch { return "recent"; } })();
-const BOX_SORTS = [["recent", "최근 잡은 순"], ["no", "번호"], ["name", "이름"], ["exp", "경험치"], ["partner", "파트너 먼저"]];
+let boxSort = (() => { try { const v = localStorage.getItem("tamer.box.sort") || "recent"; return v === "exp" ? "lv" : v; } catch { return "recent"; } })(); // "exp" (경험치) became "lv" (#74)
+const BOX_SORTS = [["recent", "최근 잡은 순"], ["no", "번호"], ["name", "이름"], ["lv", "레벨"], ["partner", "파트너 먼저"]];
 const HOW = { wild: "야생에서 잡음", starter: "첫 파트너", legacy: "이전 기록에서 옮김" };
 
 const HELP = {
-  choose: "←→↑↓ 고르기 · 1·2·3 첫 파트너 · Enter 이 탭의 파트너로 · / 검색 · 한 마리는 한 폴더에만, EXP는 포켓몬을 따라가요 · Esc 닫기",
+  choose: "←→↑↓ 고르기 · 1·2·3 첫 파트너 · Enter 이 탭의 파트너로 · / 검색 · 한 마리는 한 폴더에만, 레벨은 포켓몬을 따라가요 · Esc 닫기",
   dex: "←→↑↓ 이동 · / 검색 · Tab 다음 만난 포켓몬 · Enter 이 탭의 파트너로(박스에 있으면) · M 내 포켓몬 · Esc 닫기",
   box: "←→↑↓ 이동 · / 검색 · Enter 이 탭의 파트너로 · M 도감 · Esc 닫기",
   home: "⌘P 홈 · M 내 포켓몬 · Esc 닫기 — 한도는 각 에이전트가 마지막으로 알려 준 값이에요",
@@ -1862,7 +1872,7 @@ async function homeRender() {
   }
   if (mine.gif) spriteUrl(mine.gif).then(async (u) => { if (!u || dexState?.view !== "home") return; img.src = u; await img.decode().catch(() => {}); img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`; });
   $("#dex-name").textContent = `#${String(mine.id).padStart(3, "0")} ${mine.shiny ? "✨" : ""}${mine.name}`;
-  $("#dex-meta").innerHTML = `${esc(base(active.cwd))}의 파트너<br>EXP ${mine.xp} · ${mine.toEvolve == null ? "최종 진화" : `진화까지 ${mine.toEvolve}`}`;
+  $("#dex-meta").innerHTML = `${esc(base(active.cwd))}의 파트너<br>${esc(lvLine(mine))}`;
 }
 
 function boxMatch(q, m) {
@@ -1875,7 +1885,7 @@ function boxSorted() {
   const recent = (a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid;
   const by = {
     recent, no: (a, b) => a.id - b.id || recent(a, b), name: (a, b) => String(a.name).localeCompare(String(b.name), "ko") || recent(a, b),
-    exp: (a, b) => b.xp - a.xp || recent(a, b), partner: (a, b) => (a.folder ? (a.folder === "here" ? 0 : 1) : 2) - (b.folder ? (b.folder === "here" ? 0 : 1) : 2) || recent(a, b),
+    lv: (a, b) => (b.lv ?? 0) - (a.lv ?? 0) || recent(a, b), partner: (a, b) => (a.folder ? (a.folder === "here" ? 0 : 1) : 2) - (b.folder ? (b.folder === "here" ? 0 : 1) : 2) || recent(a, b),
   }[boxSort] || recent;
   return list.sort(by);
 }
@@ -1944,7 +1954,7 @@ function boxSelect(i) {
   if (m.kind === "starter") $("#dex-meta").innerHTML = `${types}<br>첫 파트너 후보 — 처음 한 번만 고를 수 있어요`;
   else {
     const where = m.folder === "here" ? "이 탭의 파트너" : m.folder ? `📁 ${esc(m.folder)}의 파트너${m.folderGone ? " (닫힌 폴더)" : ""}` : "박스에서 쉬는 중";
-    $("#dex-meta").innerHTML = `${types}<br>EXP ${m.xp || 0} · ${m.toEvolve == null ? "최종 진화" : `진화까지 ${m.toEvolve}`}<br>${where}`
+    $("#dex-meta").innerHTML = `${types}<br>${esc(lvLine(m))}<br>${where}`
       + (m.how || m.at ? `<br>${HOW[m.how] || ""}${m.at ? ` · ${ago(m.at)}` : ""}` : "")
       // the catch log (#44): where and during whose task (recorded from beta.29 on), evolutions
       + (m.caughtIn || m.caughtBy ? `<br><span class="dim">${m.caughtIn ? `📁 ${esc(m.caughtIn)}에서` : ""}${m.caughtBy ? ` ${esc(m.caughtBy)} 작업 중` : ""}</span>` : "")
@@ -2119,7 +2129,7 @@ function renderFrom(e, ask) {
     ? `<div class="dim">쉬는 ${esc(e.name)}가 없어요 — 다른 폴더에서 데려오기 (그 폴더는 비어요)</div>`
       + list.map((m, i) => i === ask
         ? `<button data-i="${i}" class="confirm">한 번 더 누르면 ${esc(m.folderName)}의 ${esc(m.name)} 데려오기</button>`
-        : `<button data-i="${i}">📁 ${esc(m.folderName)} · EXP ${m.xp}</button>`).join("")
+        : `<button data-i="${i}">📁 ${esc(m.folderName)} · Lv ${m.lv ?? "?"}</button>`).join("")
     : "";
 }
 
@@ -2567,7 +2577,9 @@ listen("partner-today", async () => { if (chooseOpen() && chooseFor) renderChoos
 listen("partner-progress", (e) => {
   const t = byId.get(e.payload.ws);
   if (!t) return;
-  if (e.payload.evolved) evolve(t, e.payload.from, { ...e.payload.evolved, xp: e.payload.xp, toEvolve: e.payload.toEvolve, pinned: e.payload.pinned, coins: e.payload.coins });
+  const { lv, final, next, xp, pinned } = e.payload;
+  if (e.payload.mile) mileBubble(t, e.payload.mile, e.payload.mileCoins); // #74
+  if (e.payload.evolved) evolve(t, e.payload.from, { ...e.payload.evolved, xp, lv, final, next, pinned, coins: e.payload.coins });
   else showProgress(t, e.payload);
 });
 // 🪙 포켓코인 changed (#72): the chip and Home follow; a finish shows "+5₽" by that tab's partner
