@@ -85,7 +85,7 @@ if (!labOk && !noSmoke) {
 }
 
 // --check: only the checks above (pushed, lab passed, spec, README) — nothing is built, uploaded or edited
-if (process.argv.includes("--check")) { console.log(`ready to release ${TAG}: pushed, the lab passed on this commit, the spec is in step`); process.exit(0); }
+if (process.argv.includes("--check")) { console.log(`ready to release ${TAG}: pushed, ${labOk ? "the lab passed on this commit" : "smoke skipped (--no-smoke)"}, the spec is in step`); process.exit(0); }
 
 // a version is released once (docs/VERSIONING.md): its tag and DMGs are never replaced. A release
 // that already exists means the version wasn't bumped (2026-10-05: a failed bump went unnoticed and
