@@ -39,3 +39,14 @@
 .wild-partner { background: var(--ok) !important; }
 .wild-timer { margin-left: auto; font-size: 12px; color: var(--dim); }
 .wild-dex { background: #4f7a57 !important; color: #eaf7de !important; }
+
+/* the ball chips (#76, SCREENS_P3 S7): only when you have a bought ball; the picked one is bold */
+.wild-balls { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 6px; }
+.wild-balls[hidden] { display: none; }
+.wild-balls .bc { display: inline-flex; align-items: center; gap: 5px; border: 1px solid var(--line, #3a3a4a); border-radius: 8px; padding: 2px 8px; font: inherit; font-size: 12px; color: inherit; background: transparent; cursor: pointer; }
+.wild-balls .bc.on { border-color: var(--pk-title); background: var(--pk-sel); font-weight: 700; }
+.wild-balls .wb { width: 13px; height: 13px; border-radius: 50%; border: 1.5px solid #111; box-sizing: border-box; background: linear-gradient(#d33 0 44%, #111 44% 56%, #f2f2f2 56%); }
+.wild-balls .wb.great { background: linear-gradient(#2f6fd6 0 44%, #111 44% 56%, #f2f2f2 56%); }
+.wild-balls .wb.ultra { background: linear-gradient(#222 0 44%, #111 44% 56%, #f2f2f2 56%); box-shadow: inset 0 3px 0 -1px #f1c232; }
+.wild-balls .wb.master { background: linear-gradient(#7b3fb8 0 44%, #111 44% 56%, #f2f2f2 56%); }
+.wild-throw.gold { background: var(--pk-coin); color: #2a1d00; }

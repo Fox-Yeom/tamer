@@ -511,8 +511,8 @@ function onCoreEvent(msg) {
     }
     // sometimes a wild Pokémon comes out (PLAN 3.6)
     // where and during whose task it showed up: kept with the individual if it's caught (#44)
-    const w = msg.guess ? null : wild.onDone(ws.id, { empty: !ws.partner, folder: ws.cwd, agent: fromShell ? ws.shell?.key : sess?.agent });
-    if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ws=${ws.id}`); broadcast("wild", w); overlayUpdate(); }
+    const w = msg.guess ? null : wild.onDone(ws.id, { empty: !ws.partner, folder: ws.cwd, agent: fromShell ? ws.shell?.key : sess?.agent, incense: !!economy.incenseUntil() });
+    if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ws=${ws.id}`); broadcast("wild", { ...w, balls: ballsOwned() }); overlayUpdate(); }
     // a finished task: EXP for the folder's partner, maybe an evolution
     const t0 = Date.now();
     partner.onDone(ws.cwd).then(({ evolved, from, miles = [] }) => {
@@ -867,6 +867,8 @@ let trayTimer = null;
 const trayTabs = () => [...workspaces.values()].map((ws) => ({ ws: ws.id, name: path.basename(ws.cwd), state: ws.state || "idle", active: ws.id === activeWs,
   ended: ws.ended && Date.now() - ws.ended.at < 15000 ? ws.ended.how : null }));
 const coinsNow = () => { try { return economy.summary(); } catch { return null; } };
+// the balls in the bag, for the wild card's ball chips (#76)
+const ballsOwned = () => { try { const b = economy.bag(); return { great: b.great || 0, ultra: b.ultra || 0, master: b.master || 0 }; } catch { return {}; } };
 const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow() });
 function trayAct(act) {
   if (act?.tab) focusMain(String(act.tab));
@@ -1355,6 +1357,37 @@ const commands = {
   // 🪙 포켓코인 (#72): the balance, today's, the 시작 코인 band (until closed) — read only, the main process writes
   economy_state: () => economy.summary(),
   economy_start_seen: () => economy.dismissStart(),
+  // 🛒 상점 · 👜 가방 (#76, PKM-22·23): the screen asks, the main process checks and writes (POL-SEC-02)
+  shop_state: () => economy.shopState(),
+  shop_buy({ item, n }) {
+    const r = economy.buy(String(item), Number(n));
+    logLine(`shop buy ${item} ×${n} ${r.ok ? "ok" : r.why}`);
+    if (r.ok) send("economy", economy.summary());
+    return r;
+  },
+  async bag_use({ item, uid }) {
+    if (item === "incense") {
+      const until = economy.burnIncense();
+      logLine(`bag use incense ${until ? "ok" : "none"}`);
+      if (until) send("economy", economy.summary());
+      return { ok: !!until, until, ...economy.shopState() };
+    }
+    if (item !== "candy") return { ok: false, why: "unknown" };
+    if (!partner.candyOk(uid)) return { ok: false, why: "lv" };
+    if (!economy.use("candy")) return { ok: false, why: "none" };
+    const r = await partner.candy(uid);
+    const coins = r?.evolved ? economy.onEvolve() : 0;
+    const mileCoins = (r?.miles || []).reduce((s) => s + economy.onMilestone(), 0);
+    logLine(`bag use candy uid=${uid} lv=${r?.lv} evolved=${r?.evolved?.id ?? "-"} miles=${(r?.miles || []).join(",") || "-"}`);
+    // a folder's partner: its pane shows the new level (and the evolution) like after a finish
+    const ws = r?.folder && [...workspaces.values()].find((w) => w.cwd === r.folder);
+    if (ws) {
+      if (r.evolved) { ws.partner = { ...r.evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); }
+      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved || null, from: r.from || null, coins, mile: r.miles.at(-1) || null, mileCoins });
+    }
+    send("economy", economy.summary());
+    return { ok: true, uid: r?.uid, lv: r?.lv, evolved: r?.evolved ? { id: r.evolved.id, name: r.evolved.name } : null, coins, mileCoins, ...economy.shopState() };
+  },
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
   pane_swap({ ws: id, on }) {
@@ -1365,10 +1398,13 @@ const commands = {
   },
   tab_active({ ws }) { activeWs = workspaces.has(String(ws)) ? String(ws) : null; overlayUpdate(); saveSession(); },
   // 🌿 wild encounters
-  wild_state: () => ({ enabled: wild.enabled(), current: wild.current() }),
+  wild_state: () => ({ enabled: wild.enabled(), current: wild.current(), balls: ballsOwned() }),
   wild_toggle() { const on = wild.setEnabled(!wild.enabled()); overlayUpdate(); return on; },
-  wild_throw({ token }) {
-    const r = wild.throwBall(String(token));
+  // ball: "poke" (free) or one from the bag (#76) — taken from the bag only when the throw goes ahead
+  wild_throw({ token, ball = "poke" }) {
+    const r = wild.throwBall(String(token), String(ball), (b) => economy.use(b));
+    r.balls = ballsOwned();
+    if (r.ball && r.ball !== "poke" && r.result !== "noball") send("economy", economy.summary());
     if (r.newdex) { r.coins = economy.onNewDex(); send("economy", economy.summary()); } // a species never caught before: 🪙 +₽30 (#72)
     logLine(`wild throw ${r.result} shakes=${r.shakes}${r.coins ? ` coins=${r.coins}` : ""}`);
     if (r.result !== "gone") broadcast("wild-throw", r);

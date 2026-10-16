@@ -4,7 +4,9 @@
 //                         agents or text (POL-DATA-02 rule 6). The balance is its sum.
 //   economy/wallet.json   { balance } — a cache, rebuilt from the ledger when missing or different
 //   economy/today.json    { day, seen: [turn start ms] } — the same finish counted once; today only
-//   economy/state.json    { startSeen } — the 시작 코인 band was closed
+//   economy/state.json    { startSeen, incenseUntil } — the 시작 코인 band was closed · 향 burns until (ms)
+// 🛒 the shop and 👜 the bag (E3, #76, PKM-22·23): a purchase is a ledger line {day, kind: "buy",
+// item, n, amount: −price × n}, using one {day, kind: "use", item, n, amount: 0} — the bag is buys − uses
 const fs = require("node:fs");
 const path = require("node:path");
 const { CACHE, readJson, writeJson, writeFile, mkdirPrivate, keepCorrupt } = require("./paths.cjs");
@@ -26,8 +28,8 @@ const SEEN_MAX = 2000;
 const TEST = process.env.CVIM_DESKTOP_TEST === "1";
 const today = () => stats.dayOf(TEST && process.env.CVIM_TEST_TODAY ? new Date(`${process.env.CVIM_TEST_TODAY}T12:00`) : new Date());
 
-let rows = null; // Map "day|kind" → { day, kind, n, amount }, in file order
-const key = (day, kind) => `${day}|${kind}`;
+let rows = null; // Map "day|kind[|item]" → { day, kind, item?, n, amount }, in file order
+const key = (day, kind, item) => `${day}|${kind}${item ? `|${item}` : ""}`;
 const amount = (day, kind) => rows.get(key(day, kind))?.amount || 0;
 const balance = () => [...rows.values()].reduce((s, r) => s + r.amount, 0);
 
@@ -41,10 +43,10 @@ function load() {
     if (!line.trim()) continue;
     let r = null;
     try { r = JSON.parse(line); } catch {}
-    const ok = r && /^\d{4}-\d{2}-\d{2}$/.test(r.day) && typeof r.kind === "string" && Number.isInteger(r.n) && Number.isInteger(r.amount);
+    const ok = r && /^\d{4}-\d{2}-\d{2}$/.test(r.day) && typeof r.kind === "string" && Number.isInteger(r.n) && Number.isInteger(r.amount) && (r.item == null || typeof r.item === "string");
     if (!ok) { bad = true; continue; }
-    const k = key(r.day, r.kind), had = rows.get(k);
-    rows.set(k, had ? { ...had, n: had.n + r.n, amount: had.amount + r.amount } : { day: r.day, kind: r.kind, n: r.n, amount: r.amount });
+    const k = key(r.day, r.kind, r.item), had = rows.get(k);
+    rows.set(k, had ? { ...had, n: had.n + r.n, amount: had.amount + r.amount } : { day: r.day, kind: r.kind, ...(r.item ? { item: r.item } : {}), n: r.n, amount: r.amount });
   }
   if (bad) { keepCorrupt(LEDGER); save(); } // a copy before the unreadable lines go (POL-DATA-05)
 }
@@ -53,8 +55,8 @@ function save() {
   writeFile(LEDGER, [...rows.values()].map((r) => JSON.stringify(r)).join("\n") + (rows.size ? "\n" : ""));
   writeJson(WALLET, { balance: balance() });
 }
-function add(kind, n, amt) {
-  const d = today(), k = key(d, kind), r = rows.get(k) || { day: d, kind, n: 0, amount: 0 };
+function add(kind, n, amt, item = null) {
+  const d = today(), k = key(d, kind, item), r = rows.get(k) || { day: d, kind, ...(item ? { item } : {}), n: 0, amount: 0 };
   r.n += n;
   r.amount += amt;
   rows.set(k, r);
@@ -103,12 +105,74 @@ const onMilestone = bonus("level"); // every 10 levels, once an individual (#74,
 function summary() {
   load();
   const d = today();
-  const earned = [...rows.values()].filter((r) => r.day === d && r.kind !== "start").reduce((s, r) => s + r.amount, 0);
+  const earned = [...rows.values()].filter((r) => r.day === d && EARN.has(r.kind)).reduce((s, r) => s + r.amount, 0);
   const capLeft = Math.max(0, CAP - amount(d, "done") - amount(d, "fast"));
   const st = [...rows.values()].find((r) => r.kind === "start");
   const show = readJson(STATE, {}).startSeen === false; // written so on the first launch only — a lost state file never shows it again
-  return { balance: balance(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
+  return { balance: balance(), bagN: Object.values(bag()).reduce((s, n) => s + n, 0), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
 }
 function dismissStart() { writeJson(STATE, { ...readJson(STATE, {}), startSeen: true }); return summary(); }
+const EARN = new Set(["done", "fast", "first", "evolve", "newdex", "level"]); // what "오늘 번 코인" counts
 
-module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, dismissStart, CAP, PAY, _reset: () => { rows = null; } };
+// ── 🛒 the shop (E3, #76, PKM-22): only what this phase has (later items appear with their phase —
+// no "coming soon" cards). Prices and limits never go up (POL-FUT-01 rule 10) ───────────────────
+const SHOP = [
+  { id: "great", group: "ball", name: "슈퍼볼", price: 40, effect: "잡을 확률 ×1.5", many: true },
+  { id: "ultra", group: "ball", name: "하이퍼볼", price: 100, effect: "잡을 확률 ×2", many: true },
+  { id: "master", group: "ball", name: "마스터볼", price: 1500, effect: "반드시 잡혀요", weekly: 1 },
+  { id: "candy", group: "grow", name: "이상한사탕", price: 30, effect: "레벨 +1", many: true },
+  { id: "incense", group: "explore", name: "향", price: 80, effect: "1시간 야생 ×2", many: true },
+];
+const CONFIRM_AT = 1000; // a price this high asks for a second press (the screen; the main process doesn't need it)
+const INCENSE_MS = 60 * 60 * 1000;
+const MAX_N = 99;
+// the week starts on Monday 0:00, this Mac's time
+const weekStart = () => { const t = TEST && process.env.CVIM_TEST_TODAY ? new Date(`${process.env.CVIM_TEST_TODAY}T12:00`) : new Date(); t.setDate(t.getDate() - ((t.getDay() + 6) % 7)); return stats.dayOf(t); };
+// the bag: bought − used, per item
+function bag() {
+  load();
+  const out = {};
+  for (const r of rows.values()) if (r.item && (r.kind === "buy" || r.kind === "use")) out[r.item] = (out[r.item] || 0) + (r.kind === "buy" ? r.n : -r.n);
+  for (const k of Object.keys(out)) if (out[k] <= 0) delete out[k];
+  return out;
+}
+const boughtSince = (item, day) => [...rows.values()].filter((r) => r.kind === "buy" && r.item === item && r.day >= day).reduce((s, r) => s + r.n, 0);
+const incenseUntil = () => { const u = Number(readJson(STATE, {}).incenseUntil) || 0; return u > Date.now() ? u : 0; };
+function shopState() {
+  load();
+  const have = bag(), ws = weekStart();
+  return { balance: balance(), confirmAt: CONFIRM_AT, bag: have, incenseUntil: incenseUntil(),
+    items: SHOP.map((i) => ({ ...i, have: have[i.id] || 0, ...(i.weekly ? { left: Math.max(0, i.weekly - boughtSince(i.id, ws)) } : {}) })) };
+}
+// a purchase — checked here, whatever the screen showed (POL-SEC-02): the item is on sale, the count,
+// the weekly limit, the balance. No undo.
+function buy(id, n = 1) {
+  load();
+  const it = SHOP.find((i) => i.id === id);
+  n = Number(n);
+  if (!it) return { ok: false, why: "unknown" };
+  if (!Number.isInteger(n) || n < 1 || n > (it.many ? MAX_N : 1)) return { ok: false, why: "count" };
+  if (it.weekly && boughtSince(id, weekStart()) + n > it.weekly) return { ok: false, why: "weekly" };
+  const cost = it.price * n;
+  if (cost > balance()) return { ok: false, why: "coins" };
+  add("buy", n, -cost, id);
+  save();
+  return { ok: true, ...shopState() };
+}
+// one of an item from the bag (a ball thrown, a candy given …): false if there's none
+function use(id, n = 1) {
+  load();
+  if ((bag()[id] || 0) < n) return false;
+  add("use", n, 0, id);
+  save();
+  return true;
+}
+// 향: an hour of wild ×2, another one adds an hour (PKM-23 rule 3)
+function burnIncense() {
+  if (!use("incense")) return null;
+  const until = Math.max(Date.now(), incenseUntil()) + INCENSE_MS;
+  writeJson(STATE, { ...readJson(STATE, {}), incenseUntil: until });
+  return until;
+}
+
+module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, burnIncense, incenseUntil, dismissStart, CAP, PAY, _reset: () => { rows = null; } };

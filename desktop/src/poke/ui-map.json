@@ -91,6 +91,21 @@
         "home",
         "home-start-coins"
       ]
+    },
+    "shop": {
+      "what": "🛒 상점 (S · ₽ 칩): 볼·성장·탐험 묶음의 아이템 카드, 미리보기에서 수(− +)와 사기 — 1,000코인 이상은 두 번 (#76, PKM-22)",
+      "entry": "dexView(\"shop\")",
+      "scenes": [
+        "shop"
+      ]
+    },
+    "bag": {
+      "what": "👜 가방 (I): 가진 아이템·켜진 효과, 사탕(이 탭 파트너 / 다른 포켓몬 고르기)·향 쓰기 (#76, PKM-23)",
+      "entry": "dexView(\"bag\")",
+      "scenes": [
+        "bag",
+        "bag-use-candy"
+      ]
     }
   },
   "components": {
@@ -141,7 +156,9 @@
         "choose",
         "dex",
         "box",
-        "home"
+        "home",
+        "shop",
+        "bag"
       ]
     },
     "pk-coin": {
@@ -183,6 +200,56 @@
       ],
       "screens": [
         "main"
+      ]
+    },
+    "pk-item": {
+      "what": "상점·가방 아이템 카드(그림 · 이름 · 효과 · 값/수, 꺼짐·켜짐 점)와 미리보기의 사기·쓰기(#dex-take, .confirm = 두 번째 누름) (#76)",
+      "files": [
+        "src/poke/poke.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".pk-item",
+        ".pk-icon",
+        ".pk-price",
+        ".pk-on",
+        ".pk-ball",
+        ".pk-effects",
+        ".pk-back",
+        ".pk-err",
+        ".pk-band-go",
+        "#dex.shopview"
+      ],
+      "functions": [
+        "shopRender",
+        "itemSelect",
+        "itemPreview",
+        "itemKey",
+        "itemAct",
+        "candyGive",
+        "pickRender",
+        "candyButton"
+      ],
+      "screens": [
+        "shop",
+        "bag",
+        "home"
+      ]
+    },
+    "pk-qty": {
+      "what": "상점 수 고르기 − n + (최대 = 살 수 있는 수) (#76)",
+      "files": [
+        "src/poke/poke.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".pk-qty"
+      ],
+      "functions": [
+        "itemQty"
+      ],
+      "screens": [
+        "shop"
       ]
     },
     "pk-card": {
@@ -285,16 +352,19 @@
       ]
     },
     "wild-card": {
-      "what": "야생 포켓몬 카드",
+      "what": "야생 포켓몬 카드 · 볼 고르기 칩(가진 볼만, #76)",
       "files": [
         "src/wild.js",
         "src/wild.css"
       ],
       "selectors": [
-        ".wild-"
+        ".wild-",
+        ".wild-balls",
+        ".wild-throw.gold"
       ],
       "functions": [
-        "createWild"
+        "createWild",
+        "drawBalls"
       ],
       "screens": [
         "wild"

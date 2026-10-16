@@ -1081,7 +1081,7 @@ function coinFloat(tab, n) {
   if (!stage || document.body.classList.contains("ui-test")) return;
   const f = document.createElement("span");
   f.className = "pk-float";
-  f.textContent = `+${n}₽`;
+  f.textContent = `+${n}`; // just the number, briefly (#75)
   stage.append(f);
   setTimeout(() => f.remove(), 1300);
 }
@@ -1095,7 +1095,7 @@ function mileBubble(tab, lv, coins) {
   if (!stage || document.body.classList.contains("ui-test")) return;
   const b = document.createElement("span");
   b.className = "pk-mile";
-  b.textContent = `Lv ${lv}!${coins ? ` 🪙 +₽${coins}` : ""}`;
+  b.textContent = `Lv ${lv}!${coins ? ` +${coinTxt(coins)}` : ""}`;
   stage.append(b);
   setTimeout(() => b.remove(), 2000);
 }
@@ -1142,7 +1142,7 @@ async function evolve(tab, from, to) {
   await showPartner(tab, to);
   pokeClass(tab);
   burst(tab, "✨", 10);
-  toast(`축하합니다! ${from?.name ?? ""}는 ${to.name}(으)로 진화했다!${to.coins ? ` 🪙 +₽${to.coins}` : ""}`); // #72
+  toast(`축하합니다! ${from?.name ?? ""}는 ${to.name}(으)로 진화했다!${to.coins ? ` +${coinTxt(to.coins)}` : ""}`); // #72, 표기 #75
 }
 
 // ── choosing a partner (#29: a view of the Pokémon window — 🌟 파트너 고르기; box rules in
@@ -1756,8 +1756,9 @@ function dexSearchKey(e) {
 // 🪙 포켓코인 (#72, PKM-18): the balance as the main process last told (economy_state / "economy")
 let coins = null, coinsShown = null;
 const won = (n) => Number(n || 0).toLocaleString("en-US");
-// the pk-coin chip, left of ✕ on every tab — opens 🏠 홈 (🛒 상점 from E3)
-const coinChip = () => (coins ? `<button class="pk-coin" data-view="home" title="포켓코인 — 작업을 끝낼 때마다 쌓여요">🪙 ₽${won(coins.balance)}</button>` : "");
+const coinTxt = (n) => `${won(n)}코인`; // the coin amount in words — the 🪙 picture is only on the chip (#75)
+// the pk-coin chip, left of ✕ on every tab — opens 🛒 상점 (#76)
+const coinChip = () => (coins ? `<button class="pk-coin" data-view="shop" title="포켓코인 — 작업을 끝낼 때마다 쌓여요 · 누르면 상점">🪙 ${won(coins.balance)}</button>` : "");
 function dexTitle() {
   const d = dexState;
   const owned = d.entries.reduce((n, e) => n + (e.owned || 0), 0);
@@ -1766,7 +1767,8 @@ function dexTitle() {
   const tab = chooseFor || active, on = (v) => (view === v ? ' class="on"' : "");
   const cur = d.chooseOpts?.current;
   $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button>${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
-    + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button></span>`
+    + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button>`
+    + `<button data-view="shop"${on("shop")}>🛒 상점</button><button data-view="bag"${on("bag")}>👜 가방${coins?.bagN ? ` <span class="dim">${coins.bagN}</span>` : ""}</button></span>`
     + (view === "choose" && tab ? `<span class="pk-sub">${esc(base(tab.cwd))}의 파트너 — ${cur ? `지금 ${cur.shiny ? "✨" : ""}${esc(cur.name)} · Lv ${cur.lv ?? "?"}` : "아직 없어요"}</span>`
       + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>' : `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
     + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`
@@ -1788,7 +1790,10 @@ const HELP = {
   choose: "←→↑↓ 고르기 · 1·2·3 첫 파트너 · Enter 이 탭의 파트너로 · / 검색 · 한 마리는 한 폴더에만, 레벨은 포켓몬을 따라가요 · Esc 닫기",
   dex: "←→↑↓ 이동 · / 검색 · Tab 다음 만난 포켓몬 · Enter 이 탭의 파트너로(박스에 있으면) · M 내 포켓몬 · Esc 닫기",
   box: "←→↑↓ 이동 · / 검색 · Enter 이 탭의 파트너로 · M 도감 · Esc 닫기",
-  home: "⌘P 홈 · M 내 포켓몬 · Esc 닫기 — 한도는 각 에이전트가 마지막으로 알려 준 값이에요",
+  home: "⌘P 홈 · S 상점 · I 가방 · M 내 포켓몬 · Esc 닫기 — 한도는 각 에이전트가 마지막으로 알려 준 값이에요",
+  shop: "←→↑↓ 고르기 · − + 수 · Enter 사기 · I 가방 · Esc 닫기 — 1,000코인 이상은 두 번 눌러 사요",
+  bag: "←→↑↓ 고르기 · Enter 쓰기 · S 상점 · Esc 닫기",
+  pick: "←→↑↓ 고르기 · Enter 사탕 주기 · Esc 가방으로",
 };
 // the frame for a view: which list shows, the tool row, the hints
 function viewChrome(v) {
@@ -1796,6 +1801,7 @@ function viewChrome(v) {
   w.classList.toggle("cardview", v !== "dex");
   w.classList.toggle("chooseview", v === "choose");
   w.classList.toggle("homeview", v === "home");
+  w.classList.toggle("shopview", v === "shop" || v === "bag");
   $("#dex-take").hidden = v === "home";
   $("#dex-pos").textContent = "";
   $("#dex-grid").hidden = v !== "dex";
@@ -1811,6 +1817,7 @@ async function dexView(v) {
   if (v !== "choose") dexLastView = v; // 파트너 고르기 opens for a reason; the window remembers the other two
   viewChrome(v);
   if (v === "home") { dexTitle(); return homeRender(); }
+  if (v === "shop" || v === "bag") { d.pick = false; d.ii = 0; d.qty = 1; dexTitle(); return shopRender(); }
   if (v === "dex") {
     $(".dex-preview").style.visibility = "";
     dexFilter();
@@ -1840,9 +1847,9 @@ async function homeRender() {
   d.box = box;
   if (c) { coins = c; dexTitle(); }
   // 🪙 today's coins (bonuses too) and how much of the day's ₽300 for finishes is left (#72)
-  const coinBox = coins ? `<div class="pk-coins"><b>₽${won(coins.today.earned)}</b><span>오늘 번 코인 · ${coins.today.capLeft > 0 ? `상한까지 ₽${won(coins.today.capLeft)}` : "오늘 상한 · 보너스만"}</span></div>` : "";
+  const coinBox = coins ? `<div class="pk-coins"><b>${coinTxt(coins.today.earned)}</b><span>오늘 번 코인 · ${coins.today.capLeft > 0 ? `상한까지 ${coinTxt(coins.today.capLeft)}` : "오늘 상한 · 보너스만"}</span></div>` : "";
   // the 시작 코인, once — until ✕ (#72, SCREENS_P3 S2)
-  const band = coins?.start ? `<div class="pk-band"><span>🪙 포켓코인이 생겼어요 — 지난 완료 ${won(coins.start.n)}번으로 <b>₽${won(coins.start.amount)}</b> 받았어요 · 작업을 끝낼 때마다 쌓여요</span><button class="pk-band-x" title="닫기" aria-label="안내 닫기">✕</button></div>` : "";
+  const band = coins?.start ? `<div class="pk-band"><span>🪙 포켓코인이 생겼어요 — 지난 완료 ${won(coins.start.n)}번으로 <b>${coinTxt(coins.start.amount)}</b> 받았어요 · 작업을 끝낼 때마다 쌓여요</span><button class="pk-band-go" data-view="shop">상점 보기</button><button class="pk-band-x" title="닫기" aria-label="안내 닫기">✕</button></div>` : "";
   const mine = box.find((m) => m.folder === "here");
   const max = Math.max(1, ...(st?.week || []).map((x) => x.n));
   const wd = ["일", "월", "화", "수", "목", "금", "토"];
@@ -1874,6 +1881,156 @@ async function homeRender() {
   $("#dex-name").textContent = `#${String(mine.id).padStart(3, "0")} ${mine.shiny ? "✨" : ""}${mine.name}`;
   $("#dex-meta").innerHTML = `${esc(base(active.cwd))}의 파트너<br>${esc(lvLine(mine))}`;
 }
+
+// ── 🛒 상점 · 👜 가방 (#76, PKM-22·23, SCREENS_P3 S3·S4): items as cards (pk-item), the preview buys
+// (pk-qty · pk-buy = #dex-take) or uses them. The main process checks every purchase and use ──
+const ITEM_ICON = { great: '<i class="pk-ball great"></i>', ultra: '<i class="pk-ball ultra"></i>', master: '<i class="pk-ball master"></i>', candy: "🍬", incense: "🪔" };
+const ITEM_GROUPS = [["ball", "볼"], ["grow", "성장"], ["explore", "탐험"]];
+let shopSt = null; // the last shop_state
+const shopView = () => dexView("shop");
+const minsLeft = (until) => Math.max(1, Math.ceil((until - Date.now()) / 60000));
+async function shopRender() {
+  const d = dexState;
+  const st = await invoke("shop_state").catch(() => null);
+  if (d.view === "bag") d.box ||= await invoke("box_list", { ws: active?.id }).catch(() => []); // this tab's partner, its level now
+  if (!st || dexState !== d || (d.view !== "shop" && d.view !== "bag")) return;
+  shopSt = st;
+  $(".dex-preview").style.visibility = "";
+  $("#dex-help").textContent = HELP[d.pick ? "pick" : d.view];
+  if (d.pick) return pickRender();
+  const grid = $("#box-grid");
+  const card = (it, i) => {
+    const off = d.view === "shop" && (it.left === 0 || it.price > st.balance);
+    const tail = d.view === "bag" ? `×${st.bag[it.id]}` : it.left === 0 ? "이번 주 샀음" : coinTxt(it.price);
+    const on = it.id === "incense" && st.incenseUntil;
+    return `<div class="pk-item${off ? " off" : ""}" data-i="${i}">${on ? '<span class="pk-on" title="켜져 있어요"></span>' : ""}<span class="pk-icon">${ITEM_ICON[it.id] || "🎁"}</span><b>${esc(it.name)}</b><span class="dim">${esc(it.effect)}</span><span class="pk-price">${tail}</span></div>`;
+  };
+  if (d.view === "shop") {
+    d.list = st.items;
+    grid.innerHTML = ITEM_GROUPS.map(([g, title]) => {
+      const items = st.items.map((it, i) => [it, i]).filter(([it]) => it.group === g);
+      return items.length ? `<h4 class="pk-group">${title}</h4>${items.map(([it, i]) => card(it, i)).join("")}` : "";
+    }).join("");
+  } else {
+    d.list = st.items.filter((it) => st.bag[it.id]);
+    const fx = st.incenseUntil ? `<div class="pk-effects">켜진 효과: 🪔 향 ${minsLeft(st.incenseUntil)}분 남음</div>` : "";
+    grid.innerHTML = fx + (d.list.length ? d.list.map(card).join("") + '<p class="pk-note">볼은 야생 포켓몬이 나오면 카드에서 골라 던져요</p>'
+      : '<p class="pk-empty">가방이 비었어요 — 🛒 상점에서 사요 <button class="pk-goods">상점 열기</button></p>');
+  }
+  $("#dex-found").textContent = "";
+  if (!d.list.length) { itemPreview(null); return; }
+  itemSelect(Math.min(d.ii || 0, d.list.length - 1));
+}
+function itemSelect(i) {
+  const d = dexState;
+  if (!d?.list?.length) return;
+  if (i !== d.ii) { d.qty = 1; d.askBuy = false; }
+  d.ii = Math.max(0, Math.min(d.list.length - 1, i));
+  for (const c of document.querySelectorAll("#box-grid .pk-item.sel")) c.classList.remove("sel");
+  const c = $(`#box-grid .pk-item[data-i="${d.ii}"]`);
+  c?.classList.add("sel");
+  c?.scrollIntoView({ block: "nearest" });
+  itemPreview(d.list[d.ii]);
+  $("#dex-pos").textContent = `${d.ii + 1} / ${d.list.length}`;
+}
+// the preview: picture, what it does, how many you have — and the shop's count and price, or the bag's use
+function itemPreview(it, note = "") {
+  const d = dexState, st = shopSt, b = $("#dex-take"), img = $("#dex-img");
+  img.removeAttribute("src"); img.style.width = "";
+  $("#dex-from").innerHTML = note ? `<p class="pk-err">${esc(note)}</p>` : "";
+  if (!it) { $("#dex-name").textContent = ""; $("#dex-meta").innerHTML = ""; b.hidden = true; return; }
+  $("#dex-name").innerHTML = `<span class="pk-icon big">${ITEM_ICON[it.id] || "🎁"}</span>${esc(it.name)}`;
+  const have = st.bag[it.id] || 0;
+  b.hidden = false; b.disabled = false; b.className = "";
+  if (d.view === "shop") {
+    const max = it.many ? Math.max(1, Math.min(99, Math.floor(st.balance / it.price))) : 1;
+    d.qty = Math.max(1, Math.min(d.qty || 1, max));
+    const cost = it.price * d.qty;
+    $("#dex-meta").innerHTML = `${esc(it.effect)}<br>가진 수 ${have}${it.weekly ? ` · 한 주에 ${it.weekly}개(월요일에 다시)` : ""}`
+      + (it.many ? `<br><span class="pk-qty"><button data-q="-1" title="−">−</button><b>${d.qty}</b><button data-q="1" title="+">+</button></span><br>합계 ${coinTxt(cost)}` : "");
+    if (it.left === 0) { b.disabled = true; b.textContent = "이번 주 샀음 · 월요일에 다시"; }
+    else if (cost > st.balance) { b.disabled = true; b.textContent = `${coinTxt(cost - st.balance)} 더 필요`; }
+    else if (cost >= st.confirmAt && d.askBuy) { b.className = "confirm"; b.textContent = `한 번 더 눌러 사기 · ${coinTxt(cost)}`; }
+    else b.textContent = `사기 · ${coinTxt(cost)}`;
+    return;
+  }
+  // 👜 the bag
+  if (it.group === "ball") { $("#dex-meta").innerHTML = `${esc(it.effect)}<br>가진 수 ${have}<br>야생 포켓몬이 나오면 카드에서 골라 던져요`; b.hidden = true; return; }
+  if (it.id === "incense") {
+    $("#dex-meta").innerHTML = `${esc(it.effect)} · 대기 시간 절반<br>가진 수 ${have}${st.incenseUntil ? `<br>지금 켜져 있어요 — ${minsLeft(st.incenseUntil)}분 남음` : ""}`;
+    b.textContent = st.incenseUntil ? "1시간 늘리기" : "향 피우기";
+    return;
+  }
+  if (it.id === "candy") {
+    const p = d.box?.find((m) => m.folder === "here"), lv = p?.lv;
+    $("#dex-meta").innerHTML = `${esc(it.effect)} — 진화 레벨에 닿으면 진화해요<br>가진 수 ${have}`;
+    if (p && lv != null && lv < 100) b.textContent = `이 탭 파트너에게 (Lv ${lv} → ${lv + 1})`;
+    else { b.disabled = true; b.textContent = p ? "Lv 100이에요" : "이 탭에 파트너가 없어요"; }
+    $("#dex-from").innerHTML += '<button data-a="pick">다른 포켓몬 고르기</button>';
+  }
+}
+function itemKey(k) {
+  const d = dexState, n = d.list?.length || 0;
+  if (!n) return k === "Enter" || k.startsWith("Arrow");
+  const cols = getComputedStyle($("#box-grid")).gridTemplateColumns.split(" ").length || 4;
+  if (k === "ArrowRight" || k === "l") itemSelect(d.ii + 1);
+  else if (k === "ArrowLeft" || k === "h") itemSelect(d.ii - 1);
+  else if (k === "ArrowDown" || k === "j") itemSelect(Math.min(n - 1, d.ii + cols));
+  else if (k === "ArrowUp" || k === "k") itemSelect(Math.max(0, d.ii - cols));
+  else if (d.view === "shop" && (k === "-" || k === "+" || k === "=")) itemQty(k === "-" ? -1 : 1);
+  else if (k === "Enter") itemAct();
+  else return false;
+  return true;
+}
+function itemQty(by) { const d = dexState; d.qty = (d.qty || 1) + by; d.askBuy = false; itemPreview(d.list[d.ii]); }
+let buyTimer = null;
+async function itemAct() {
+  const d = dexState, it = d?.list?.[d.ii], st = shopSt;
+  if (!it || $("#dex-take").disabled || $("#dex-take").hidden) return;
+  if (d.view === "shop") {
+    const cost = it.price * (d.qty || 1);
+    // 1,000 coins or more: a second press within 3 s (SCREENS_P3 S3)
+    if (cost >= st.confirmAt && !d.askBuy) { d.askBuy = true; itemPreview(it); clearTimeout(buyTimer); buyTimer = setTimeout(() => { if (dexState === d && d.askBuy) { d.askBuy = false; itemPreview(d.list[d.ii]); } }, 3000); return; }
+    d.askBuy = false;
+    const r = await invoke("shop_buy", { item: it.id, n: d.qty || 1 }).catch(() => ({ ok: false }));
+    if (!r.ok) { await shopRender(); return itemPreview(dexState.list[dexState.ii], r.why === "weekly" ? "이번 주에는 이미 샀어요" : "코인이 모자라요 — 다시 확인해 주세요"); }
+    shopSt = r;
+    const b = $("#dex-take"); b.textContent = "✔ 샀어요"; b.disabled = true;
+    setTimeout(() => { if (dexState === d && d.view === "shop") shopRender(); }, 600);
+    return;
+  }
+  if (it.id === "incense") { const r = await invoke("bag_use", { item: "incense" }).catch(() => null); if (r?.ok) toast(`🪔 향을 피웠어요 — ${minsLeft(r.until)}분 동안 야생 포켓몬이 더 자주 나와요`); return shopRender(); }
+  if (it.id === "candy") return candyGive(d.box?.find((m) => m.folder === "here"));
+}
+// 🍬 given to an individual (this tab's partner, or one picked from 내 포켓몬)
+async function candyGive(m) {
+  if (!m?.uid || (m.lv ?? 0) >= 100) return;
+  const r = await invoke("bag_use", { item: "candy", uid: m.uid }).catch(() => null);
+  if (!r?.ok) { toast(r?.why === "lv" ? "Lv 100이에요" : "이상한사탕이 없어요"); return shopRender(); }
+  toast(`🍬 Lv ${r.lv}!${r.evolved ? ` ${esc(r.evolved.name)}(으)로 진화했어요` : ""}`);
+  const d = dexState;
+  if (d) { d.box = null; d.pick = false; d.ii = d.list?.findIndex((x) => x.id === "candy") ?? 0; }
+  return shopRender();
+}
+// choosing who gets the candy: 내 포켓몬's cards in the list's place (Lv 100 can't)
+async function pickRender() {
+  const d = dexState, grid = $("#box-grid");
+  d.box ||= await invoke("box_list", { ws: active?.id }).catch(() => []);
+  if (dexState !== d || !d.pick) return;
+  d.list = [...d.box].sort((a, b) => (a.folder === "here" ? -1 : 0) - (b.folder === "here" ? -1 : 0) || (b.lv ?? 0) - (a.lv ?? 0));
+  grid.innerHTML = '<h4 class="pk-group"><button class="pk-back">← 가방으로</button> 이상한사탕을 줄 포켓몬</h4>'
+    + d.list.map((m, i) => pkCard(m, i, { icons: TYPE_ICON, ago }).replace('class="pk-card', `class="pk-card${(m.lv ?? 0) >= 100 ? " off" : ""}`)).join("");
+  for (const img of grid.querySelectorAll("img[data-gif]")) spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; });
+  d.bi = 0;
+  boxSelect(0);
+}
+function candyButton(m) {
+  const b = $("#dex-take");
+  b.hidden = false; b.className = "";
+  b.disabled = (m.lv ?? 0) >= 100;
+  b.textContent = b.disabled ? "Lv 100이에요" : `사탕 주기 (Lv ${m.lv} → ${m.lv + 1})`;
+}
+$("#dex-meta").addEventListener("click", (e) => { const q = e.target.closest("[data-q]"); if (q) itemQty(Number(q.dataset.q)); });
 
 function boxMatch(q, m) {
   const e = dexState.byNo.get(m.id);
@@ -1977,6 +2134,7 @@ function boxSelect(i) {
 // the take button: a starter / resting → take · this tab's already · another folder's → press twice
 function boxButton() {
   const d = dexState, m = d.list[d.bi], b = $("#dex-take");
+  if (d.pick) return candyButton(m);
   b.hidden = !(chooseFor || active);
   b.disabled = m.folder === "here";
   b.className = d.boxAsk ? "confirm" : "";
@@ -1987,6 +2145,7 @@ function boxButton() {
 }
 async function boxTake() {
   const d = dexState, m = d?.list?.[d.bi];
+  if (d?.view === "shop" || d?.view === "bag") return d.pick ? candyGive(m) : itemAct();
   if (!m || m.folder === "here") return;
   if (m.folder && m.kind !== "starter" && !d.boxAsk) { d.boxAsk = true; return boxButton(); }
   return pkTake(m);
@@ -2154,9 +2313,13 @@ function dexKey(e) {
   const d = dexState;
   if (!d) return false;
   const k = e.key, cols = dexCols();
-  if (k === "Escape" || k === "q") dexEsc();
+  if ((k === "Escape" || k === "q") && d.pick) { d.pick = false; shopRender(); } // choosing who gets the candy: back to the bag
+  else if (k === "Escape" || k === "q") dexEsc();
   else if (k === "m" || k === "M") dexView(d.view === "box" ? "dex" : "box");
+  else if ((k === "s" || k === "S") && !d.pick) dexView("shop"); // #76
+  else if ((k === "i" || k === "I") && !d.pick) dexView("bag");
   else if (d.view === "home") return true; // nothing to move on 홈 — keys stay in the window
+  else if ((d.view === "shop" || d.view === "bag") && !d.pick) return itemKey(k);
   else if (d.view !== "dex") return boxKey(k);
   else if (k === "Enter") dexChoose();
   else if (d.hits && dexKeyFiltered(k, e)) { /* searching: shown cells only */ }
@@ -2231,11 +2394,19 @@ $("#dex-title").addEventListener("click", (e) => {
 });
 $("#box-grid").addEventListener("click", async (e) => {
   if (e.target.closest(".pk-band-x")) { coins = await invoke("economy_start_seen").catch(() => coins); return homeRender(); } // 시작 코인 band: once (#72)
+  if (e.target.closest(".pk-band-go")) { coins = await invoke("economy_start_seen").catch(() => coins); return dexView("shop"); }
+  const it = e.target.closest(".pk-item[data-i]"); if (it) return itemSelect(Number(it.dataset.i));
+  if (e.target.closest(".pk-goods")) return shopView(); // 빈 가방 → 상점
+  if (e.target.closest(".pk-back")) { dexState.pick = false; return shopRender(); }
   const c = e.target.closest(".pk-card[data-i]"); if (c && Number(c.dataset.i) >= 0) boxSelect(Number(c.dataset.i));
 });
-$("#box-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".pk-card[data-i]")) boxTake(); });
+$("#box-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".pk-card[data-i], .pk-item[data-i]")) boxTake(); });
 $("#dex").addEventListener("mousedown", (e) => { if (e.target === $("#dex")) dexEsc(); }); // outside the window
-$("#dex-from").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) dexFrom(Number(b.dataset.i)); });
+$("#dex-from").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (b?.dataset.a === "pick") { dexState.pick = true; return shopRender(); } // 🍬 다른 포켓몬 고르기 (#76)
+  if (b) dexFrom(Number(b.dataset.i));
+});
 
 // ── start screen ────────────────────────────────────────────────────────────
 let startItems = [];
@@ -2912,6 +3083,11 @@ function labState() {
     coin: dexOpen() ? $("#dex-title .pk-coin")?.textContent || null : null, // 🪙 (#72)
     coinToday: dexOpen() ? $("#box-grid .pk-coins")?.textContent || null : null,
     coinBand: dexOpen() ? $("#box-grid .pk-band")?.textContent || null : null,
+    takeBtn: dexOpen() && !$("#dex-take").hidden ? `${$("#dex-take").textContent}${$("#dex-take").disabled ? " (꺼짐)" : ""}${$("#dex-take").classList.contains("confirm") ? " (확인)" : ""}` : null, // #76
+    items: dexOpen() ? [...document.querySelectorAll("#box-grid .pk-item")].map((c) => `${c.querySelector("b")?.textContent}:${c.querySelector(".pk-price")?.textContent}${c.classList.contains("off") ? ":off" : ""}`) : null,
+    effects: dexOpen() ? $("#box-grid .pk-effects")?.textContent || null : null,
+    wildBalls: [...document.querySelectorAll("#wild .wild-balls .bc")].map((b) => `${b.textContent}${b.classList.contains("on") ? "*" : ""}`),
+    wildBtn: $("#wild .wild-throw")?.textContent || null,
     pokeFits: dexOpen() ? (() => { const r = $("#dex .pk-window")?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() : null,
   };
 }
@@ -3058,6 +3234,12 @@ async function uiScenes(set) {
       await dexView("home"); await shot("home-start-coins");
       $("#box-grid .pk-band-x")?.click(); await wait(400);
       await shot("home");
+      // 🛒 상점 · 👜 가방 (#76): 104 coins (some cards too dear), then a Great Ball and two candies bought
+      await dexView("shop"); await wait(300); await shot("shop");
+      await invoke("shop_buy", { item: "great", n: 1 }); await invoke("shop_buy", { item: "candy", n: 2 });
+      await dexView("bag"); await wait(300); await shot("bag");
+      dexState.pick = true; await shopRender(); await wait(300); await shot("bag-use-candy");
+      dexState.pick = false;
       await dexView("box"); await shot("box-cards");
       await search("age0"); await shot("box-search");
       await search("zzz"); await shot("box-empty");

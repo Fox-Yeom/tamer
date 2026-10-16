@@ -50,7 +50,7 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, now = Date.n
   }
   if (!any) items.push({ label: "한도: 에이전트가 아직 알려 주지 않았어요", enabled: false });
   // 🪙 포켓코인 (#72, SCREENS_P3 S10): one line, not clickable — never on the icon's text
-  if (coins) items.push({ label: `🪙 포켓코인 ₽${coins.balance.toLocaleString("en-US")} · 오늘 +${coins.today.earned.toLocaleString("en-US")}`, enabled: false });
+  if (coins) items.push({ label: `🪙 포켓코인 ${coins.balance.toLocaleString("en-US")} · 오늘 +${coins.today.earned.toLocaleString("en-US")}`, enabled: false });
   items.push({ type: "separator" });
 
   const alphas = [100, 82, 50, 30, 0];

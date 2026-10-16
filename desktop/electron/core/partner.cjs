@@ -405,13 +405,42 @@ async function onDone(cwd) {
     if (!m.final && isFinal(m)) m.final = true;
     m.lv = Math.min(MAX_LV, before + (m.final ? 1 : 2));
     m.friend = (m.friend || 0) + 1;
-    for (let t = (Math.floor(before / 10) + 1) * 10; t <= m.lv; t += 10) if (t > (m.mile || 0)) { miles.push(t); m.mile = t; }
+    miles = milesOf(m, before);
     trade = !!m.traded;
     delete m.traded; // the first finish after the move only
   });
   if (!m) return { evolved: null, miles: [] };
   mirror(cwd, m);
-  if (m.final || evolving.has(m.uid)) return { evolved: null, miles };
+  return { ...(await evolveNow(m.uid, trade)), miles };
+}
+// milestones crossed going from one level to another (each once an individual: m.mile)
+function milesOf(m, before) {
+  const out = [];
+  for (let t = (Math.floor(before / 10) + 1) * 10; t <= lvOf(m); t += 10) if (t > (m.mile || 0)) { out.push(t); m.mile = t; }
+  return out;
+}
+// 🍬 이상한사탕 (#76, PKM-23 rule 2): Lv +1 for any individual below Lv 100 — and it evolves if that opens
+// a next stage (a level one; friendship and trades come from working together)
+const candyOk = (uid) => { const m = monOf(readBox(), Number(uid)); return !!m && lvOf(m) < MAX_LV; };
+async function candy(uid) {
+  let m, miles = [];
+  updateBox((b) => {
+    m = monOf(b, Number(uid));
+    if (!m || lvOf(m) >= MAX_LV) { m = null; return; }
+    const before = lvOf(m);
+    m.lv = before + 1;
+    miles = milesOf(m, before);
+  });
+  if (!m) return null;
+  if (m.folder) mirror(m.folder, m);
+  const r = await evolveNow(m.uid, false);
+  const x = monOf(readBox(), m.uid);
+  return { ...r, miles, uid: m.uid, folder: x?.folder || null, ...lvView(x || m) };
+}
+// any next stage open now: evolve (one at random), again while they keep opening
+async function evolveNow(uid, trade) {
+  let m = monOf(readBox(), uid);
+  if (!m || isFinal(m) || evolving.has(m.uid)) return { evolved: null };
   evolving.add(m.uid);
   const first = loadSprite(m.id, m.shiny);
   let to = null;
@@ -443,9 +472,9 @@ async function onDone(cwd) {
     }
   } finally { evolving.delete(m.uid); }
   if (m.folder) mirror(m.folder, m);
-  if (!to) return { evolved: null, miles };
+  if (!to) return { evolved: null };
   recordDex(to);
-  return { evolved: to, from: first, miles };
+  return { evolved: to, from: first };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, progress, levelAt, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

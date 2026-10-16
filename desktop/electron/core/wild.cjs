@@ -15,7 +15,9 @@ const CHANCE_EMPTY = envNum("CVIM_WILD_CHANCE_EMPTY", 0.3);
 const COOLDOWN_EMPTY = envNum("CVIM_WILD_COOLDOWN_EMPTY", 300) * 1000;
 const STAY = envNum("CVIM_WILD_STAY", 30) * 1000; // it leaves if you don't throw
 const FLEE = 0.1; // after a failed throw (legendary: 0.25)
-const BALL = 1; // Poké Ball (Great / Ultra Balls come with the Bag, PLAN 3.3)
+// the balls (#76, PKM-23 rule 1): the formula's "ball" factor — Poké Ball free and endless, the rest
+// bought in the shop; a Master Ball always catches
+const BALLS = { poke: 1, great: 1.5, ultra: 2, master: Infinity };
 const ANIM = 4000; // a throw's animation: the timer waits for it
 
 let current = null; // the encounter on screen
@@ -64,11 +66,12 @@ function arm(c, ms) {
 
 // a task finished in workspace `ws`: maybe a wild Pokémon appears (returns it, or null).
 // empty: that folder has no partner (higher chance, shorter wait)
-function onDone(ws, { empty = false, folder = null, agent = null } = {}) {
+// incense: 향 burning (#76, PKM-23 rule 3) — twice the chance, half the wait
+function onDone(ws, { empty = false, folder = null, agent = null, incense = false } = {}) {
   if (!enabled() || current) return null;
   const st = state();
-  if (Date.now() - (st.last || 0) * 1000 < (empty ? COOLDOWN_EMPTY : COOLDOWN)) return null;
-  if (rng() >= (empty ? CHANCE_EMPTY : CHANCE)) return null;
+  if (Date.now() - (st.last || 0) * 1000 < (empty ? COOLDOWN_EMPTY : COOLDOWN) / (incense ? 2 : 1)) return null;
+  if (rng() >= Math.min(1, (empty ? CHANCE_EMPTY : CHANCE) * (incense ? 2 : 1))) return null;
   const sprite = st.next && partner.loadSprite(st.next.id, st.next.shiny);
   if (!sprite?.gif) { prefetch(); return null; } // not downloaded yet: skip this one
   updateJson(FILE, (t) => { t.last = Math.floor(Date.now() / 1000); delete t.next; });
@@ -84,18 +87,22 @@ function onDone(ws, { empty = false, folder = null, agent = null } = {}) {
 // passing with (a/255)^(3/16); all four = caught. E.g. catch rate 45 (starters) ≈ 20 % a throw,
 // 255 (Caterpie) ≈ 74 %, 3 (legendaries) ≈ 3 %. The folder's partner helps: a × (1 + 0.3 × Lv/100)
 // — ×1.3 at Lv 100 (#74, PKM-21 rule 6)
-function catchOdds(captureRate, partnerLv = 0) {
-  const a = Math.max(1, Math.floor(captureRate * BALL * 2 / 3 * (1 + 0.3 * Math.min(100, partnerLv) / 100)));
+function catchOdds(captureRate, partnerLv = 0, ball = "poke") {
+  if (BALLS[ball] === Infinity) return 1;
+  const a = Math.max(1, Math.floor(captureRate * (BALLS[ball] || 1) * 2 / 3 * (1 + 0.3 * Math.min(100, partnerLv) / 100)));
   return a >= 255 ? 1 : Math.pow(a / 255, 3 / 16);
 }
 
-// ⚾ returns { result: caught | broke | fled | busy (previous ball still shaking) | gone, shakes 0–3 }
-function throwBall(token) {
+// ⚾ returns { result: caught | broke | fled | busy (previous ball still shaking) | gone | noball, shakes 0–3 }
+// ball: "poke" (free) or one from the bag — pay(ball) takes it from the bag only once the throw goes ahead
+function throwBall(token, ball = "poke", pay = () => true) {
   const c = current;
   if (!c || c.token !== token) return { result: "gone", shakes: 0 };
   if (c.busy) return { result: "busy", shakes: 0 };
+  if (!(ball in BALLS)) ball = "poke";
+  if (ball !== "poke" && !pay(ball)) return { result: "noball", shakes: 0, ball };
   c.throws++;
-  const p = catchOdds(c.captureRate, partner.levelAt(c.caughtIn));
+  const p = catchOdds(c.captureRate, partner.levelAt(c.caughtIn), ball);
   let checks = 0;
   while (checks < 4 && rng() < p) checks++;
   const shakes = Math.min(3, checks);
@@ -111,7 +118,7 @@ function throwBall(token) {
   arm(c, result === "broke" ? anim + left : ANIM);
   setTimeout(() => { c.busy = false; }, anim);
   if (result !== "broke") setTimeout(() => end(result), ANIM - 500);
-  return { result, shakes, token, name: c.name, id: c.id, shiny: c.shiny, left: result === "broke" ? left : 0, newdex };
+  return { result, shakes, token, name: c.name, id: c.id, shiny: c.shiny, left: result === "broke" ? left : 0, newdex, ball };
 }
 
 function setEnabled(on) {
