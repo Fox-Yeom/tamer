@@ -106,6 +106,20 @@ async function pickWild() {
   return [id, info];
 }
 
+// 🥚 what hatches (#84, PKM-25 rule 4): a first form, never legendary / mythical — an egg like the
+// wild's rarity, a rare egg mostly the hard-to-catch ones
+async function pickEgg(rare) {
+  let id, info;
+  for (let i = 0; i < 40; i++) {
+    id = randInt(1, MAX_GEN5);
+    info = await species(id);
+    if (info.legendary || info.evolved) continue;
+    const c = info.capture_rate / 255;
+    if (rng() < (rare ? 0.15 + 0.85 * (1 - c) : 0.25 + 0.75 * c)) break;
+  }
+  return [id, info];
+}
+
 // a starter: unevolved, not legendary, first type not among `avoid`
 async function pickStarter(avoid) {
   let id, info;
@@ -144,6 +158,12 @@ async function run(args) {
     const [a = "random", ...rest] = args.map(String);
     if (a === "evolve") return String((await nextEvolution(Number(rest[0]))) ?? "none");
     if (a === "evo") { const f = path.join(SPRITES, `${Number(rest[0])}.evo.json`); return fs.existsSync(f) ? f : await evoFacts(Number(rest[0])); }
+    if (a === "egg") { // ["egg", "normal" | "rare", "shiny"?] — tests can fix the species (CVIM_TEST_EGG)
+      const shiny = rest[1] === "shiny", fixed = process.env.CVIM_DESKTOP_TEST === "1" && Number(process.env.CVIM_TEST_EGG);
+      if (fixed) return await fetchOne(fixed, shiny);
+      const [id, info] = await pickEgg(rest[0] === "rare");
+      return await fetchOne(id, shiny, info);
+    }
     if (a === "starter") { const [id, info] = await pickStarter(rest); return await fetchOne(id, shinyRoll(), info); }
     if (a === "random" || a === "wild") { const [id, info] = await (a === "random" ? pickRandom() : pickWild()); return await fetchOne(id, shinyRoll(), info); }
     return await fetchOne(Number(a), rest[0] === "shiny");

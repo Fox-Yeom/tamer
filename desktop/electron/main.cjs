@@ -516,13 +516,15 @@ function onCoreEvent(msg) {
     if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ws=${ws.id}`); broadcast("wild", { ...w, balls: ballsOwned() }); overlayUpdate(); }
     // a finished task: EXP for the folder's partner, maybe an evolution
     const t0 = Date.now();
-    partner.onDone(ws.cwd).then(({ evolved, from, miles = [] }) => {
-      logLine(`exp ws=${ws.id} ${JSON.stringify(partner.progress(ws.cwd))} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"} ${Date.now() - t0}ms`);
-      const coins = evolved ? economy.onEvolve() : 0; // 🪙 +₽30 (#72)
+    partner.onDone(ws.cwd).then(({ evolved, from, miles = [], hatched, newdex, graduated }) => {
+      logLine(`exp ws=${ws.id} ${JSON.stringify(partner.progress(ws.cwd))} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"}${hatched ? ` hatched=${hatched.id}${hatched.shiny ? "s" : ""}` : ""}${graduated ? " graduated" : ""} ${Date.now() - t0}ms`);
+      const coins = evolved ? economy.onEvolve() : hatched && newdex ? economy.onNewDex() : 0; // 🪙 +30 (#72) · a new species out of an egg (#84)
       const mileCoins = miles.reduce((s) => s + economy.onMilestone(), 0); // every 10 levels ₽20 (#74)
-      if (evolved) { ws.partner = { ...evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); }
-      if (evolved || mileCoins) send("economy", economy.summary());
-      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins, mile: miles.at(-1) || null, mileCoins });
+      const gradCoins = graduated ? economy.graduated() : 0; // 🎓 300 + an egg (#84)
+      if (evolved || hatched) { ws.partner = { ...(evolved || hatched), ...partner.progress(ws.cwd) }; overlayUpdate(); }
+      if (evolved || mileCoins || gradCoins || coins) send("economy", economy.summary());
+      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins, mile: miles.at(-1) || null, mileCoins,
+        hatched: hatched || null, graduated: !!graduated, gradCoins });
     }).catch((e) => logLine(`exp error ${e}`));
   }
 }
@@ -1367,6 +1369,14 @@ const commands = {
     if (o.starter && !o.starter.ready) loadStarter();
     return { ...o, starterLoading: !!starterLoading };
   },
+  // 🎓 the graduation band's answer (#84): keep it, or let it rest and choose a new partner
+  partner_grad({ ws: id, keep }) {
+    const ws = wsOf(id);
+    const ok = partner.gradChoice(ws.cwd, !!keep);
+    logLine(`grad ${keep ? "keep" : "rest"} ws=${ws.id} ${ok ? "ok" : "-"}`);
+    if (ok && !keep) noPartner(ws);
+    return ok;
+  },
   // { starter: id } | { uid } — the rules are checked in partner.take
   partner_take({ ws, starter, uid }) { return partnerTake(wsOf(ws), starter != null ? { starter } : { uid }); },
   dex_list: () => partner.dex(),
@@ -1389,7 +1399,19 @@ const commands = {
     if (r.ok) send("economy", economy.summary());
     return r.ok ? { ...r, ...shopNow() } : r;
   },
-  async bag_use({ item, uid, id }) {
+  async bag_use({ item, uid, id, ws: wsId }) {
+    if (item === "egg" || item === "egg2") { // 🥚 품기 (#84): in this tab's folder, when it has no partner
+      const ws = workspaces.get(String(wsId));
+      if (!ws || !partner.canIncubate(ws.cwd)) return { ok: false, why: "partner", ...shopNow() };
+      if (!economy.use(item)) return { ok: false, why: "none", ...shopNow() };
+      const v = partner.incubate(ws.cwd, item);
+      ws.partner = v; ws.partnerReady = Promise.resolve(v);
+      logLine(`bag use ${item} ws=${ws.id} uid=${v?.uid}`);
+      send("partner", { ws: ws.id, ...v });
+      send("economy", economy.summary());
+      overlayUpdate();
+      return { ok: true, ...shopNow() };
+    }
     if (item === "legend") { // 전설의 향 on one open legend you don't have (#82) — used when the breakthrough comes
       const ok = legendsView().some((l) => l.id === Number(id) && !l.owned) && economy.setLegend(Number(id));
       logLine(`bag use legend ${id} ${ok ? "ok" : "no"}`);
@@ -1407,13 +1429,14 @@ const commands = {
     if (!economy.use("candy")) return { ok: false, why: "none" };
     const r = await partner.candy(uid);
     const coins = r?.evolved ? economy.onEvolve() : 0;
+    const gradCoins = r?.graduated ? economy.graduated() : 0; // 🎓 a candy to Lv 100 (#84)
     const mileCoins = (r?.miles || []).reduce((s) => s + economy.onMilestone(), 0);
     logLine(`bag use candy uid=${uid} lv=${r?.lv} evolved=${r?.evolved?.id ?? "-"} miles=${(r?.miles || []).join(",") || "-"}`);
     // a folder's partner: its pane shows the new level (and the evolution) like after a finish
     const ws = r?.folder && [...workspaces.values()].find((w) => w.cwd === r.folder);
     if (ws) {
       if (r.evolved) { ws.partner = { ...r.evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); }
-      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved || null, from: r.from || null, coins, mile: r.miles.at(-1) || null, mileCoins });
+      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved || null, from: r.from || null, coins, mile: r.miles.at(-1) || null, mileCoins, graduated: !!r.graduated, gradCoins });
     }
     send("economy", economy.summary());
     return { ok: true, uid: r?.uid, lv: r?.lv, evolved: r?.evolved ? { id: r.evolved.id, name: r.evolved.name } : null, coins, mileCoins, ...shopNow() };

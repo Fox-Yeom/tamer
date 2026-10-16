@@ -22,6 +22,9 @@ const SPRITES = path.join(CACHE, "pokemon");
 const EVOLVE_EVERY = 8; // the old pace (before levels, #74) — only for folders.json's mirror
 const BOX = path.join(CACHE, "box.json"); // { next, mons: [{ uid, id, shiny, xp, lv, mile, friend, traded, last_folder, final, how, at, folder }] }
 const START_LV = 5, MAX_LV = 100, ALT_LV = 30, FRIEND_N = 20; // PKM-21
+// 🥚 알 (E5, #84, PKM-25): an egg is a box individual without a species yet — { egg: { kind, need, have,
+// next: { id, shiny } (picked one finish early) } } in a folder (that folder has a partner) or resting
+const EGGS = { egg: { need: 10, name: "알", shiny: 64 }, egg2: { need: 20, name: "희귀 알", shiny: 32 } };
 const STARTER = path.join(CACHE, "starters.json"); // { set: [{ id, shiny }] } — the first partner's choice
 const CHOICES = 3;
 const RECENT_HOURS = 24; // the dex "새로 잡은" row
@@ -127,7 +130,7 @@ function addMon(b, sprite, how, folder = null) {
 // box.json is copied aside first (POL-DATA-05)
 function migrateLevels() {
   const b = readBox();
-  if (!b.mons.some((m) => m.lv == null)) return 0;
+  if (!b.mons.some((m) => m.lv == null && !m.egg)) return 0;
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const dir = path.join(CACHE, "backup", `box-levels-${stamp}`);
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -136,7 +139,7 @@ function migrateLevels() {
   let n = 0;
   updateBox((x) => {
     for (const m of x.mons) {
-      if (m.lv != null) continue;
+      if (m.lv != null || m.egg) continue;
       m.lv = Math.min(MAX_LV, Math.max(START_LV + 2 * (m.xp || 0), floorOf(m.id)));
       m.mile = Math.floor(m.lv / 10) * 10;
       m.friend = 0;
@@ -182,9 +185,12 @@ const migrate = () => { migrateBox(); migrateLevels(); };
 
 const monOf = (b, uid) => b.mons.find((m) => m.uid === uid);
 // (an individual whose sprite isn't downloaded yet still shows: name from the Pokédex, no picture)
+const eggView = (m) => ({ uid: m.uid, id: null, name: EGGS[m.egg.kind]?.name || "알", gif: null, shiny: false, types: [], folder: m.folder || null,
+  egg: { kind: m.egg.kind, have: m.egg.have || 0, need: m.egg.need }, lv: null, final: false, next: null, xp: 0 });
 const monView = (m) => {
+  if (m.egg) return eggView(m);
   const sp = loadSprite(m.id, m.shiny) || { id: m.id, shiny: !!m.shiny, name: readJson(DEX, {})[m.id]?.name || `#${m.id}`, types: [], gif: null };
-  return { ...sp, uid: m.uid, xp: m.xp || 0, folder: m.folder || null, ...lvView(m) };
+  return { ...sp, uid: m.uid, xp: m.xp || 0, folder: m.folder || null, ...lvView(m), ...(m.grad ? { grad: m.grad } : {}), ...(m.gradAsk ? { gradAsk: true } : {}) };
 };
 
 // folders.json mirror of the folder's individual (the Neovim CVIM reads / levels this)
@@ -218,6 +224,7 @@ async function assign(cwd) {
   const b = readBox();
   const m = b.mons.find((x) => x.folder === cwd);
   if (!m) return { choose: true };
+  if (m.egg) return eggView(m); // an egg here: the folder has its partner-to-be (#84)
   if (!loadSprite(m.id, m.shiny)) await fetchPy([String(m.id), ...(m.shiny ? ["shiny"] : [])]);
   if (!loadSprite(m.id, m.shiny)) return null; // offline and not cached: no partner this time
   fetchEvo(m.id); // how it evolves, ahead of its first finish here (#74)
@@ -228,12 +235,13 @@ async function assign(cwd) {
 
 function progress(cwd) {
   const m = readBox().mons.find((x) => x.folder === cwd);
-  return m ? { xp: m.xp || 0, uid: m.uid, ...lvView(m) } : { xp: 0, lv: null, final: false, next: null };
+  if (m?.egg) return { uid: m.uid, xp: 0, lv: null, final: false, next: null, egg: eggView(m).egg };
+  return m ? { xp: m.xp || 0, uid: m.uid, ...lvView(m), ...(m.grad ? { grad: m.grad } : {}), ...(m.gradAsk ? { gradAsk: true } : {}) } : { xp: 0, lv: null, final: false, next: null };
 }
 // the species you have (a legend comes once a species, #82)
-const ownedSpecies = () => new Set(readBox().mons.map((m) => m.id));
+const ownedSpecies = () => new Set(readBox().mons.filter((m) => !m.egg).map((m) => m.id));
 // the level of a folder's partner (catch bonus, PKM-21 rule 6), 0 without one
-const levelAt = (cwd) => { const m = cwd && readBox().mons.find((x) => x.folder === cwd); return m ? lvOf(m) : 0; };
+const levelAt = (cwd) => { const m = cwd && readBox().mons.find((x) => x.folder === cwd); return m && !m.egg ? lvOf(m) : 0; };
 
 // ── the first partner: 3 starters (different first types, unevolved, not legendary — pokeapi.cjs
 // starter), offered once while the box is empty ─────────────────────────────────────────────
@@ -315,6 +323,7 @@ function take(cwd, { starter: starterId, uid }) {
     taken = m;
   });
   if (freed) mirror(freed, null);
+  if (taken.egg) { mirror(cwd, null); return { partner: eggView(taken), freed }; } // an egg moved here (#84)
   mirror(cwd, taken);
   if (!loadSprite(taken.id, taken.shiny)) {
     // not downloaded yet: the UI waits for partner_state (assign fetches it)
@@ -347,9 +356,10 @@ function boxList(cwd) {
   migrate();
   const folders = readJson(FOLDERS, {});
   return readBox().mons.map((m) => {
+    if (m.egg) return { ...eggView(m), how: "egg", at: m.at || null, new: false, evo: [], folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder] };
     const v = monView(m);
     return { uid: m.uid, id: m.id, shiny: !!m.shiny, name: v.name, gif: v.gif, types: v.types || [], xp: m.xp || 0,
-      lv: v.lv, final: v.final, next: v.next, how: m.how || null, at: m.at || null, new: !!m.new,
+      lv: v.lv, final: v.final, next: v.next, how: m.how || null, ...(m.grad ? { grad: m.grad } : {}), at: m.at || null, new: !!m.new,
       caughtIn: m.caught_in ? path.basename(m.caught_in) : null, caughtBy: m.caught_by || null,
       evo: (m.evo || []).map((e) => ({ from: dexName(e.from), to: dexName(e.to), at: e.at })),
       folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder] };
@@ -364,6 +374,7 @@ function dex() {
   const caughtAt = new Map(), partnered = new Map(); // species -> latest catch (epoch s) / partners (dex search, #21)
   const mons = readBox().mons;
   for (const m of mons) {
+    if (m.egg) continue;
     owned.set(m.id, (owned.get(m.id) || 0) + 1);
     if (m.new) fresh.set(m.id, (fresh.get(m.id) || 0) + 1);
     if (m.how !== "legacy" && (m.at || 0) > (caughtAt.get(m.id) || 0)) caughtAt.set(m.id, m.at);
@@ -398,22 +409,84 @@ function prefetchOpen(m, trade) {
 // facts / no picture) it keeps its level and tries again on the next finish (PKM-04 rule 6).
 const evolving = new Set(); // uid
 async function onDone(cwd) {
-  let m, miles = [], trade = false;
+  let m, miles = [], trade = false, egg = false, graduated = false;
   updateBox((b) => {
     m = b.mons.find((x) => x.folder === cwd);
     if (!m) return;
+    if (m.egg) { m.egg.have = Math.min(m.egg.need, (m.egg.have || 0) + 1); egg = true; return; } // 🥚 one finish closer (#84)
     m.xp = (m.xp || 0) + 1; // the old EXP (folders.json's mirror, PKM-17)
     const before = lvOf(m);
     if (!m.final && isFinal(m)) m.final = true;
     m.lv = Math.min(MAX_LV, before + (m.final ? 1 : 2));
     m.friend = (m.friend || 0) + 1;
     miles = milesOf(m, before);
+    graduated = graduate(m);
     trade = !!m.traded;
     delete m.traded; // the first finish after the move only
   });
   if (!m) return { evolved: null, miles: [] };
+  if (egg) return eggStep(m.uid);
   mirror(cwd, m);
-  return { ...(await evolveNow(m.uid, trade)), miles };
+  return { ...(await evolveNow(m.uid, trade)), miles, graduated };
+}
+// 🎓 졸업 (E5, #84, PKM-19): Lv 100 — once an individual (its date kept), and it asks "계속 함께 / 새 파트너"
+// until answered (gradAsk). Nothing is taken away: it stays your Pokémon, a partner whenever you like
+function graduate(m) {
+  if (lvOf(m) < MAX_LV || m.grad) return false;
+  m.grad = now();
+  m.gradAsk = true;
+  return true;
+}
+// the answer: keep it (the band goes) or let it rest in the box (the folder chooses a new partner)
+function gradChoice(cwd, keep) {
+  let ok = false;
+  updateBox((b) => { const m = b.mons.find((x) => x.folder === cwd && x.gradAsk); if (!m) return; delete m.gradAsk; if (!keep) m.folder = null; ok = true; });
+  if (ok && !keep) mirror(cwd, null);
+  return ok;
+}
+// 🥚 an egg in a folder without a partner (from the bag) — the folder's partner-to-be
+const canIncubate = (cwd) => !readBox().mons.some((x) => x.folder === cwd);
+function incubate(cwd, kind) {
+  if (!EGGS[kind]) return null;
+  migrate();
+  let out = null;
+  updateBox((b) => {
+    if (b.mons.some((x) => x.folder === cwd)) return;
+    out = { uid: b.next++, egg: { kind, need: EGGS[kind].need, have: 0 }, how: "egg", at: now(), folder: cwd, last_folder: cwd };
+    b.mons.push(out);
+  });
+  if (out) mirror(cwd, null);
+  return out && eggView(out);
+}
+// one finish early its species is picked and its picture fetched (like an evolution); at the last one it
+// hatches — Lv 5, "알에서 부화", this folder's partner. Offline: it waits for the next finish (PKM-25 rule 5)
+async function eggStep(uid) {
+  let m = monOf(readBox(), uid);
+  if (!m?.egg) return { evolved: null, miles: [] };
+  const e = m.egg, info = EGGS[e.kind] || EGGS.egg;
+  if (e.have >= e.need - 1 && !e.next) {
+    const shiny = Math.floor(Math.random() * info.shiny) === 0; // a rare egg: twice the shiny odds
+    const f = await fetchPy(["egg", e.kind === "egg2" ? "rare" : "normal", ...(shiny ? ["shiny"] : [])]);
+    const data = f && readJson(f, null);
+    if (data) updateBox((b) => { const x = monOf(b, uid); if (x?.egg) x.egg.next = { id: data.id, shiny: !!data.shiny }; });
+  }
+  m = monOf(readBox(), uid);
+  if (!m?.egg) return { evolved: null, miles: [] };
+  if (m.egg.have < m.egg.need || !m.egg.next) return { evolved: null, miles: [], egg: eggView(m).egg };
+  const nx = m.egg.next, sp = loadSprite(nx.id, nx.shiny);
+  if (!sp?.gif) return { evolved: null, miles: [], egg: eggView(m).egg }; // its picture isn't here yet: next finish
+  const before = readJson(DEX, {})[sp.id];
+  updateBox((b) => {
+    const x = monOf(b, uid);
+    if (!x?.egg) return;
+    delete x.egg;
+    Object.assign(x, { id: nx.id, shiny: !!nx.shiny, xp: 0, since_evo: 0, lv: START_LV, mile: 0, friend: 0, how: "egg", hatched: now() });
+  });
+  recordDex(sp);
+  m = monOf(readBox(), uid);
+  if (m?.folder) mirror(m.folder, m);
+  fetchEvo(sp.id);
+  return { evolved: null, miles: [], hatched: sp, newdex: !before || before.caught === false };
 }
 // milestones crossed going from one level to another (each once an individual: m.mile)
 function milesOf(m, before) {
@@ -423,26 +496,27 @@ function milesOf(m, before) {
 }
 // 🍬 이상한사탕 (#76, PKM-23 rule 2): Lv +1 for any individual below Lv 100 — and it evolves if that opens
 // a next stage (a level one; friendship and trades come from working together)
-const candyOk = (uid) => { const m = monOf(readBox(), Number(uid)); return !!m && lvOf(m) < MAX_LV; };
+const candyOk = (uid) => { const m = monOf(readBox(), Number(uid)); return !!m && !m.egg && lvOf(m) < MAX_LV; };
 async function candy(uid) {
-  let m, miles = [];
+  let m, miles = [], graduated = false;
   updateBox((b) => {
     m = monOf(b, Number(uid));
     if (!m || lvOf(m) >= MAX_LV) { m = null; return; }
     const before = lvOf(m);
     m.lv = before + 1;
     miles = milesOf(m, before);
+    graduated = graduate(m);
   });
   if (!m) return null;
   if (m.folder) mirror(m.folder, m);
   const r = await evolveNow(m.uid, false);
   const x = monOf(readBox(), m.uid);
-  return { ...r, miles, uid: m.uid, folder: x?.folder || null, ...lvView(x || m) };
+  return { ...r, miles, graduated, uid: m.uid, folder: x?.folder || null, ...lvView(x || m) };
 }
 // any next stage open now: evolve (one at random), again while they keep opening
 async function evolveNow(uid, trade) {
   let m = monOf(readBox(), uid);
-  if (!m || isFinal(m) || evolving.has(m.uid)) return { evolved: null };
+  if (!m || m.egg || isFinal(m) || evolving.has(m.uid)) return { evolved: null };
   evolving.add(m.uid);
   const first = loadSprite(m.id, m.shiny);
   let to = null;
@@ -479,4 +553,4 @@ async function evolveNow(uid, trade) {
   return { evolved: to, from: first };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, ownedSpecies, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, ownedSpecies, incubate, canIncubate, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

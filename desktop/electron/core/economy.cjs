@@ -110,10 +110,11 @@ function summary() {
   const capLeft = Math.max(0, CAP - amount(d, "done") - amount(d, "fast"));
   const st = [...rows.values()].find((r) => r.kind === "start");
   const show = readJson(STATE, {}).startSeen === false; // written so on the first launch only — a lost state file never shows it again
-  return { balance: balance(), bagN: Object.values(bag()).reduce((s, n) => s + n, 0), incenseUntil: incenseUntil(), stamps: stamps(), legend: legendSet(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
+  const b = bag();
+  return { balance: balance(), bagN: Object.values(b).reduce((s, n) => s + n, 0), eggs: { egg: b.egg || 0, egg2: b.egg2 || 0 }, incenseUntil: incenseUntil(), stamps: stamps(), legend: legendSet(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
 }
 function dismissStart() { writeJson(STATE, { ...readJson(STATE, {}), startSeen: true }); return summary(); }
-const EARN = new Set(["done", "fast", "first", "evolve", "newdex", "level", "big", "legend"]); // what "오늘 번 코인" counts
+const EARN = new Set(["done", "fast", "first", "evolve", "newdex", "level", "big", "legend", "grad"]); // what "오늘 번 코인" counts
 
 // ── 🛒 the shop (E3, #76, PKM-22): only what this phase has (later items appear with their phase —
 // no "coming soon" cards). Prices and limits never go up (POL-FUT-01 rule 10) ───────────────────
@@ -124,6 +125,8 @@ const SHOP = [
   { id: "candy", group: "grow", name: "이상한사탕", price: 30, effect: "레벨 +1", many: true },
   { id: "incense", group: "explore", name: "향", price: 80, effect: "1시간 야생 ×2", many: true },
   { id: "legend", group: "explore", name: "전설의 향", price: 800, effect: "다음 대발견 전설 고르기" }, // E4 (#82)
+  { id: "egg", group: "egg", name: "알", price: 500, effect: "작업 10번이면 부화" }, // E5 (#84)
+  { id: "egg2", group: "egg", name: "희귀 알", price: 2000, effect: "작업 20번 · 이로치 ×2" },
 ];
 const CONFIRM_AT = 1000; // a price this high asks for a second press (the screen; the main process doesn't need it)
 const INCENSE_MS = 60 * 60 * 1000;
@@ -134,7 +137,7 @@ const weekStart = () => { const t = TEST && process.env.CVIM_TEST_TODAY ? new Da
 function bag() {
   load();
   const out = {};
-  for (const r of rows.values()) if (r.item && (r.kind === "buy" || r.kind === "use")) out[r.item] = (out[r.item] || 0) + (r.kind === "buy" ? r.n : -r.n);
+  for (const r of rows.values()) if (r.item && ["buy", "gift", "use"].includes(r.kind)) out[r.item] = (out[r.item] || 0) + (r.kind === "use" ? -r.n : r.n);
   for (const k of Object.keys(out)) if (out[k] <= 0) delete out[k];
   return out;
 }
@@ -198,6 +201,8 @@ function breakthrough() {
   return 100;
 }
 // all the open legends already with you: 200 coins instead of the encounter (PKM-24 rule 3)
+// 🎓 졸업 (#84, PKM-19): 300 coins and an egg into the bag (a gift line: {kind: "gift", item, n, amount: 0})
+function graduated() { load(); add("grad", 1, 300); add("gift", 1, 0, "egg"); save(); return 300; }
 function legendCoins() { load(); add("legend", 1, 200); save(); return 200; }
 // 전설의 향: which species the next breakthrough brings — set from the bag, used up then
 const legendSet = () => readJson(STATE, {}).legend || null;
@@ -215,4 +220,4 @@ function takeLegend() {
   return id;
 }
 
-module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, burnIncense, incenseUntil, stamps, breakthrough, legendCoins, legendSet, setLegend, takeLegend, dismissStart, CAP, PAY, _reset: () => { rows = null; } };
+module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, burnIncense, incenseUntil, stamps, breakthrough, legendCoins, legendSet, setLegend, takeLegend, graduated, dismissStart, CAP, PAY, _reset: () => { rows = null; } };

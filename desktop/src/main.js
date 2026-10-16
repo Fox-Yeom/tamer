@@ -1066,13 +1066,48 @@ async function showPartner(tab, pk) {
   tab.partner = pk;
   $(".empty-ball", tab.view).hidden = true;
   const label = $(".poke-label", tab.view);
+  eggShow(tab, pk?.egg ? pk : null);
+  if (pk?.egg) { label.textContent = pk.name; return showProgress(tab, pk); } // 🥚 an egg in this folder (#84)
   if (!pk?.gif) { label.textContent = "(파트너를 불러오지 못했어요)"; return; }
   const img = $(".poke", tab.view);
   await loadImg(img, pk.gif);
   img.hidden = false;
   $(".pokeball", tab.view).hidden = true;
-  label.textContent = `${pk.shiny ? "✨" : ""}${pk.name ?? ""}`;
+  label.textContent = `${pk.grad ? "🎓 " : ""}${pk.shiny ? "✨" : ""}${pk.name ?? ""}`;
   showProgress(tab, pk);
+  gradBand(tab, pk.gradAsk ? pk : null);
+}
+// 🥚 the egg in the partner's place (#84, SCREENS_P3 S6): drawn here, no picture to fetch
+function eggShow(tab, pk) {
+  const stage = $(".pane-avatar .stage", tab.view);
+  let el = $(".pk-egg", stage);
+  if (!pk) { el?.remove(); return; }
+  if (!el) { el = document.createElement("i"); stage.append(el); }
+  el.className = `pk-egg big${pk.egg.kind === "egg2" ? " rare" : ""}`;
+  $(".poke", tab.view).hidden = true;
+  $(".pokeball", tab.view).hidden = true;
+}
+// 🎓 the graduation band (#84, SCREENS_P3 S8): stays until answered — 계속 함께 / 새 파트너 데려오기
+function gradBand(tab, pk) {
+  const box = $(".avatar-box", tab.view);
+  let el = $(".pk-grad", box);
+  if (!pk) { el?.remove(); return; }
+  if (!el) { el = document.createElement("div"); el.className = "pk-grad"; box.prepend(el); }
+  el.innerHTML = `<b>🎓 ${esc(josa(pk.name, "이", "가"))} 졸업했어요!</b><span>+${coinTxt(300)} · 🥚 알 +1</span><span class="pk-grad-do"><button data-grad="keep">계속 함께</button><button data-grad="new">새 파트너 데려오기</button></span>`;
+}
+$("#views").addEventListener("click", async (e) => {
+  const g = e.target.closest("[data-grad]");
+  if (g && active) { await invoke("partner_grad", { ws: active.id, keep: g.dataset.grad === "keep" }); gradBand(active, null); if (active.partner) active.partner.gradAsk = false; }
+  const egg = e.target.closest("[data-egg-in]");
+  if (egg && active) { const r = await invoke("bag_use", { item: egg.dataset.eggIn, ws: active.id }).catch(() => null); if (r?.ok) { if (chooseOpen()) closeChoose(false); toast("🥚 알을 품었어요 — 이 폴더에서 작업을 끝낼 때마다 부화가 가까워져요"); } }
+});
+// 🐣 the egg hatches (#84, S8): it shakes, goes white, then the Pokémon
+async function hatch(tab, sp, p) {
+  const el = $(".pane-avatar .pk-egg", tab.view);
+  if (el && !document.body.classList.contains("ui-test")) { el.classList.add("hatching"); await new Promise((r) => setTimeout(r, 1800)); el.classList.add("white"); await new Promise((r) => setTimeout(r, 500)); }
+  await showPartner(tab, { ...sp, ...p, egg: null });
+  burst(tab, "✨", 10);
+  toast(`알에서 ${josa(sp.name, "이", "가")} 태어났다!${p.coins ? ` +${coinTxt(p.coins)} · 새 종` : ""}`);
 }
 
 // "+5₽" rising by the partner for 1.2 s (pk-float, #72) — never in UI scenes (same picture every run)
@@ -1225,7 +1260,9 @@ function showEmpty(tab, freed) {
   $(".poke", tab.view).hidden = true;
   $(".pokeball", tab.view).hidden = true;
   $(".empty-ball", tab.view).hidden = false;
-  $(".poke-label", tab.view).innerHTML = `파트너가 없어요 <button class="need-partner">파트너 고르기</button>`;
+  const eggs = coins?.eggs || {}; // 🥚 an egg in the bag can be this folder's partner-to-be (#84)
+  $(".poke-label", tab.view).innerHTML = `파트너가 없어요 <button class="need-partner">파트너 고르기</button>`
+    + (eggs.egg ? ` <button class="pk-egg-in" data-egg-in="egg">🥚 알 품기 (${eggs.egg})</button>` : "") + (eggs.egg2 ? ` <button class="pk-egg-in" data-egg-in="egg2">🥚 희귀 알 품기 (${eggs.egg2})</button>` : "");
   $(".poke-exp", tab.view).textContent = freed ? "파트너가 다른 폴더로 갔어요 · 작업을 끝내면 야생 포켓몬이 더 자주 나타나요"
     : "작업을 끝내면 야생 포켓몬이 더 자주 나타나요 — 잡아서 파트너로";
 }
@@ -1684,6 +1721,8 @@ function dexTerm(t, n, e) {
   if (["unknown", "못만남", "?"].includes(t)) return !e;
   if (["partner", "파트너"].includes(t)) return !!e?.partner;
   if (["legendary", "전설"].includes(t)) return LEGENDARY.has(n);
+  if (["졸업", "grad"].includes(t)) return !!e.grad; // 🎓 · 🥚 (#84, 내 포켓몬)
+  if (["알", "egg"].includes(t)) return !!e.egg;
   if (["mythical", "환상"].includes(t)) return MYTHICAL.has(n);
   const region = REGIONS.find(([name]) => name === t);
   if (region) return n >= region[1] && n <= region[2];
@@ -1795,7 +1834,7 @@ function dexTitle() {
 let dexLastView = "dex";
 let boxSort = (() => { try { const v = localStorage.getItem("tamer.box.sort") || "recent"; return v === "exp" ? "lv" : v; } catch { return "recent"; } })(); // "exp" (경험치) became "lv" (#74)
 const BOX_SORTS = [["recent", "최근 잡은 순"], ["no", "번호"], ["name", "이름"], ["lv", "레벨"], ["partner", "파트너 먼저"]];
-const HOW = { wild: "야생에서 잡음", starter: "첫 파트너", legacy: "이전 기록에서 옮김" };
+const HOW = { wild: "야생에서 잡음", starter: "첫 파트너", legacy: "이전 기록에서 옮김", egg: "알에서 부화" };
 
 const HELP = {
   choose: "←→↑↓ 고르기 · 1·2·3 첫 파트너 · Enter 이 탭의 파트너로 · / 검색 · 한 마리는 한 폴더에만, 레벨은 포켓몬을 따라가요 · Esc 닫기",
@@ -1901,8 +1940,8 @@ async function homeRender() {
 
 // ── 🛒 상점 · 👜 가방 (#76, PKM-22·23, SCREENS_P3 S3·S4): items as cards (pk-item), the preview buys
 // (pk-qty · pk-buy = #dex-take) or uses them. The main process checks every purchase and use ──
-const ITEM_ICON = { great: '<i class="pk-ball great"></i>', ultra: '<i class="pk-ball ultra"></i>', master: '<i class="pk-ball master"></i>', candy: "🍬", incense: "🪔", legend: "🏮" };
-const ITEM_GROUPS = [["ball", "볼"], ["grow", "성장"], ["explore", "탐험"]];
+const ITEM_ICON = { great: '<i class="pk-ball great"></i>', ultra: '<i class="pk-ball ultra"></i>', master: '<i class="pk-ball master"></i>', candy: "🍬", incense: "🪔", legend: "🏮", egg: '<i class="pk-egg"></i>', egg2: '<i class="pk-egg rare"></i>' };
+const ITEM_GROUPS = [["ball", "볼"], ["grow", "성장"], ["explore", "탐험"], ["egg", "알"]];
 let shopSt = null; // the last shop_state
 const shopView = () => dexView("shop");
 const minsLeft = (until) => Math.max(1, Math.ceil((until - Date.now()) / 60000));
@@ -1980,6 +2019,14 @@ function itemPreview(it, note = "") {
     b.textContent = st.incenseUntil ? "1시간 늘리기" : "향 피우기";
     return;
   }
+  if (it.id === "egg" || it.id === "egg2") { // 🥚 품기 (#84): in this tab's folder, if it has no partner
+    const here = d.box?.find((m) => m.folder === "here");
+    $("#dex-meta").innerHTML = `${esc(it.effect)} — 전설·환상은 안 나와요<br>가진 수 ${have}<br>파트너 없는 폴더에서 품어요. 그 폴더에서 작업을 끝낼 때마다 부화가 가까워져요`;
+    if (!active) { b.disabled = true; b.textContent = "열린 탭이 없어요"; }
+    else if (here) { b.disabled = true; b.textContent = "이 탭엔 파트너가 있어요"; }
+    else b.textContent = "이 탭에 품기";
+    return;
+  }
   if (it.id === "legend") { // 전설의 향 (#82): which open legend the next breakthrough brings
     const set = coins?.legend, can = (st.legends || []).filter((l) => !l.owned);
     $("#dex-meta").innerHTML = `${esc(it.effect)} — 대발견 때 하나 써요<br>가진 수 ${have}${set ? `<br>지금: ⭐ ${esc((st.legends || []).find((l) => l.id === set)?.name || `#${set}`)}에 걸어 둠` : ""}`;
@@ -2027,6 +2074,11 @@ async function itemAct() {
   }
   if (it.id === "incense") { const r = await invoke("bag_use", { item: "incense" }).catch(() => null); if (r?.ok) toast(`🪔 향을 피웠어요 — ${minsLeft(r.until)}분 동안 야생 포켓몬이 더 자주 나와요`); return shopRender(); }
   if (it.id === "candy") return candyGive(d.box?.find((m) => m.folder === "here"));
+  if ((it.id === "egg" || it.id === "egg2") && active) { // 🥚 (#84)
+    const r = await invoke("bag_use", { item: it.id, ws: active.id }).catch(() => null);
+    if (!r?.ok) { toast(r?.why === "partner" ? "이 탭엔 파트너가 있어요 — 파트너 없는 폴더에서 품어요" : "알이 없어요"); return shopRender(); }
+    closeDex(); toast("🥚 알을 품었어요 — 이 폴더에서 작업을 끝낼 때마다 부화가 가까워져요"); return;
+  }
 }
 // 🍬 given to an individual (this tab's partner, or one picked from 내 포켓몬)
 async function candyGive(m) {
@@ -2077,7 +2129,7 @@ $("#dex-meta").addEventListener("click", (e) => { const q = e.target.closest("[d
 
 function boxMatch(q, m) {
   const e = dexState.byNo.get(m.id);
-  return dexMatch(q, m.id, { ...(e || { name: m.name, types: m.types, caught: true }), caughtAt: m.at, fresh: m.new ? 1 : 0, shiny: m.shiny, partner: m.folder ? 1 : 0 });
+  return dexMatch(q, m.id, { ...(e || { name: m.name, types: m.types, caught: true }), caughtAt: m.at, fresh: m.new ? 1 : 0, shiny: m.shiny, partner: m.folder ? 1 : 0, grad: m.grad, egg: m.egg });
 }
 function boxSorted() {
   const d = dexState, q = dexQuery.trim();
@@ -2149,7 +2201,7 @@ function boxSelect(i) {
     img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`;
   });
   else img.removeAttribute("src");
-  $("#dex-name").textContent = `#${String(m.id).padStart(3, "0")} ${m.shiny ? "✨" : ""}${m.name}`;
+  $("#dex-name").textContent = m.egg ? `🥚 ${m.name}` : `#${String(m.id).padStart(3, "0")} ${m.grad ? "🎓 " : ""}${m.shiny ? "✨" : ""}${m.name}`; // #84
   const types = (m.types || []).map((t) => `${TYPE_ICON[t] || ""} ${t}`).join(" · ");
   if (m.kind === "starter") $("#dex-meta").innerHTML = `${types}<br>첫 파트너 후보 — 처음 한 번만 고를 수 있어요`;
   else {
@@ -2812,6 +2864,9 @@ listen("partner-progress", (e) => {
   const t = byId.get(e.payload.ws);
   if (!t) return;
   const { lv, final, next, xp, pinned } = e.payload;
+  if (e.payload.hatched) return hatch(t, e.payload.hatched, e.payload); // 🐣 (#84)
+  if (e.payload.egg) return showProgress(t, e.payload);
+  if (e.payload.graduated) { toast(`🎓 졸업! +${coinTxt(e.payload.gradCoins || 300)} · 🥚 알 +1`); if (t.partner) { t.partner.grad = Date.now(); t.partner.gradAsk = true; gradBand(t, t.partner); $(".poke-label", t.view).textContent = `🎓 ${t.partner.shiny ? "✨" : ""}${t.partner.name}`; } }
   if (e.payload.mile) mileBubble(t, e.payload.mile, e.payload.mileCoins); // #74
   if (e.payload.evolved) evolve(t, e.payload.from, { ...e.payload.evolved, xp, lv, final, next, pinned, coins: e.payload.coins });
   else showProgress(t, e.payload);
@@ -3137,6 +3192,9 @@ function labState() {
     sessId: active ? curSession(active)?.id ?? null : null,
     fx: active ? [...$(".fx", active.view).children].map((x) => x.textContent) : null, // the partner's reaction glyphs (PKM-03)
     pokeExp: active ? $(".poke-exp", active.view)?.textContent || null : null,
+    pokeLabel: active ? $(".poke-label", active.view)?.textContent?.trim() || null : null, // #84
+    gradBand: active ? $(".pk-grad", active.view)?.textContent || null : null,
+    eggShown: active ? !!$(".pane-avatar .pk-egg", active.view) : null,
     agent: active ? (() => { const s = curSession(active); return s?.hostAgent?.key || (s?.running ? s?.agent?.key || s?.agent?.label : null) || null; })() : null, // the agent state the top bar shows (waiting = 입력 필요)
     tsearch: $("#tsearch").hidden ? null : { q: $("#tsearch-q").value, n: $("#tsearch-n").textContent, pane: tsearchPane?.kind || null, alt: !$("#tsearch-alt").hidden },
     // the top bar and the hint line stay one line, nothing pushed out (#38)
@@ -3402,6 +3460,11 @@ async function uiScenes(set) {
       await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" });
       await invoke("settings_set", { patch: { theme: "dark" } });
       await invoke("overlay_show_test", { on: false });
+      // 🥚 · 🎓 the partner pane (#84): an egg 3/10, then a graduate with its band — drawn here only (last, so nothing after it moves)
+      await invoke("win_resize_test", { w: 1400, h: 900 }); await wait(400);
+      await showPartner(tab, { uid: -1, name: "알", egg: { kind: "egg", have: 3, need: 10 } }); await wait(300); await shot("partner-egg");
+      { const m = (await invoke("box_list", { ws: tab.id }))[0];
+        await showPartner(tab, { ...m, lv: 100, final: true, grad: 1, gradAsk: true }); await wait(800); await shot("graduate"); }
     }
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("done");

@@ -72,7 +72,9 @@
         "changes-branch",
         "changes-branch-720",
         "bar-stall",
-        "light-main"
+        "light-main",
+        "partner-egg",
+        "graduate"
       ]
     },
     "overlay": {
@@ -259,6 +261,48 @@
       ],
       "screens": [
         "shop"
+      ]
+    },
+    "pk-egg": {
+      "what": "🥚 알 그림(CSS — 흰 타원·무늬, 희귀 알은 금 무늬), 부화 흔들림·하얗게, 빈 파트너 칸 [알 품기] (#84, PKM-25)",
+      "files": [
+        "src/poke/poke.css",
+        "src/main.js",
+        "src/poke/card.js"
+      ],
+      "selectors": [
+        ".pk-egg",
+        ".pk-egg-in"
+      ],
+      "functions": [
+        "eggShow",
+        "hatch",
+        "showEmpty",
+        "pkCard",
+        "lvLine"
+      ],
+      "screens": [
+        "main",
+        "box",
+        "shop",
+        "bag"
+      ]
+    },
+    "pk-grad": {
+      "what": "🎓 졸업 띠 — 파트너 칸 위, [계속 함께]/[새 파트너 데려오기]까지 남음 (#84, PKM-19)",
+      "files": [
+        "src/poke/poke.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".pk-grad",
+        ".pk-grad-do"
+      ],
+      "functions": [
+        "gradBand"
+      ],
+      "screens": [
+        "main"
       ]
     },
     "pk-card": {
