@@ -84,7 +84,9 @@
         "overlay-clear",
         "overlay-hover",
         "overlay-noshadow",
-        "light-overlay"
+        "light-overlay",
+        "overlay-progress",
+        "overlay-progress-min"
       ]
     },
     "home": {

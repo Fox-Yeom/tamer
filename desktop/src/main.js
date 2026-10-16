@@ -1392,7 +1392,7 @@ async function renderPreview(show) {
     show, current, urgent: tab("pv-wait", "api-server", "waiting", others[0]),
     minis: [tab("pv-1", "web", "coding", others[1]), tab("pv-2", "docs", "idle", others[2], { ended: "done" }), tab("pv-3", "notes", "sleep", others[3])],
     more: 0, counts: { waiting: 1, working: 2, done: 1, error: 0 },
-    prog: { inc: { soon: true } }, // 진행 견본 (#88): "🥚 곧 부화 · 작업 1번"
+    prog: { inc: { name: "알", have: 9, need: 10, soon: true }, stamps: { n: 6, need: 7, soon: true } }, // 진행 견본 (#88 #90): "🥚 곧 9/10 · ⭐ 곧 6/7"
   };
   const off = !show.on || !(show.partner || show.alerts || show.wild || show.progress);
   const html = off ? "" : await cardsHtml(p, { spriteUrl: (gif) => (gif ? spriteUrl(gif) : null) });
@@ -3570,6 +3570,17 @@ async function uiScenes(set) {
       await openDex(); await dexView("bag"); await wait(500); await shot("bag-incubator"); closeDex(); // 🥚 the bag's incubator section with its line (#88)
       { const m = (await invoke("box_list", { ws: tab.id }))[0];
         await showPartner(tab, { ...m, lv: 100, final: true, grad: 1, gradAsk: true }); await wait(800); await shot("graduate"); }
+      // 진행 on the overlay (#88 #90): the egg 3/10 under the current tab's card, and the minimal mode's chips
+      await invoke("overlay_show_test", { on: true }); await wait(800);
+      await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "coding", times, hold: true }); await wait(500);
+      for (const [name, minimal] of [["overlay-progress", "never"], ["overlay-progress-min", "always"]]) {
+        await invoke("settings_set", { patch: { overlay: { minimal } } }); await wait(500);
+        const r = await invoke("ui_shot", { name, target: "overlay" });
+        await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
+      }
+      await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
+      await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" });
+      await invoke("overlay_show_test", { on: false });
     }
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("done");

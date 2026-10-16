@@ -497,7 +497,7 @@ module.exports = [
     },
   },
   {
-    id: "progress-chips", tags: ["smoke", "poke", "app"], what: "진행 표시: 파트너 칸 칩 🥚 ⭐ ✦(곧이면 금색), 오버레이 곧 한 줄(최소 모드는 점)·부화 알림(누르면 내 포켓몬), 메뉴바 한 줄, 설정 \"진행\" 끄면 오버레이에서 빠짐, 칩 누르면 그 화면 (#88)",
+    id: "progress-chips", tags: ["smoke", "poke", "app"], what: "진행 표시: 파트너 칸 칩 🥚 ⭐ ✦(곧이면 금색), 오버레이 한 줄(부화기 알은 늘·나머지는 곧일 때, 최소 모드는 숫자 칩+마우스 올림 뜻 #90)·부화 알림(누르면 내 포켓몬), 메뉴바 한 줄, 설정 \"진행\" 끄면 오버레이에서 빠짐, 칩 누르면 그 화면 (#88)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_TEST_EGG: "172", CVIM_STAMPS: "2" },
     setup: (box) => {
       fakeSpecies(box, 172, "피츄", { reach: null, next: [{ to: 25, kind: "friend" }] });
@@ -521,13 +521,14 @@ module.exports = [
       const got = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
       return [
         ok(JSON.stringify(probe.a?.prog) === '["🥚 8/10","⭐ 곧 1/2!","✦ 0/3"]', `처음 칩 ${JSON.stringify(probe.a?.prog)}`),
-        ok(dom.length === 5 && stampsOnly?.prog === "⭐ 대발견까지 스탬프 1개" && !stampsOnly.progDot, `곧인 것이 스탬프뿐이면 그 줄 ${JSON.stringify(stampsOnly && { p: stampsOnly.prog, d: stampsOnly.progDot })}`),
+        ok(dom.length === 5 && stampsOnly?.prog === "🥚 8/10 · ⭐ 곧 1/2" && !stampsOnly.progMini, `부화기 알은 늘, 스탬프는 곧일 때 (#90) ${JSON.stringify(stampsOnly && { p: stampsOnly.prog, m: stampsOnly.progMini })}`),
         ok(JSON.stringify(probe.b?.prog) === '["🥚 곧 9/10!","⭐ 곧 1/2!","✦ 0/3"]', `한 번 남으면 금색 곧 ${JSON.stringify(probe.b?.prog)}`),
-        ok(soon?.prog === "🥚 곧 부화 · 작업 1번" && !soon.minimal, `오버레이 곧 줄 — 둘 다 곧이면 부화가 먼저 ${soon?.prog}`),
+        ok(soon?.prog === "🥚 곧 9/10 · ⭐ 곧 1/2" && !soon.minimal, `한 번 남으면 🥚도 곧 ${soon?.prog}`),
         ok(labels.includes("🥚 부화기 9/10 · ⭐ 스탬프 1/2 · ✦ 리서치 0/3"), `메뉴바 진행 줄 ${JSON.stringify(labels.filter((l) => /부화기|스탬프/.test(l)))}`),
         ok(labels.some((l) => l === "진행 — 곧 일어날 일") || JSON.stringify(tray.items || []).includes("진행 — 곧 일어날 일"), "메뉴바 보일 것에 진행"),
-        ok(dot?.minimal && dot.progDot === "🥚" && !dot.prog, `최소 모드는 그림 위 점 ${JSON.stringify(dot && { m: dot.minimal, d: dot.progDot, p: dot.prog })}`),
-        ok(/^incubator hatched 172/m.test(log) && /^🐣 알에서 피츄 태어났어요/.test(hatched?.hatch || "") && hatched?.prog === "⭐ 대발견까지 스탬프 1개", `부화 알림 ${hatched?.hatch} · 다음 곧 ${hatched?.prog}`),
+        ok(dot?.minimal && dot.progMini === "🥚9/10⭐1/2" && dot.progTip === "🥚 부화기 알 9/10 · 곧 태어나요 — 작업 1번 · ⭐ 연구 스탬프 1/2 · 대발견까지 1개" && !dot.prog,
+          `최소 모드는 아이콘+숫자 칩, 마우스 올리면 뜻 (#90) ${JSON.stringify(dot && { m: dot.minimal, c: dot.progMini, t: dot.progTip, p: dot.prog })}`),
+        ok(/^incubator hatched 172/m.test(log) && /^🐣 알에서 피츄 태어났어요/.test(hatched?.hatch || "") && hatched?.prog === "⭐ 곧 1/2", `부화 알림 ${hatched?.hatch} · 알이 없으면 🥚 빠짐 ${hatched?.prog}`),
         ok(JSON.stringify(probe.c?.prog) === '["⭐ 곧 1/2!","✦ 0/3"]', `부화 뒤 칩(🥚 빠짐) ${JSON.stringify(probe.c?.prog)}`),
         ok(off && !off.prog && !off.hatch && got.overlay?.progress === false, `진행 끄면 줄·알림 없음 ${JSON.stringify(off && { p: off.prog, h: off.hatch })} 설정 ${got.overlay?.progress}`),
         ok(/^hatch open from overlay$/m.test(log) && probe.opened?.poke === "box", `부화 알림 누르면 내 포켓몬 ${probe.opened?.poke}`),

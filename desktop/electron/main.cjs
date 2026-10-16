@@ -951,7 +951,8 @@ function progressNow() {
   progCache = { at: Date.now(), v };
   return v;
 }
-const progSoon = (v = progressNow()) => !!(v.inc?.soon || v.stamps?.soon || v.research?.soon);
+// what the overlay shows (#90): an egg in the incubator always, stamps · research when one more to go
+const progShown = (v = progressNow()) => !!(v.inc || v.stamps?.soon || v.research?.soon);
 function progressBump() { progCache = null; send("progress", progressNow()); overlaySync(); overlayUpdate(); }
 // the balls in the bag, for the wild card's ball chips (#76)
 const ballsOwned = () => { try { const b = economy.bag(); return { great: b.great || 0, ultra: b.ultra || 0, master: b.master || 0 }; } catch { return {}; } };
@@ -1077,7 +1078,7 @@ function overlaySync() {
   // a test window never has focus: its overlay shows only when a test asks (it sat on the user's screen)
   const away = !BrowserWindow.getFocusedWindow() && !QUIET_TEST;
   // the 설정 창 (#59): off, or nothing chosen to show (a wild card counts only while one is out)
-  const o = settings.overlay, something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progSoon()); // #88: a "soon" line alone
+  const o = settings.overlay, something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progShown()); // #88 #90: the progress line alone
   if ((away || overlayForced) && workspaces.size && o.on && something) {
     overlayUpdate();
     if (!overlay.isVisible()) overlay.showInactive();
@@ -1618,7 +1619,8 @@ const testCommands = {
       bubbles: [...document.querySelectorAll(".bubble")].map((b) => b.textContent.trim()), shadow: card ? getComputedStyle(card).boxShadow : null,
       bg: card ? getComputedStyle(card).backgroundColor : null, note: note ? note.textContent.replace(/\\s+/g, " ").trim() : null,
       noteShadow: note ? getComputedStyle(note).boxShadow : null,
-      prog: document.querySelector(".ov-prog")?.textContent || null, progDot: document.querySelector(".ov-prog-dot")?.textContent || null, // #88
+      prog: document.querySelector(".ov-prog")?.textContent || null, progMini: document.querySelector(".ov-prog-mini")?.textContent || null, // #88 #90
+      progTip: document.querySelector(".ov-prog-mini")?.dataset.tip || null,
       hatch: document.querySelector(".wild-note.hatch")?.textContent.replace(/\\s+/g, " ").trim() || null };
   })()`),
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)

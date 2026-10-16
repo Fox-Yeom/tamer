@@ -44,16 +44,23 @@ export function stateLine(t, stallMs) {
 // the hover line of the minimal mode: "폴더 — 상태" (src/overlay.js shows it in #tip)
 const tip = (t, stallMs) => `${t.partner && t.active ? `${t.partner.name} · ` : ""}${t.name} — ${stateLine(t, stallMs).trim()}`;
 
-// 진행 (#88, PKM-30 rule 4): the one thing about to happen — hatch > breakthrough > research; none → ""
-export function progSoon(prog) {
-  if (prog?.inc?.soon) return ["🥚", `🥚 곧 부화 · 작업 1번`];
-  if (prog?.stamps?.soon) return ["⭐", "⭐ 대발견까지 스탬프 1개"];
-  if (prog?.research?.soon) return ["✦", "✦ 리서치 마지막 1번"];
-  return null;
+// 진행 (#88 → #90, PKM-30 rule 4): the incubator whenever an egg is in it, stamps · research only one step
+// before — each with what it means (the minimal mode's hover line: a lone ⭐ said nothing, #90)
+export function progItems(prog) {
+  const it = [], p = prog || {};
+  if (p.inc) it.push({ icon: "🥚", n: p.inc.have, m: p.inc.need, soon: !!p.inc.soon,
+    what: `부화기 ${p.inc.name || "알"} ${p.inc.have}/${p.inc.need} · ${p.inc.soon ? "곧 태어나요 — 작업 1번" : `작업 ${p.inc.need - p.inc.have}번 남음`}` });
+  if (p.stamps?.soon) it.push({ icon: "⭐", n: p.stamps.n, m: p.stamps.need, soon: true, what: `연구 스탬프 ${p.stamps.n}/${p.stamps.need} · 대발견까지 1개` });
+  if (p.research?.soon) it.push({ icon: "✦", n: p.research.done, m: p.research.of, soon: true, what: `리서치 ${p.research.done}/${p.research.of} · 마지막 단계 1번` });
+  return it;
 }
-export const progHtml = (prog) => { const s = progSoon(prog); return s ? `<div class="ov-prog" title="곧 일어날 일">${s[1]}</div>` : ""; };
+const progTip = (it) => it.map((i) => `${i.icon} ${i.what}`).join(" · ");
+// the line under the current tab's card: 🥚 2/10 · ⭐ 곧 6/7
+export const progHtml = (prog) => { const it = progItems(prog); return it.length ? `<div class="ov-prog" title="${esc(progTip(it))}">${it.map((i) => `<span${i.soon ? ' class="soon"' : ""}>${i.icon} ${i.soon ? "곧 " : ""}${i.n}/${i.m}</span>`).join(" · ")}</div>` : ""; };
+// 최소 모드: small chips under the partner (🥚2/10 ⭐6/7); the hover line (overlay.js #tip) says what they are
+const progMini = (prog, ws) => { const it = progItems(prog); return it.length ? `<div class="ov-prog-mini" data-ws="${esc(ws)}" data-tip="${esc(progTip(it))}">${it.map((i) => `<span${i.soon ? ' class="soon"' : ""}>${i.icon}${i.n}/${i.m}</span>`).join("")}</div>` : ""; };
 
-async function bigCard(t, { show, stallMs, spriteUrl, extra = "", badge = "" }) {
+async function bigCard(t, { show, stallMs, spriteUrl, extra = "" }) {
   const url = await spriteUrl(t.partner?.gif);
   const min = isMinimal(show), end = ENDED[t.ended];
   const stall = timing(t.times, { stallMs }).stall;
@@ -67,7 +74,7 @@ async function bigCard(t, { show, stallMs, spriteUrl, extra = "", badge = "" }) 
   const sprite = url ? `<img class="poke ${motion}" src="${url}" alt="" />` : t.partner ? '<div class="pokeball"></div>' : '<div class="empty-ball" title="파트너가 없어요"></div>';
   return `<div class="card hit${t.active ? " current" : ""}" data-ws="${esc(t.ws)}" data-tip="${esc(tip(t, stallMs))}" title="${min ? "" : `클릭: 이 탭으로 · 드래그: 이동${t.active ? " · 더블클릭: 접기/펴기" : ""}`}">
     ${bubble}
-    <div class="row"><div class="sprite">${sprite}${badge}</div>
+    <div class="row"><div class="sprite">${sprite}</div>
     ${min ? "" : `<div class="meta"><div class="name">${esc(t.partner ? `${t.partner.shiny ? "✨" : ""}${t.partner.name}` : "파트너 없음")}${t.sessions > 1 ? ` <span class="sess-badge" title="이 폴더의 셸 수">셸 ${t.sessions}개</span>` : ""}</div>
       <div class="folder">${esc(t.name)}</div><div class="state${stall && t.state !== "waiting" ? " stall" : ""}" title="${stall ? "새 이벤트가 없어요 — 멈췄을 수 있어요(추정)" : ""}">${esc(stateLine(t, stallMs))}</div></div>`}</div>
     ${extra}
@@ -90,11 +97,10 @@ export async function cardsHtml(p, { spriteUrl }) {
     ? `<div class="minis">${minis.join("")}${p.more ? `<span class="more">+${p.more}</span>` : ""}${counts ? `<span class="counts">${counts}</span>` : ""}</div>` : "";
   const cards = [];
   if (p.urgent && show.alerts !== false) cards.push(await bigCard(p.urgent, { show, stallMs, spriteUrl })); // the tab that needs you: an alert
-  // 진행 (#88): a line under the current tab's card (minimal: a dot on the partner), or a card of its own
-  const soon = show.progress !== false && progSoon(p.prog);
-  const line = soon && !min ? progHtml(p.prog) : "", badge = soon && min ? `<span class="ov-prog-dot" title="${esc(soon[1])}">${soon[0]}</span>` : "";
-  if (p.current && show.partner !== false) cards.push(await bigCard(p.current, { show, stallMs, spriteUrl, extra: strip + line, badge }));
-  else if (strip || soon) cards.push(`<div class="card">${strip}${soon ? progHtml(p.prog) : ""}</div>`); // no partner card: the icon row / the line alone
+  // 진행 (#88 #90): a line under the current tab's card (minimal: chips under the partner), or a card of its own
+  const prog = show.progress !== false && progItems(p.prog).length ? p.prog : null;
+  if (p.current && show.partner !== false) cards.push(await bigCard(p.current, { show, stallMs, spriteUrl, extra: (prog && min ? progMini(prog, p.current.ws) : "") + strip + (prog && !min ? progHtml(prog) : "") }));
+  else if (strip || prog) cards.push(`<div class="card">${strip}${prog ? progHtml(prog) : ""}</div>`); // no partner card: the icon row / the line alone
   return cards.join("");
 }
 

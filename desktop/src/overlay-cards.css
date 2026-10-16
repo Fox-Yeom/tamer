@@ -95,8 +95,12 @@
 .ov .wild-note-close { border: 0; background: transparent; color: var(--ov-dim); cursor: pointer; font-size: 12px; padding: 2px 4px; align-self: flex-start; }
 .ov .wild-note-close:hover { color: var(--ov-text); }
 .ov .wild-note.big { border: 2px solid #e8b04a; box-shadow: 0 0 0 3px rgba(232, 176, 74, .18); } /* ⭐ 대발견 (#82) */
-/* 진행 (#88, PKM-30): the one thing about to happen, under the current tab's card — minimal: a dot on the partner */
-.ov .ov-prog { border-top: 1px solid var(--ov-edge); padding-top: 4px; font-size: 11px; font-weight: 700; color: var(--warn-fg); white-space: nowrap; }
-.ov .card .sprite { position: relative; }
-.ov .ov-prog-dot { position: absolute; top: -2px; right: -6px; font-size: 12px; line-height: 1; filter: drop-shadow(0 0 2px rgba(0, 0, 0, .5)); }
+/* 진행 (#88 #90, PKM-30): under the current tab's card — 🥚 2/10 · ⭐ 곧 6/7 (gold = one more to go);
+   minimal: small chips under the partner, the hover line says what they are */
+.ov .ov-prog { border-top: 1px solid var(--ov-edge); padding-top: 4px; font-size: 11px; color: var(--ov-dim); white-space: nowrap; }
+.ov .ov-prog .soon { color: var(--warn-fg); font-weight: 700; }
+.ov .ov-prog-mini { display: flex; justify-content: flex-end; gap: 3px; }
+.ov .ov-prog-mini span { padding: 0 5px; border-radius: 8px; font-size: 10px; font-weight: 700; line-height: 15px; white-space: nowrap; font-variant-numeric: tabular-nums;
+  color: var(--ov-text); background: rgba(var(--ov-rgb), .72); border: 1px solid var(--ov-edge); }
+.ov .ov-prog-mini span.soon { color: var(--warn-fg); border-color: var(--warn-line); }
 .ov .wild-note.hatch { border: 2px solid var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); } /* 🐣 부화 알림 */
