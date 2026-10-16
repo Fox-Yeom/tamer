@@ -870,6 +870,23 @@ module.exports = [
     },
   },
   {
+    id: "box-no-eggs", tags: ["smoke", "poke"], what: "내 포켓몬: 부화기 알은 카드·수에서 빠지고 맨 위 한 줄 \"🥚 알 n개는 👜 가방의 부화기에\" — [가방 열기]로 가방 (#91)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "incubator_add_test", args: { kind: "egg", have: 2 } }, { invoke: "incubator_add_test", args: { kind: "egg2", have: 0 } },
+      { call: "openDex" }, { call: "box" }, { wait: 800 }, { probe: "box" }, { invoke: "box_list", args: { ws: "$ws" }, log: true },
+      { click: "#box-grid .pk-box-eggs button" }, { wait: 800 }, { probe: "bag" }],
+    check: ({ probe, log }) => {
+      const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]"), mons = list.filter((m) => !m.egg).length, eggs = list.filter((m) => m.egg).length;
+      return [
+        ok(eggs === 2 && probe.box?.cards === mons, `카드 ${probe.box?.cards}개 = 알 뺀 ${mons}마리 (알 ${eggs})`),
+        ok(probe.box?.boxEggs === "🥚 알 2개는 👜 가방의 부화기에 있어요 가방 열기", `안내 줄 ${probe.box?.boxEggs}`),
+        ok(new RegExp(`내 포켓몬 ${mons}$`).test(probe.box?.boxTab || ""), `탭 수 ${probe.box?.boxTab} (알 빼고 ${mons})`),
+        ok(probe.bag?.poke === "bag" && /^알 2\/10/.test(probe.bag?.bagInc?.now || ""), `가방 열기 → ${probe.bag?.poke} ${probe.bag?.bagInc?.now}`),
+      ];
+    },
+  },
+  {
     id: "catch-log", tags: ["smoke", "poke"], what: "내 포켓몬 상세: 잡은 폴더·에이전트·진화 이력, 기록 없는 옛 개체는 그 줄 없음 (#44)",
     data: "owner", mode: "direct", folders: ["proj"],
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { call: "box" }, { wait: 300 }, { call: "openDex" }, { call: "box" }, { wait: 800 },

@@ -1833,7 +1833,7 @@ function dexTitle() {
   const d = dexState;
   const owned = d.entries.reduce((n, e) => n + (e.owned || 0), 0);
   const fresh = d.entries.reduce((n, e) => n + (e.fresh || 0), 0);
-  const n = d.box ? d.box.length : owned, view = d.view || "dex";
+  const n = d.box ? boxMons(d.box).length : owned, view = d.view || "dex";
   const tab = chooseFor || active, on = (v) => (view === v ? ' class="on"' : "");
   const cur = d.chooseOpts?.current;
   $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button>${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
@@ -2188,7 +2188,7 @@ async function pickRender() {
   const d = dexState, grid = $("#box-grid");
   d.box ||= await invoke("box_list", { ws: active?.id }).catch(() => []);
   if (dexState !== d || !d.pick) return;
-  d.list = [...d.box].sort((a, b) => (a.folder === "here" ? -1 : 0) - (b.folder === "here" ? -1 : 0) || (b.lv ?? 0) - (a.lv ?? 0));
+  d.list = boxMons(d.box).sort((a, b) => (a.folder === "here" ? -1 : 0) - (b.folder === "here" ? -1 : 0) || (b.lv ?? 0) - (a.lv ?? 0));
   grid.innerHTML = '<h4 class="pk-group"><button class="pk-back">← 가방으로</button> 이상한사탕을 줄 포켓몬</h4>'
     + d.list.map((m, i) => pkCard(m, i, { icons: TYPE_ICON, ago }).replace('class="pk-card', `class="pk-card${(m.lv ?? 0) >= 100 ? " off" : ""}`)).join("");
   for (const img of grid.querySelectorAll("img[data-gif]")) spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; });
@@ -2207,9 +2207,11 @@ function boxMatch(q, m) {
   const e = dexState.byNo.get(m.id);
   return dexMatch(q, m.id, { ...(e || { name: m.name, types: m.types, caught: true }), caughtAt: m.at, fresh: m.new ? 1 : 0, shiny: m.shiny, partner: m.folder ? 1 : 0, grad: m.grad, egg: m.egg });
 }
+// 알 are not Pokémon yet: they live in the bag's incubator, not among 내 포켓몬's cards (#91, PKM-14 rule 6)
+const boxMons = (list) => (list || []).filter((m) => !m.egg);
 function boxSorted() {
   const d = dexState, q = dexQuery.trim();
-  const list = d.box.filter((m) => !q || boxMatch(q, m));
+  const list = boxMons(d.box).filter((m) => !q || boxMatch(q, m));
   const recent = (a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid;
   const by = {
     recent, no: (a, b) => a.id - b.id || recent(a, b), name: (a, b) => String(a.name).localeCompare(String(b.name), "ko") || recent(a, b),
@@ -2226,7 +2228,7 @@ function boxRender() {
   const d = dexState, grid = $("#box-grid"), q = dexQuery.trim();
   const prev = d.list?.[d.bi];
   const card = (m) => pkCard(m, d.list.indexOf(m), { icons: TYPE_ICON, ago });
-  let html = "";
+  let html = "", note = "";
   if (d.view === "choose") {
     const items = chooseItems(d.chooseOpts || { resting: [], others: [] }).filter((m) => m.kind === "loading" || !q || boxMatch(q, m));
     d.list = items.filter((m) => m.kind !== "loading");
@@ -2242,11 +2244,13 @@ function boxRender() {
     }
   } else {
     d.list = boxSorted();
-    html = d.list.map(card).join("");
+    const eggs = (d.box || []).filter((m) => m.egg).length;
+    note = eggs && !q ? `<p class="pk-note pk-box-eggs">🥚 알 ${eggs}개는 👜 가방의 부화기에 있어요 <button data-view="bag">가방 열기</button></p>` : ""; // #91
+    html = note + d.list.map(card).join("");
   }
   $("#dex-found").textContent = q ? `${d.list.length}마리` : "";
   if (!d.list.length && (q || d.view === "box")) {
-    grid.innerHTML = `<div class="pk-empty" id="box-empty">${q ? `<b>"${esc(q)}"</b>에 맞는 포켓몬이 없어요<button id="box-clear">검색 지우기</button>`
+    grid.innerHTML = note + `<div class="pk-empty" id="box-empty">${q ? `<b>"${esc(q)}"</b>에 맞는 포켓몬이 없어요<button id="box-clear">검색 지우기</button>`
       : "아직 잡은 포켓몬이 없어요 — 작업을 끝내면 가끔 야생 포켓몬이 나타나요"}</div>`;
     $(".dex-preview").style.visibility = "hidden";
     return;
@@ -2587,6 +2591,8 @@ $("#box-grid").addEventListener("click", async (e) => {
     return itemSelect(i);
   }
   if (e.target.closest(".pk-goods")) return shopView(); // 빈 가방 → 상점
+  const go = e.target.closest("button[data-view]"); // 내 포켓몬 "가방 열기" (#91) · 가방 "막 태어남 [보기]" (#88)
+  if (go) return dexView(go.dataset.view);
   const add = e.target.closest("[data-incadd]"); // 빈 부화기 → 가방의 알 넣기 (#88)
   if (add) {
     const r = await invoke("bag_use", { item: add.dataset.incadd }).catch(() => null);
@@ -3293,6 +3299,8 @@ function labState() {
       line: [...document.querySelectorAll("#box-grid .pk-incq")].map((c) => c.textContent.replace(/\s+/g, "")), empty: $("#box-grid .pk-inc-empty")?.textContent.replace(/\s+/g, " ").trim() || null,
       born: $("#box-grid .pk-inc-born")?.textContent.replace(/\s+/g, " ").trim() || null } : null,
     bagTab: dexOpen() ? $('#dex-title [data-view="bag"]')?.textContent || null : null,
+    boxEggs: dexOpen() ? $("#box-grid .pk-box-eggs")?.textContent.replace(/\s+/g, " ").trim() || null : null, // #91
+    boxTab: dexOpen() ? $('#dex-title [data-view="box"]')?.textContent || null : null,
     road: dexOpen() ? [...document.querySelectorAll("#box-grid .pk-rgen")].map((r) => r.textContent.replace(/\s+/g, " ").trim()) : null, // #86
     research: dexOpen() ? [...document.querySelectorAll("#box-grid .pk-rstep")].map((r) => r.textContent.replace(/\s+/g, " ").trim()) : null,
     wildBadge: $("#wild .wild-badge:not([hidden])")?.textContent || null,

@@ -249,3 +249,6 @@
 #dex .pk-inc-empty { margin: 0; padding: 10px 12px; border: 1px dashed var(--pk-line); border-radius: var(--pk-radius); font-size: 13px; color: var(--pk-dim); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 #dex .pk-inc-empty button { margin-left: 0; }
 #dex .pk-incsec .pk-note { margin: 0; }
+/* 🎒 내 포켓몬: 알 are in the bag's incubator (#91) — one line pointing there */
+#dex .pk-box-eggs { display: flex; align-items: center; gap: 8px; }
+#dex .pk-box-eggs button { border: 1px solid var(--pk-edge); border-radius: 8px; padding: 2px 9px; background: var(--pk-chip); color: var(--pk-fg); font: inherit; font-size: 12px; cursor: pointer; }
