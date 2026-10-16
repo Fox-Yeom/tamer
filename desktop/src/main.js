@@ -1098,8 +1098,6 @@ function gradBand(tab, pk) {
 $("#views").addEventListener("click", async (e) => {
   const g = e.target.closest("[data-grad]");
   if (g && active) { await invoke("partner_grad", { ws: active.id, keep: g.dataset.grad === "keep" }); gradBand(active, null); if (active.partner) active.partner.gradAsk = false; }
-  const egg = e.target.closest("[data-egg-in]");
-  if (egg && active) { const r = await invoke("bag_use", { item: egg.dataset.eggIn, ws: active.id }).catch(() => null); if (r?.ok) { if (chooseOpen()) closeChoose(false); toast("🥚 알을 품었어요 — 이 폴더에서 작업을 끝낼 때마다 부화가 가까워져요"); } }
 });
 // 🐣 the egg hatches (#84, S8): it shakes, goes white, then the Pokémon
 async function hatch(tab, sp, p) {
@@ -1260,9 +1258,7 @@ function showEmpty(tab, freed) {
   $(".poke", tab.view).hidden = true;
   $(".pokeball", tab.view).hidden = true;
   $(".empty-ball", tab.view).hidden = false;
-  const eggs = coins?.eggs || {}; // 🥚 an egg in the bag can be this folder's partner-to-be (#84)
-  $(".poke-label", tab.view).innerHTML = `파트너가 없어요 <button class="need-partner">파트너 고르기</button>`
-    + (eggs.egg ? ` <button class="pk-egg-in" data-egg-in="egg">🥚 알 품기 (${eggs.egg})</button>` : "") + (eggs.egg2 ? ` <button class="pk-egg-in" data-egg-in="egg2">🥚 희귀 알 품기 (${eggs.egg2})</button>` : "");
+  $(".poke-label", tab.view).innerHTML = `파트너가 없어요 <button class="need-partner">파트너 고르기</button>`;
   $(".poke-exp", tab.view).textContent = freed ? "파트너가 다른 폴더로 갔어요 · 작업을 끝내면 야생 포켓몬이 더 자주 나타나요"
     : "작업을 끝내면 야생 포켓몬이 더 자주 나타나요 — 잡아서 파트너로";
 }
@@ -1913,14 +1909,33 @@ async function homeRender() {
   };
   const agentsHtml = HOME_AGENTS.map(([k, name]) => { const l = lastUsage(k); return (l.five_hour || l.seven_day) ? `<div class="pk-agent"><h5>${name}${l.model ? ` <span class="dim">${esc(l.model)}</span>` : ""}</h5>${meter("5시간", l.five_hour)}${meter("주간", l.seven_day)}</div>` : ""; }).join("");
   // ⭐ 연구 스탬프 (#82, PKM-24): a stamp for each day with a finish, 7 = a legend
-  const stp = coins?.stamps, legendName = (id) => ({ 144: "프리저", 145: "썬더", 146: "파이어" })[id] || `#${id}`;
+  // 전설의 길 · 리서치 (#86): each generation's share and legends, the research's steps
+  const lr = await invoke("legend_road").catch(() => null);
+  const openL = (lr?.road || []).flatMap((g) => g.legends.filter((l) => l.open)), wantL = openL.filter((l) => !l.owned);
+  const stp = coins?.stamps, legendName = (id) => openL.find((l) => l.id === id)?.name || `#${id}`;
   const stampHtml = stp ? `<section class="pk-stamps"><h4 class="pk-group">연구 스탬프<span class="dim">작업을 끝낸 날마다 하나 · ${stp.need}개면 대발견(전설 확정)</span></h4>
     <div class="pk-stamp">${Array.from({ length: stp.need }, (_, i) => stp.days[i] ? `<span class="on" title="${stp.days[i]}">${Number(stp.days[i].slice(5, 7))}/${Number(stp.days[i].slice(8))}</span>` : "<span></span>").join("")}
     <b>${stp.n >= stp.need ? "⭐ 대발견!" : `${stp.need - stp.n}개 남음`}</b></div>
-    <p class="pk-note">다음 대발견: ${coins.legend ? `⭐ ${legendName(coins.legend)} (전설의 향)` : "열린 전설 중 아직 없는 종 — 프리저·썬더·파이어"}</p></section>` : "";
+    <p class="pk-note">다음 대발견: ${coins.legend ? `⭐ ${legendName(coins.legend)} (전설의 향)` : wantL.length ? `열린 전설 중 아직 없는 종 — ${wantL.map((l) => l.name).join("·")}` : "열린 전설을 모두 함께하고 있어요 — 200코인"}</p></section>` : "";
+  const rs = lr?.research;
+  const researchHtml = rs?.title ? `<section class="pk-research"><h4 class="pk-group">리서치<span class="dim">✦ ${esc(rs.title)} — 끝내면 ${esc(rs.name)}와 확정 조우 + 마스터볼</span></h4>
+    ${rs.steps.map((st) => `<div class="pk-rstep${st.done ? " done" : ""}"><span>${st.done ? "✔" : "▸"} ${esc(st.text)}</span><span class="pk-bar"><i style="width:${Math.round((st.have / st.n) * 100)}%"></i></span><span>${st.have}/${st.n}</span></div>`).join("")}</section>`
+    : rs && rs.finished ? '<section class="pk-research"><h4 class="pk-group">리서치<span class="dim">✔ 뮤 — 다음 리서치는 곧</span></h4></section>' : "";
+  const roadHtml = lr?.road ? `<section class="pk-road"><h4 class="pk-group">전설의 길<span class="dim">세대 도감(일반종)을 50% 채우면 그 세대 전설, 80%면 대표 전설이 대발견에 열려요</span></h4>
+    ${lr.road.map((g) => `<div class="pk-rgen"><b>${g.region}</b><span class="pk-bar"><i style="width:${Math.min(100, g.pct)}%"></i></span><span>${g.pct}%</span>
+      <span class="dim">${[
+        g.legends.some((l) => l.open) && `✔ ${g.legends.filter((l) => l.open).map((l) => `${l.owned ? "●" : ""}${esc(l.name)}`).join("·")}`,
+        g.legends.some((l) => !l.open && !l.cover) && `50%: ${g.legends.filter((l) => !l.open && !l.cover).map((l) => esc(l.name)).join("·")}`,
+        g.legends.some((l) => !l.open && l.cover) && `80%: ${g.legends.filter((l) => !l.open && l.cover).map((l) => esc(l.name)).join("·")}`,
+      ].filter(Boolean).join(" · ")}</span></div>`).join("")}</section>` : "";
+  // 🥚 the incubator (#85)
+  const inc = await invoke("incubator_state").catch(() => null);
+  const incHtml = inc ? `<section class="pk-inc"><h4 class="pk-group">부화기<span class="dim">어느 폴더든 작업을 끝낼 때마다 하나</span></h4>
+    <div class="pk-inc-row"><i class="pk-egg${inc.active.kind === "egg2" ? " rare" : ""}"></i><b>${esc(inc.active.name)}</b><span class="pk-bar"><i style="width:${Math.round((inc.active.have / inc.active.need) * 100)}%"></i></span><span>${inc.active.have}/${inc.active.need}</span>${inc.waiting ? `<span class="dim">대기 ${inc.waiting}</span>` : ""}</div></section>` : "";
+  if (dexState !== d || d.view !== "home") return;
   $("#box-grid").innerHTML = `<div class="pk-home">${band}
     <section class="pk-today"><div><b>${st?.today ?? 0}</b><span>오늘 끝낸 작업</span></div><div><b>${st?.streak ? `🔥 ${st.streak}` : "0"}</b><span>일 연속</span></div>${coinBox}
-      <div class="pk-week" title="최근 7일 끝낸 작업">${week}</div></section>${stampHtml}
+      <div class="pk-week" title="최근 7일 끝낸 작업">${week}</div></section>${incHtml}${stampHtml}${researchHtml}${roadHtml}
     <section><h4 class="pk-group">사용 한도<span class="dim">남은 비율 · 마지막으로 알려 준 값</span></h4>${agentsHtml || '<p class="pk-note">아직 한도 정보가 없어요 — Claude Code나 Codex가 한 번 응답하면 보여요</p>'}</section>
   </div>`;
   $("#dex-found").textContent = "";
@@ -1970,8 +1985,9 @@ async function shopRender() {
     }).join("");
   } else {
     d.list = st.items.filter((it) => st.bag[it.id]);
-    const fx = st.incenseUntil ? `<div class="pk-effects">켜진 효과: 🪔 향 ${minsLeft(st.incenseUntil)}분 남음</div>` : "";
-    grid.innerHTML = fx + (d.list.length ? d.list.map(card).join("") + '<p class="pk-note">볼은 야생 포켓몬이 나오면 카드에서 골라 던져요</p>'
+    const fx = [st.incenseUntil && `🪔 향 ${minsLeft(st.incenseUntil)}분 남음`, st.incubator && `🥚 부화기 ${st.incubator.active.name} ${st.incubator.active.have}/${st.incubator.active.need}${st.incubator.waiting ? ` · 대기 ${st.incubator.waiting}` : ""}`].filter(Boolean);
+    const fxHtml = fx.length ? `<div class="pk-effects">켜진 효과: ${fx.join(" · ")}</div>` : "";
+    grid.innerHTML = fxHtml + (d.list.length ? d.list.map(card).join("") + '<p class="pk-note">볼은 야생 포켓몬이 나오면 카드에서 골라 던져요</p>'
       : '<p class="pk-empty">가방이 비었어요 — 🛒 상점에서 사요 <button class="pk-goods">상점 열기</button></p>');
   }
   $("#dex-found").textContent = "";
@@ -2019,12 +2035,11 @@ function itemPreview(it, note = "") {
     b.textContent = st.incenseUntil ? "1시간 늘리기" : "향 피우기";
     return;
   }
-  if (it.id === "egg" || it.id === "egg2") { // 🥚 품기 (#84): in this tab's folder, if it has no partner
-    const here = d.box?.find((m) => m.folder === "here");
-    $("#dex-meta").innerHTML = `${esc(it.effect)} — 전설·환상은 안 나와요<br>가진 수 ${have}<br>파트너 없는 폴더에서 품어요. 그 폴더에서 작업을 끝낼 때마다 부화가 가까워져요`;
-    if (!active) { b.disabled = true; b.textContent = "열린 탭이 없어요"; }
-    else if (here) { b.disabled = true; b.textContent = "이 탭엔 파트너가 있어요"; }
-    else b.textContent = "이 탭에 품기";
+  if (it.id === "egg" || it.id === "egg2") { // 🥚 the incubator (#85): any finished task, anywhere — one at a time
+    const inc = st.incubator;
+    $("#dex-meta").innerHTML = `${esc(it.effect)} — 전설·환상은 안 나와요<br>가진 수 ${have}<br>부화기에 넣으면 어느 폴더든 작업을 끝낼 때마다 부화가 가까워져요`
+      + (inc ? `<br>지금 부화기: ${esc(inc.active.name)} ${inc.active.have}/${inc.active.need}${inc.waiting ? ` · 대기 ${inc.waiting}` : ""} — 넣으면 그 뒤에 차례` : "");
+    b.textContent = inc ? "부화기에 넣기 (차례 기다림)" : "부화기에 넣기";
     return;
   }
   if (it.id === "legend") { // 전설의 향 (#82): which open legend the next breakthrough brings
@@ -2074,10 +2089,11 @@ async function itemAct() {
   }
   if (it.id === "incense") { const r = await invoke("bag_use", { item: "incense" }).catch(() => null); if (r?.ok) toast(`🪔 향을 피웠어요 — ${minsLeft(r.until)}분 동안 야생 포켓몬이 더 자주 나와요`); return shopRender(); }
   if (it.id === "candy") return candyGive(d.box?.find((m) => m.folder === "here"));
-  if ((it.id === "egg" || it.id === "egg2") && active) { // 🥚 (#84)
-    const r = await invoke("bag_use", { item: it.id, ws: active.id }).catch(() => null);
-    if (!r?.ok) { toast(r?.why === "partner" ? "이 탭엔 파트너가 있어요 — 파트너 없는 폴더에서 품어요" : "알이 없어요"); return shopRender(); }
-    closeDex(); toast("🥚 알을 품었어요 — 이 폴더에서 작업을 끝낼 때마다 부화가 가까워져요"); return;
+  if (it.id === "egg" || it.id === "egg2") { // 🥚 (#85)
+    const r = await invoke("bag_use", { item: it.id }).catch(() => null);
+    if (!r?.ok) { toast("알이 없어요"); return shopRender(); }
+    toast(r.incubator?.waiting ? "🥚 부화기 차례를 기다려요" : "🥚 부화기에 넣었어요 — 어느 폴더든 작업을 끝낼 때마다 부화가 가까워져요");
+    return shopRender();
   }
 }
 // 🍬 given to an individual (this tab's partner, or one picked from 내 포켓몬)
@@ -2879,6 +2895,9 @@ listen("economy", (e) => {
   if (ws && gained) { const t = byId.get(ws); if (t) coinFloat(t, gained); }
   if (dexOpen() && dexState) { dexTitle(); if (dexState.view === "home") homeRender(); }
 });
+// 🐣 the incubator hatched an egg (#85): it's in the box now
+listen("hatched", (e) => { const h = e.payload; toast(`🐣 부화기에서 ${h.shiny ? "✨" : ""}${josa(h.name, "이", "가")} 태어났다! — 내 포켓몬에서 파트너로 데려올 수 있어요${h.coins ? ` · +${coinTxt(h.coins)} 새 종` : ""}`, 5000); if (dexOpen() && dexState) { dexState.box = null; if (dexState.view === "home") homeRender(); } });
+listen("incubator", () => { if (dexOpen() && dexState?.view === "home") homeRender(); });
 listen("open-folder", (e) => openFolder(e.payload.cwd));
 listen("toast", (e) => toast(e.payload.text, e.payload.ms || 1800)); // from the main process (a shell environment that couldn't be read …)
 listen("select-tab", (e) => selectTab(byId.get(e.payload.ws))); // overlay click
@@ -3195,6 +3214,10 @@ function labState() {
     pokeLabel: active ? $(".poke-label", active.view)?.textContent?.trim() || null : null, // #84
     gradBand: active ? $(".pk-grad", active.view)?.textContent || null : null,
     eggShown: active ? !!$(".pane-avatar .pk-egg", active.view) : null,
+    incubator: dexOpen() ? $("#box-grid .pk-inc-row")?.textContent || null : null, // #85
+    road: dexOpen() ? [...document.querySelectorAll("#box-grid .pk-rgen")].map((r) => r.textContent.replace(/\s+/g, " ").trim()) : null, // #86
+    research: dexOpen() ? [...document.querySelectorAll("#box-grid .pk-rstep")].map((r) => r.textContent.replace(/\s+/g, " ").trim()) : null,
+    wildDupe: !!$("#wild .wild-dupe:not([hidden])"), wildBadge: $("#wild .wild-badge:not([hidden])")?.textContent || null,
     agent: active ? (() => { const s = curSession(active); return s?.hostAgent?.key || (s?.running ? s?.agent?.key || s?.agent?.label : null) || null; })() : null, // the agent state the top bar shows (waiting = 입력 필요)
     tsearch: $("#tsearch").hidden ? null : { q: $("#tsearch-q").value, n: $("#tsearch-n").textContent, pane: tsearchPane?.kind || null, alt: !$("#tsearch-alt").hidden },
     // the top bar and the hint line stay one line, nothing pushed out (#38)
@@ -3462,7 +3485,8 @@ async function uiScenes(set) {
       await invoke("overlay_show_test", { on: false });
       // 🥚 · 🎓 the partner pane (#84): an egg 3/10, then a graduate with its band — drawn here only (last, so nothing after it moves)
       await invoke("win_resize_test", { w: 1400, h: 900 }); await wait(400);
-      await showPartner(tab, { uid: -1, name: "알", egg: { kind: "egg", have: 3, need: 10 } }); await wait(300); await shot("partner-egg");
+      await invoke("incubator_add_test", { kind: "egg", have: 3 }); await invoke("incubator_add_test", { kind: "egg2", have: 0 });
+      await openDex(); await dexView("home"); await wait(500); await shot("home-incubator"); closeDex();
       { const m = (await invoke("box_list", { ws: tab.id }))[0];
         await showPartner(tab, { ...m, lv: 100, final: true, grad: 1, gradAsk: true }); await wait(800); await shot("graduate"); }
     }

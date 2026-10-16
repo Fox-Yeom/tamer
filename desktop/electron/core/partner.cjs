@@ -22,8 +22,9 @@ const SPRITES = path.join(CACHE, "pokemon");
 const EVOLVE_EVERY = 8; // the old pace (before levels, #74) — only for folders.json's mirror
 const BOX = path.join(CACHE, "box.json"); // { next, mons: [{ uid, id, shiny, xp, lv, mile, friend, traded, last_folder, final, how, at, folder }] }
 const START_LV = 5, MAX_LV = 100, ALT_LV = 30, FRIEND_N = 20; // PKM-21
-// 🥚 알 (E5, #84, PKM-25): an egg is a box individual without a species yet — { egg: { kind, need, have,
-// next: { id, shiny } (picked one finish early) } } in a folder (that folder has a partner) or resting
+// 🥚 알 (E5, #84 · 부화기 #85, PKM-25): an egg is a box individual without a species yet — { egg: { kind,
+// need, have, next: { id, shiny } (picked one finish early) }, inc: true, inc_at } in the incubator, never a
+// folder's partner: the first one (by inc_at) fills with every finished task anywhere, the rest wait
 const EGGS = { egg: { need: 10, name: "알", shiny: 64 }, egg2: { need: 20, name: "희귀 알", shiny: 32 } };
 const STARTER = path.join(CACHE, "starters.json"); // { set: [{ id, shiny }] } — the first partner's choice
 const CHOICES = 3;
@@ -181,7 +182,14 @@ function migrateBox() {
   writeJson(BOX, b);
   writeJson(FOLDERS, folders);
 }
-const migrate = () => { migrateBox(); migrateLevels(); };
+// #85: eggs kept in a folder (beta.8) move into the incubator, their progress kept
+function migrateEggs() {
+  const moved = [];
+  if (!readBox().mons.some((m) => m.egg && !m.inc)) return;
+  updateBox((b) => { for (const m of b.mons) if (m.egg && !m.inc) { if (m.folder) moved.push(m.folder); m.folder = null; m.inc = true; m.inc_at = m.at || now(); } });
+  for (const f of moved) mirror(f, null);
+}
+const migrate = () => { migrateBox(); migrateLevels(); migrateEggs(); };
 
 const monOf = (b, uid) => b.mons.find((m) => m.uid === uid);
 // (an individual whose sprite isn't downloaded yet still shows: name from the Pokédex, no picture)
@@ -289,7 +297,7 @@ function options(cwd) {
     // only while the box is empty (your very first partner)
     starter: b.mons.length ? null : { set: t.set.map((c) => loadSprite(c.id, c.shiny)).filter(Boolean), ready: t.set.length >= CHOICES, total: CHOICES },
     current: cur ? view(cur) : null,
-    resting: b.mons.filter((m) => !m.folder).map(view).filter(Boolean),
+    resting: b.mons.filter((m) => !m.folder && !m.egg).map(view).filter(Boolean), // eggs are in the incubator (#85)
     // partners of other folders (taking one leaves that folder without a partner)
     others: b.mons.filter((m) => m.folder && m.folder !== cwd).map((m) => {
       const v = view(m);
@@ -313,6 +321,7 @@ function take(cwd, { starter: starterId, uid }) {
     } else {
       m = monOf(b, Number(uid));
       if (!m) throw new Error("no such Pokémon");
+      if (m.egg) throw new Error("알은 부화기에서 부화해요"); // #85
       if (m.folder && m.folder !== cwd) freed = m.folder;
     }
     for (const x of b.mons) if (x.folder === cwd && x !== m) x.folder = null; // the old partner rests
@@ -356,7 +365,7 @@ function boxList(cwd) {
   migrate();
   const folders = readJson(FOLDERS, {});
   return readBox().mons.map((m) => {
-    if (m.egg) return { ...eggView(m), how: "egg", at: m.at || null, new: false, evo: [], folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder] };
+    if (m.egg) return { ...eggView(m), how: "egg", at: m.at || null, new: false, evo: [], folder: null, inc: incEggs()[0]?.uid === m.uid ? "active" : "waiting" };
     const v = monView(m);
     return { uid: m.uid, id: m.id, shiny: !!m.shiny, name: v.name, gif: v.gif, types: v.types || [], xp: m.xp || 0,
       lv: v.lv, final: v.final, next: v.next, how: m.how || null, ...(m.grad ? { grad: m.grad } : {}), at: m.at || null, new: !!m.new,
@@ -413,7 +422,7 @@ async function onDone(cwd) {
   updateBox((b) => {
     m = b.mons.find((x) => x.folder === cwd);
     if (!m) return;
-    if (m.egg) { m.egg.have = Math.min(m.egg.need, (m.egg.have || 0) + 1); egg = true; return; } // 🥚 one finish closer (#84)
+    if (m.egg) { egg = true; return; } // an egg isn't a partner any more (#85) — nothing here
     m.xp = (m.xp || 0) + 1; // the old EXP (folders.json's mirror, PKM-17)
     const before = lvOf(m);
     if (!m.final && isFinal(m)) m.final = true;
@@ -425,7 +434,7 @@ async function onDone(cwd) {
     delete m.traded; // the first finish after the move only
   });
   if (!m) return { evolved: null, miles: [] };
-  if (egg) return eggStep(m.uid);
+  if (egg) return { evolved: null, miles: [] };
   mirror(cwd, m);
   return { ...(await evolveNow(m.uid, trade)), miles, graduated };
 }
@@ -444,19 +453,25 @@ function gradChoice(cwd, keep) {
   if (ok && !keep) mirror(cwd, null);
   return ok;
 }
-// 🥚 an egg in a folder without a partner (from the bag) — the folder's partner-to-be
-const canIncubate = (cwd) => !readBox().mons.some((x) => x.folder === cwd);
-function incubate(cwd, kind) {
+// 🥚 the incubator (#85): an egg from the bag goes in (behind any already there); its view for the screens
+const incEggs = (b = readBox()) => b.mons.filter((m) => m.egg && m.inc).sort((x, y) => (x.inc_at || 0) - (y.inc_at || 0) || x.uid - y.uid);
+function incubatorAdd(kind) {
   if (!EGGS[kind]) return null;
   migrate();
   let out = null;
-  updateBox((b) => {
-    if (b.mons.some((x) => x.folder === cwd)) return;
-    out = { uid: b.next++, egg: { kind, need: EGGS[kind].need, have: 0 }, how: "egg", at: now(), folder: cwd, last_folder: cwd };
-    b.mons.push(out);
-  });
-  if (out) mirror(cwd, null);
-  return out && eggView(out);
+  updateBox((b) => { out = { uid: b.next++, egg: { kind, need: EGGS[kind].need, have: 0 }, how: "egg", at: now(), folder: null, inc: true, inc_at: Date.now() }; b.mons.push(out); });
+  return incubator();
+}
+function incubator() {
+  const q = incEggs();
+  return q.length ? { active: { uid: q[0].uid, name: EGGS[q[0].egg.kind]?.name || "알", ...eggView(q[0]).egg }, waiting: q.length - 1 } : null;
+}
+// a finished task anywhere: the first egg gets one closer (and maybe hatches into the box)
+async function incubatorStep() {
+  const first = incEggs()[0];
+  if (!first) return null;
+  updateBox((b) => { const m = monOf(b, first.uid); if (m?.egg) m.egg.have = Math.min(m.egg.need, (m.egg.have || 0) + 1); });
+  return eggStep(first.uid);
 }
 // one finish early its species is picked and its picture fetched (like an evolution); at the last one it
 // hatches — Lv 5, "알에서 부화", this folder's partner. Offline: it waits for the next finish (PKM-25 rule 5)
@@ -480,7 +495,8 @@ async function eggStep(uid) {
     const x = monOf(b, uid);
     if (!x?.egg) return;
     delete x.egg;
-    Object.assign(x, { id: nx.id, shiny: !!nx.shiny, xp: 0, since_evo: 0, lv: START_LV, mile: 0, friend: 0, how: "egg", hatched: now() });
+    delete x.inc; delete x.inc_at;
+    Object.assign(x, { id: nx.id, shiny: !!nx.shiny, xp: 0, since_evo: 0, lv: START_LV, mile: 0, friend: 0, how: "egg", hatched: now(), at: now(), new: true });
   });
   recordDex(sp);
   m = monOf(readBox(), uid);
@@ -553,4 +569,4 @@ async function evolveNow(uid, trade) {
   return { evolved: to, from: first };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, ownedSpecies, incubate, canIncubate, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

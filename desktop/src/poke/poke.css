@@ -212,5 +212,12 @@
 @keyframes pk-egg-shake { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
 .pk-grad { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 6px 8px; padding: 8px 10px; border: 1px solid var(--pk-coin-line); border-radius: 10px; background: var(--pk-coin-soft); font-size: 12px; text-align: center; }
 .pk-grad-do { display: flex; gap: 6px; }
-.pk-grad button, .pk-egg-in { border: 1px solid var(--line); border-radius: 8px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; background: var(--raised); color: var(--fg); }
+.pk-grad button { border: 1px solid var(--line); border-radius: 8px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; background: var(--raised); color: var(--fg); }
 .pk-grad button[data-grad="keep"] { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 700; }
+#dex .pk-inc-row { display: flex; align-items: center; gap: 10px; font-size: 13px; } /* 🥚 부화기 (#85) */
+#dex .pk-inc-row .pk-bar { flex: 1; max-width: 260px; }
+/* ✦ 리서치 · 전설의 길 (#86, PKM-26·27, SCREENS_P3 S2): step rows and generation rows, each a bar */
+#dex .pk-rstep, #dex .pk-rgen { display: grid; grid-template-columns: 220px 1fr 52px; align-items: center; gap: 10px; font-size: 12px; padding: 2px 0; }
+#dex .pk-rgen { grid-template-columns: 48px 160px 40px 1fr; }
+#dex .pk-rstep.done { color: var(--pk-dim); }
+#dex .pk-rgen .dim { color: var(--pk-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -15,6 +15,8 @@ const { trayModel, trayIcon, AGENTS: TRAY_AGENTS } = require("./tray.cjs");
 const prices = require("./core/prices.cjs");
 const stats = require("./core/stats.cjs");
 const economy = require("./core/economy.cjs"); // 포켓코인 (#72)
+const legends = require("./core/legends.cjs"); // 전설의 길 (#86)
+const research = require("./core/research.cjs"); // 환상 스페셜 리서치 (#86)
 const { RustCore } = require("./core/rust.cjs");
 
 const ptys = new Map(); // pane id "<ws>:<agent|shell>" -> IPty
@@ -493,7 +495,8 @@ function onCoreEvent(msg) {
   }
   if (msg.event === "transition" && msg.to === "done" && msg.from !== "done") {
     stats.recordDone(); // Home: today's count, the streak (#44) — every finished task, guessed ones too
-    bigCheck(); // ⭐ the 7th 연구 스탬프 brings a legend (#82)
+    research.onDone(ws.cwd, caughtSet().size); // ✦ "서로 다른 폴더 3곳" (#86)
+    bigCheck(); // ⭐ the 7th 연구 스탬프 brings a legend (#82) · a research done brings its mythical (#86)
     // an agent without events (any CLI, or one whose events never came): "done" was guessed from its
     // output — it still raises the partner, at half the pace (every other one), and brings no wild
     if (msg.guess) {
@@ -514,11 +517,24 @@ function onCoreEvent(msg) {
     // where and during whose task it showed up: kept with the individual if it's caught (#44)
     const w = msg.guess ? null : wild.onDone(ws.id, { empty: !ws.partner, folder: ws.cwd, agent: fromShell ? ws.shell?.key : sess?.agent, incense: !!economy.incenseUntil() });
     if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ws=${ws.id}`); broadcast("wild", { ...w, balls: ballsOwned() }); overlayUpdate(); }
+    // 🥚 the incubator (#85): every finished task anywhere — the first egg one closer, maybe a hatch into the box
+    partner.incubatorStep().then((r) => {
+      if (!r) return;
+      if (r.hatched) {
+        const coins = r.newdex ? economy.onNewDex() : 0;
+        logLine(`incubator hatched ${r.hatched.id}${r.hatched.shiny ? "s" : ""}${coins ? " newdex" : ""}`);
+        if (research.onCatch(caughtSet().size)) researchCheck();
+        send("hatched", { id: r.hatched.id, name: r.hatched.name, shiny: r.hatched.shiny, coins });
+        send("economy", economy.summary());
+      }
+      send("incubator", partner.incubator());
+    }).catch((e) => logLine(`incubator error ${e}`));
     // a finished task: EXP for the folder's partner, maybe an evolution
     const t0 = Date.now();
     partner.onDone(ws.cwd).then(({ evolved, from, miles = [], hatched, newdex, graduated }) => {
       logLine(`exp ws=${ws.id} ${JSON.stringify(partner.progress(ws.cwd))} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"}${hatched ? ` hatched=${hatched.id}${hatched.shiny ? "s" : ""}` : ""}${graduated ? " graduated" : ""} ${Date.now() - t0}ms`);
       const coins = evolved ? economy.onEvolve() : hatched && newdex ? economy.onNewDex() : 0; // 🪙 +30 (#72) · a new species out of an egg (#84)
+      if (evolved && research.onEvolve(caughtSet().size)) researchCheck(); // ✦ "진화 3번" (#86)
       const mileCoins = miles.reduce((s) => s + economy.onMilestone(), 0); // every 10 levels ₽20 (#74)
       const gradCoins = graduated ? economy.graduated() : 0; // 🎓 300 + an egg (#84)
       if (evolved || hatched) { ws.partner = { ...(evolved || hatched), ...partner.progress(ws.cwd) }; overlayUpdate(); }
@@ -876,13 +892,29 @@ async function bigShow() {
   const v = await wild.showBig().catch(() => null);
   if (v) { logLine(`wild big ${v.id}${v.shiny ? "s" : ""}`); broadcast("wild", { ...v, balls: ballsOwned() }); overlayUpdate(); }
 }
+// the species you have caught (전설의 길 · 리서치 "20종") — from the Pokédex
+const caughtSet = () => new Set(partner.dex().entries.filter((e) => e.caught).map((e) => e.id));
+// ✦ a research done: its mythical (once nothing else is on screen) and a Master Ball (#86, PKM-27)
+function researchCheck() {
+  if (wild.bigPending() || wild.current()) return false;
+  const r = research.take(partner.ownedSpecies());
+  if (!r) return false;
+  economy.gift("master");
+  send("economy", economy.summary());
+  if (r.owned) { logLine(`research ${r.id} done — already with you`); return false; }
+  wild.startBig(r.id, Math.random() < 1 / 64, "research");
+  logLine(`research ${r.id} done — encounter`);
+  bigShow();
+  return true;
+}
 function bigCheck() {
   if (wild.bigPending()) return bigShow(); // still waiting (shown after another encounter, or offline before)
+  if (researchCheck()) return;
   const st = economy.stamps();
   if (st.n < st.need) return;
   economy.breakthrough();
   const owned = partner.ownedSpecies(), want = economy.takeLegend();
-  const pool = want && !owned.has(want) ? [want] : wild.OPEN_LEGENDS.map((l) => l.id).filter((id) => !owned.has(id));
+  const pool = want && !owned.has(want) ? [want] : legends.openLegends(caughtSet(), owned).map((l) => l.id).filter((id) => !owned.has(id));
   if (!pool.length) { economy.legendCoins(); logLine("breakthrough: every open legend is with you — 200 coins"); send("economy", economy.summary()); return; }
   const id = pool[Math.floor(Math.random() * pool.length)];
   wild.startBig(id, Math.random() < 1 / 64);
@@ -891,8 +923,8 @@ function bigCheck() {
   return bigShow();
 }
 // the open legends and whether you have each (the shop's 전설의 향, the bag's choice)
-const legendsView = () => { const owned = partner.ownedSpecies(); return wild.OPEN_LEGENDS.map((l) => ({ ...l, owned: owned.has(l.id) })); };
-const shopNow = () => ({ ...economy.shopState(), legends: legendsView() });
+const legendsView = () => { const owned = partner.ownedSpecies(); return legends.openLegends(caughtSet(), owned).map((l) => ({ id: l.id, name: l.name, owned: l.owned })); };
+const shopNow = () => ({ ...economy.shopState(), legends: legendsView(), incubator: partner.incubator() });
 // the balls in the bag, for the wild card's ball chips (#76)
 const ballsOwned = () => { try { const b = economy.bag(); return { great: b.great || 0, ultra: b.ultra || 0, master: b.master || 0 }; } catch { return {}; } };
 const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow() });
@@ -1393,6 +1425,17 @@ const commands = {
   economy_start_seen: () => economy.dismissStart(),
   // 🛒 상점 · 👜 가방 (#76, PKM-22·23): the screen asks, the main process checks and writes (POL-SEC-02)
   shop_state: () => shopNow(),
+  incubator_state: () => partner.incubator(), // 🥚 (#85)
+  // 전설의 길 · 리서치 (#86): each generation's share and legends, the research's steps
+  legend_road: () => { const c = caughtSet(), owned = partner.ownedSpecies(); return { road: legends.road(c, owned), research: research.view(c.size, owned) }; },
+  // a legend you already have came out: 200 coins instead (PKM-26 rule 5)
+  wild_dupe({ token }) {
+    if (!wild.takeDupe(String(token))) return { ok: false };
+    const coins = economy.legendCoins();
+    logLine("wild dupe legend — 200 coins");
+    send("economy", economy.summary());
+    return { ok: true, coins };
+  },
   shop_buy({ item, n }) {
     const r = economy.buy(String(item), Number(n));
     logLine(`shop buy ${item} ×${n} ${r.ok ? "ok" : r.why}`);
@@ -1400,17 +1443,12 @@ const commands = {
     return r.ok ? { ...r, ...shopNow() } : r;
   },
   async bag_use({ item, uid, id, ws: wsId }) {
-    if (item === "egg" || item === "egg2") { // 🥚 품기 (#84): in this tab's folder, when it has no partner
-      const ws = workspaces.get(String(wsId));
-      if (!ws || !partner.canIncubate(ws.cwd)) return { ok: false, why: "partner", ...shopNow() };
+    if (item === "egg" || item === "egg2") { // 🥚 into the incubator (#85) — behind any egg already there
       if (!economy.use(item)) return { ok: false, why: "none", ...shopNow() };
-      const v = partner.incubate(ws.cwd, item);
-      ws.partner = v; ws.partnerReady = Promise.resolve(v);
-      logLine(`bag use ${item} ws=${ws.id} uid=${v?.uid}`);
-      send("partner", { ws: ws.id, ...v });
-      send("economy", economy.summary());
-      overlayUpdate();
-      return { ok: true, ...shopNow() };
+      const inc = partner.incubatorAdd(item);
+      logLine(`bag use ${item} incubator ${JSON.stringify(inc?.active)} waiting=${inc?.waiting}`);
+      send("economy", economy.summary()); send("incubator", inc);
+      return { ok: true, incubator: inc, ...shopNow() };
     }
     if (item === "legend") { // 전설의 향 on one open legend you don't have (#82) — used when the breakthrough comes
       const ok = legendsView().some((l) => l.id === Number(id) && !l.owned) && economy.setLegend(Number(id));
@@ -1429,6 +1467,7 @@ const commands = {
     if (!economy.use("candy")) return { ok: false, why: "none" };
     const r = await partner.candy(uid);
     const coins = r?.evolved ? economy.onEvolve() : 0;
+    if (r?.evolved && research.onEvolve(caughtSet().size)) researchCheck(); // ✦ (#86)
     const gradCoins = r?.graduated ? economy.graduated() : 0; // 🎓 a candy to Lv 100 (#84)
     const mileCoins = (r?.miles || []).reduce((s) => s + economy.onMilestone(), 0);
     logLine(`bag use candy uid=${uid} lv=${r?.lv} evolved=${r?.evolved?.id ?? "-"} miles=${(r?.miles || []).join(",") || "-"}`);
@@ -1459,6 +1498,7 @@ const commands = {
     r.balls = ballsOwned();
     if (r.ball && r.ball !== "poke" && r.result !== "noball") send("economy", economy.summary());
     if (r.newdex) { r.coins = economy.onNewDex(); send("economy", economy.summary()); } // a species never caught before: 🪙 +₽30 (#72)
+    if (r.result === "caught") research.onCatch(caughtSet().size); // ✦ "20종 잡기" — its encounter after this one ends (#86)
     logLine(`wild throw ${r.result} shakes=${r.shakes}${r.coins ? ` coins=${r.coins}` : ""}`);
     if (r.result !== "gone") broadcast("wild-throw", r);
     return r;
@@ -1624,6 +1664,13 @@ const testCommands = {
     onCoreEvent({ event: "state", ws: String(ws), payload: { state: String(to), ...(times || {}) }, test: true });
     onCoreEvent({ event: "transition", ws: String(ws), from: String(from), to: String(to), test: true });
   },
+  // 🥚 an egg straight into the incubator with some progress (UI scenes, #85)
+  incubator_add_test({ kind = "egg", have = 0 }) {
+    partner.incubatorAdd(kind);
+    for (let i = 0; i < have; i++) partner.incubatorStep();
+    send("incubator", partner.incubator());
+    return partner.incubator();
+  },
   // 🪙 finishes counted straight into the ledger (UI scenes: today's coins without touching EXP or stats)
   economy_earn_test({ n = 1, took = null }) {
     for (let i = 0; i < Math.min(500, Number(n) || 0); i++) economy.onDone({ took });
@@ -1779,7 +1826,7 @@ app.whenReady().then(() => {
   win.on("blur", () => setTimeout(overlaySync, 250)); // focus may be moving to our own dialog
   createOverlay();
   trayUpdate(); // 메뉴바 (STA-19)
-  wild.setOnEnd((e) => { logLine(`wild end ${e.reason}`); broadcast("wild-end", e); overlayUpdate(); if (wild.bigPending()) setTimeout(bigShow, 1500); }); // a waiting breakthrough after it (#82)
+  wild.setOnEnd((e) => { logLine(`wild end ${e.reason}`); broadcast("wild-end", e); overlayUpdate(); setTimeout(() => (wild.bigPending() ? bigShow() : researchCheck()), 1500); }); // a waiting breakthrough / research after it (#82, #86)
   if (wild.enabled()) wild.prefetch();
   // S1: owner-only data, old hook logs pruned (7 days without changes)
   try {

@@ -17,7 +17,7 @@ export function lvLine(m) {
 
 export function pkCard(item, i, { icons = {}, ago = () => "" } = {}) {
   if (item.kind === "loading") return '<div class="pk-card loading"><div class="pokeball"></div><span class="dim">찾는 중…</span></div>';
-  const where = item.kind === "starter" ? "첫 파트너 후보" : item.folder === "here" ? "이 탭" : item.folder ? `📁 ${esc(item.folder)}` : "쉬는 중";
+  const where = item.kind === "starter" ? "첫 파트너 후보" : item.inc ? (item.inc === "active" ? "🥚 부화기" : "부화기 대기") : item.folder === "here" ? "이 탭" : item.folder ? `📁 ${esc(item.folder)}` : "쉬는 중";
   const line = item.kind === "starter" ? (item.types || []).map((t) => icons[t] || t).join(" ")
     : lvLine(item);
   return `<div class="pk-card${item.new ? " new" : ""}${item.folder === "here" ? " here" : ""}" data-i="${i}"${item.key ? ` data-key="${item.key}"` : ""}`

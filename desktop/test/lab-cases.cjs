@@ -336,29 +336,124 @@ module.exports = [
       { text: "env | sort > env.txt" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { probe: "done" }],
     check: ({ box }) => [ok(fs.existsSync(path.join(box.folder("proj"), "env.txt")), "env.txt가 안 생김")],
   },
+  // ── 전설의 길 · 환상 리서치 E6 (#86, PKM-26 · PKM-27) ──
+  {
+    id: "legend-road", tags: ["smoke", "poke"], what: "전설의 길: 관동 일반종 120/146 = 82% → 1세대 전설(새 셋·뮤츠) 열림, 홈에 세대별 줄, 상점 전설의 향 목록에 뮤츠 (#86)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      const f = path.join(box.data, "pokedex.json"), dex = JSON.parse(fs.readFileSync(f, "utf8"));
+      for (let id = 1; id <= 121; id++) if (![144, 145, 146, 150, 151].includes(id)) dex[id] = { name: `#${id}`, count: 1, first: 1 };
+      fs.writeFileSync(f, JSON.stringify(dex));
+      putEcon(box, { "state.json": { startSeen: true } });
+    },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, { key: "p", mods: 4 }, { wait: 900 }, { probe: "home" },
+      { invoke: "legend_road", log: true }, { invoke: "shop_state", log: true }],
+    check: ({ probe, log }) => {
+      const lr = JSON.parse(log.match(/^lab-invoke legend_road (.*)$/m)?.[1] || "{}"), st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
+      const g1 = lr.road?.[0];
+      return [
+        ok(g1?.got >= 120 && g1.pct >= 80 && g1.legends.every((l) => l.open), `관동 ${g1?.got}/${g1?.of} ${g1?.pct}% ${JSON.stringify(g1?.legends?.map((l) => [l.name, l.open]))}`),
+        ok(lr.road?.[1]?.legends.every((l) => !l.open), "성도 전설이 0%인데 열림"),
+        ok((st.legends || []).some((l) => l.id === 150), `전설의 향 목록 ${JSON.stringify(st.legends?.map((l) => l.name))}`),
+        ok(/^관동\d+% ✔ 프리저·썬더·파이어·뮤츠$/.test(probe.home?.road?.[0] || "") && /50%: 라이코·앤테이·스이쿤 · 80%: 루기아·칠색조/.test(probe.home?.road?.[1] || ""), `홈 전설의 길 ${JSON.stringify(probe.home?.road?.slice(0, 2))}`),
+      ];
+    },
+  },
+  {
+    id: "research-mew", tags: ["smoke", "poke", "data"], what: "환상 리서치(뮤) 1단계: 서로 다른 폴더 3곳에서 작업을 끝내면 다음 단계 — 폴더는 해시로만, 단계가 끝나면 지움 · 홈에 단계별 진행 (#86)",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b", "c"],
+    steps: [{ until: "tabs.2" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
+      { key: "1", mods: 4 }, { wait: 300 }, ...DONE("$ws"), { key: "2", mods: 4 }, { wait: 300 }, ...DONE("$ws"), { wait: 300 }, { probe: "two" },
+      { key: "p", mods: 4 }, { wait: 900 }, { probe: "home2" }, { key: "Escape" }, { wait: 300 },
+      { key: "3", mods: 4 }, { wait: 300 }, ...DONE("$ws"), { wait: 500 }, { key: "p", mods: 4 }, { wait: 900 }, { probe: "home3" }],
+    check: ({ probe, box }) => {
+      let r = null; try { r = JSON.parse(fs.readFileSync(path.join(box.data, "economy", "research.json"), "utf8")); } catch {}
+      return [
+        ok(probe.home2?.research?.[0] === "▸ 서로 다른 폴더 3곳에서 작업 끝내기2/3" && /^▸ 20종 잡기[1-9]\d*\/20$/.test(probe.home2?.research?.[1] || ""), `두 곳 뒤 ${JSON.stringify(probe.home2?.research)} (20종은 지금 잡은 수부터)`),
+        ok(probe.home3?.research?.[0] === "✔ 서로 다른 폴더 3곳에서 작업 끝내기3/3" && /^▸ 20종 잡기\d+\/20$/.test(probe.home3?.research?.[1] || ""), `세 곳 뒤 ${JSON.stringify(probe.home3?.research)}`),
+        ok(r?.step === 1 && r.folders.length === 0 && !filesWith(path.join(box.data, "economy"), box.folder("a")).length, `research.json ${JSON.stringify(r)} (다음 단계에선 폴더 해시도 지움, 폴더 이름 없음)`),
+      ];
+    },
+  },
+  {
+    id: "research-mew-encounter", tags: ["smoke", "poke"], what: "환상 리서치 마지막 단계(진화 3번째)를 끝내면 뮤와 확정 조우(✦ 리서치 금색 카드) + 마스터볼 1개 (#86)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      fakeSpecies(box, 5, "리자드", { reach: { kind: "level", level: 16 }, next: [] });
+      fakeSpecies(box, 151, "뮤", { reach: null, next: [] });
+      fs.writeFileSync(path.join(box.data, "pokemon", "151.json"), JSON.stringify({ id: 151, shiny: false, name_ko: "뮤", name_en: "Mew", legendary: true, capture_rate: 45, types: ["psychic"] }));
+      evolvePartner(box);
+      fs.mkdirSync(path.join(box.data, "economy"), { recursive: true });
+      fs.writeFileSync(path.join(box.data, "economy", "research.json"), JSON.stringify({ id: 151, step: 2, folders: [], evolves: 2, ready: false, done: [] }));
+      putEcon(box, { "state.json": { startSeen: true } });
+    },
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, ...DONE("$ws"), { wait: 3000 }, { probe: "after" }, { invoke: "shop_state", log: true }],
+    check: ({ probe, log }) => {
+      const st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
+      return [
+        ok(/^research 151 done — encounter$/m.test(log) && probe.after?.wildBig && probe.after?.wildBadge === "✦ 리서치" && /환상의 뮤가 나타났다!/.test(probe.after?.wildText || ""), `조우 ${probe.after?.wildBadge} · ${probe.after?.wildText}`),
+        ok(st.bag?.master === 1, `마스터볼 ${JSON.stringify(st.bag)}`),
+      ];
+    },
+  },
+  {
+    id: "legend-dupe", tags: ["smoke", "poke"], what: "이미 가진 전설이 야생으로 다시 나오면 던지기 대신 [코인으로 받기 · 200코인] — 전설은 한 마리씩 (#86, PKM-26 규칙 5)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    setup: (box) => {
+      birds(box);
+      const b = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8"));
+      b.mons.push({ uid: b.next++, id: 144, shiny: false, xp: 0, lv: 50, mile: 50, how: "wild", at: 1, folder: null });
+      fs.writeFileSync(path.join(box.data, "box.json"), JSON.stringify(b));
+      fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 144, shiny: false } }));
+      putEcon(box, { "state.json": { startSeen: true } });
+    },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "card" },
+      { click: "#wild .wild-dupe" }, { wait: 800 }, { invoke: "economy_state", log: true }],
+    check: ({ probe, log, box }) => {
+      const rows = (ledgerRows(box) || []).filter((x) => x.kind === "legend");
+      return [
+        ok(probe.card?.wildDupe && /이미 함께하는 프리저예요/.test(probe.card?.wildText || ""), `카드 ${probe.card?.wildDupe} · ${probe.card?.wildText}`),
+        ok(/^wild dupe legend — 200 coins$/m.test(log) && rows[0]?.amount === 200, `200코인 ${JSON.stringify(rows)}`),
+      ];
+    },
+  },
   // ── 🥚 알 · 🎓 졸업 E5 (#84, PKM-25 · PKM-19) ──
   {
-    id: "egg-hatch", tags: ["smoke", "poke"], what: "알: 파트너 없는 폴더의 빈 칸 [🥚 알 품기] → \"부화 0/10\", 그 폴더 작업 10번째에 부화(Lv 5, 알에서 부화, 새 종이면 +30) — 그 폴더의 파트너가 됨 (#84)",
+    id: "egg-hatch", tags: ["smoke", "poke"], what: "부화기: 가방에서 알을 넣으면 어느 폴더든 작업 10번째에 부화 — 박스로(새 종이면 +30, 알림), 그동안 파트너도 레벨이 오름, 두 번째 알은 대기 (#85, #84)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_TEST_EGG: "172" },
     setup: (box) => {
       fakeSpecies(box, 172, "피츄", { reach: null, next: [{ to: 25, kind: "friend" }] });
-      putEcon(box, { "ledger.jsonl": [{ day: todayLocal(), kind: "start", n: 0, amount: 1000 }, { day: todayLocal(), kind: "buy", item: "egg", n: 1, amount: -500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
+      evolvePartner(box);
+      putEcon(box, { "ledger.jsonl": [{ day: todayLocal(), kind: "start", n: 0, amount: 1000 }, { day: todayLocal(), kind: "buy", item: "egg", n: 2, amount: -1000 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 500 }, { probe: "empty" },
-      { click: "main.grid:not([hidden]) [data-egg-in='egg']" }, { wait: 800 }, { probe: "egg" },
-      ...Array.from({ length: 9 }, () => DONE("$ws")).flat(), { wait: 1500 }, { probe: "nine" }, ...DONE("$ws"), { wait: 4000 }, { probe: "hatched" },
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 800 }, { probe: "bag" },
+      { key: "Enter" }, { wait: 600 }, { key: "Enter" }, { wait: 600 }, { probe: "in" }, { key: "Escape" }, { wait: 300 },
+      ...Array.from({ length: 10 }, () => DONE("$ws")).flat(), { wait: 3500 }, { key: "p", mods: 4 }, { wait: 900 }, { probe: "home" },
       { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true }],
     check: ({ probe, log }) => {
-      const me = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((m) => m.folder === "here");
-      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]");
+      const pichu = list.find((m) => m.id === 172), me = list.find((m) => m.folder === "here"), eggs = list.filter((m) => m.egg);
       return [
-        ok(/🥚 알 품기 \(1\)/.test(probe.empty?.pokeLabel || ""), `빈 칸 ${probe.empty?.pokeLabel}`),
-        ok(probe.egg?.eggShown && probe.egg?.pokeExp === "부화 0/10" && probe.egg?.pokeLabel === "알", `품은 뒤 ${probe.egg?.pokeLabel} · ${probe.egg?.pokeExp}`),
-        ok(probe.nine?.pokeExp === "부화 9/10", `9번 뒤 ${probe.nine?.pokeExp}`),
-        ok(/^exp ws=.* hatched=172/m.test(log) && me?.id === 172 && me?.lv === 5 && me?.how === "egg", `부화 ${JSON.stringify(me && { id: me.id, lv: me.lv, how: me.how })}`),
-        ok(!probe.hatched?.eggShown && /피츄/.test(probe.hatched?.pokeLabel || ""), `부화 뒤 파트너 칸 ${probe.hatched?.pokeLabel}`),
-        ok(st.balance === 500 + 5 * 10 + 20 + 30 && !st.eggs?.egg, `잔액 ${st.balance} (500 + 완료 50 + 첫 완료 20 + 새 종 30) · 알 ${JSON.stringify(st.eggs)}`),
+        ok(probe.bag?.takeBtn === "부화기에 넣기", `가방 ${probe.bag?.takeBtn}`),
+        ok(/^켜진 효과: 🥚 부화기 알 0\/10 · 대기 1$/.test(probe.in?.effects || ""), `넣은 뒤 ${probe.in?.effects}`),
+        ok(/^incubator hatched 172 newdex$/m.test(log) && pichu?.lv === 5 && !pichu.folder && pichu.how === "egg", `부화 ${JSON.stringify(pichu && { lv: pichu.lv, folder: pichu.folder, how: pichu.how })}`),
+        ok(me?.id === 4 && me.lv === 35, `파트너 ${JSON.stringify(me && { id: me.id, lv: me.lv })} (그동안 Lv 15 → 35)`),
+        ok(eggs.length === 1 && eggs[0].inc === "active" && /^알0\/10$|^알.*0\/10/.test(probe.home?.incubator || ""), `남은 알 ${JSON.stringify(eggs.map((e) => e.inc))} · 홈 ${probe.home?.incubator}`),
       ];
+    },
+  },
+  {
+    id: "egg-migrate", tags: ["smoke", "poke", "data"], what: "beta.8에서 폴더에 품어 둔 알은 처음 켤 때 부화기로 — 진행 그대로, 그 폴더는 파트너가 비어 고르기 (#85)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      const b = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8"));
+      b.mons.push({ uid: b.next++, egg: { kind: "egg", need: 10, have: 4 }, how: "egg", at: 1, folder: box.folder("proj"), last_folder: box.folder("proj") });
+      fs.writeFileSync(path.join(box.data, "box.json"), JSON.stringify(b));
+    },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { probe: "choose" }, { invoke: "incubator_state", log: true }],
+    check: ({ probe, log }) => {
+      const inc = JSON.parse(log.match(/^lab-invoke incubator_state (.*)$/m)?.[1] || "null");
+      return [ok(inc?.active?.have === 4 && inc.active.need === 10 && probe.choose?.poke === "choose", `부화기 ${JSON.stringify(inc)} · 폴더는 고르기 ${probe.choose?.poke}`)];
     },
   },
   {
