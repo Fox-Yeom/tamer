@@ -55,7 +55,7 @@ body.side-drag { cursor: col-resize; user-select: none; }
 /* crisp pixels: integer scale set from JS, nearest-neighbour */
 .poke { image-rendering: pixelated; transform-origin: 50% 100%; }
 #hint { height: 22px; padding: 3px 10px; border-top: 1px solid var(--line); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-#toast { position: fixed; top: 40px; right: 16px; background: var(--raised-hi); padding: 8px 12px; border-radius: 6px; opacity: 0; transition: opacity .2s; }
+#toast { position: fixed; z-index: 40; top: 40px; right: 16px; /* above the Pokémon window and dialogs (#83) */ background: var(--raised-hi); padding: 8px 12px; border-radius: 6px; opacity: 0; transition: opacity .2s; }
 #toast.show { opacity: 1; }
 
 /* IME composition like a native text field (iTerm, macOS): inline on the pane background with an

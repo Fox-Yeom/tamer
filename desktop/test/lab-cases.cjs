@@ -407,6 +407,14 @@ module.exports = [
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 }, { probe: "after" }],
     check: ({ probe }) => [ok(probe.after?.wildBig && /전설의 썬더가 나타났다!.*×1\.44/.test(probe.after?.wildText || ""), `다시 켠 뒤 ${probe.after?.wildBig} · ${probe.after?.wildText}`)],
   },
+  {
+    id: "shell-hook-finish", tags: ["explore", "poke"], what: "시험 앱 셸에서 훅 스크립트로 UserPromptSubmit → Stop을 보내면 완료로 잡혀 대발견까지 — 사용자가 직접 확인하는 시험 빌드의 '작업 끝내기' (#82)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "6" },
+    setup: (box) => { birds(box); putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(6) } }); },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+      { text: `printf '{}' | bash "$CVIM_ROOT/claude/hooks/event.sh" UserPromptSubmit; sleep 2; printf '{}' | bash "$CVIM_ROOT/claude/hooks/event.sh" Stop` }, { wait: 200 }, { key: "Enter" }, { wait: 5000 }, { probe: "after" }],
+    check: ({ probe, log }) => [ok(/^breakthrough 14[4-6]/m.test(log) && probe.after?.wildBig, `대발견 ${log.match(/^breakthrough[^\n]*/m)?.[0]} · 카드 ${probe.after?.wildBig} · 전환 ${(log.match(/^transition [^\n]*/gm) || []).slice(-3).join(" | ")}`)],
+  },
   // ── 🛒 상점 · 👜 가방 E3 (#76, PKM-22·23) ──
   {
     id: "poke-keys-hangul", tags: ["smoke", "poke"], what: "한글 입력 상태에서도 포켓몬 창 글자 키: S(ㄴ) 상점 · I(ㅑ) 가방 · M(ㅡ) 내 포켓몬 — 터미널엔 아무 글자도 안 들어감 (#77)",
