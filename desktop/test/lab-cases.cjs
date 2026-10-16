@@ -61,6 +61,9 @@ function birds(box) {
     fakeSpecies(box, id, name, { reach: null, next: [] });
     const f = path.join(box.data, "pokemon", `${id}.json`), j = JSON.parse(fs.readFileSync(f, "utf8"));
     fs.writeFileSync(f, JSON.stringify({ ...j, legendary: true, capture_rate: 3 }));
+    // its ✨ too: a breakthrough rolls shiny 1 in 64, and offline a missing picture kept the card away (flaky smoke 2026-10-16)
+    fs.writeFileSync(path.join(box.data, "pokemon", `${id}s.json`), JSON.stringify({ ...j, shiny: true, legendary: true, capture_rate: 3 }));
+    fs.copyFileSync(path.join(box.data, "pokemon", `${id}.gif`), path.join(box.data, "pokemon", `${id}s.gif`));
   }
 }
 // 🪙 포켓코인 (#72): today as the app counts it (this Mac's midnight), the economy files of a sandbox
