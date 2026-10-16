@@ -34,7 +34,6 @@ const enabled = () => state().enabled !== false;
 const view = (c) => c && {
   token: c.token, id: c.id, name: c.name, shiny: c.shiny, types: c.types, gif: c.gif, ws: c.ws,
   until: c.until, throws: c.throws, ...(c.big ? { big: true, pity: Math.round(PITY ** c.misses * 100) / 100, ...(c.research ? { research: true } : {}) } : {}),
-  ...(c.dupe ? { dupe: true } : {}),
 };
 
 // the next wild Pokémon is picked and downloaded ahead of time (PokéAPI takes ~10 s), so an
@@ -82,8 +81,6 @@ function onDone(ws, { empty = false, folder = null, agent = null, incense = fals
   if (!sprite?.gif) { prefetch(); return null; } // not downloaded yet: skip this one
   updateJson(FILE, (t) => { t.last = Math.floor(Date.now() / 1000); delete t.next; });
   current = { ...sprite, ws, caughtIn: folder, caughtBy: agent, token: crypto.randomBytes(8).toString("hex"), throws: 0 };
-  // a legend / mythical you already have: one a species (POL-FUT-01 rule 9) — coins instead of a catch (#86)
-  if (sprite.legendary && partner.ownedSpecies().has(sprite.id)) current.dupe = true;
   arm(current, STAY);
   partner.recordSeen(sprite);
   prefetch();
@@ -134,8 +131,7 @@ function throwBall(token, ball = "poke", pay = () => true) {
 // (its picture fetched first — offline it waits for the next finish)
 const bigPending = () => !!state().big;
 function startBig(id, shiny, kind = "big") { updateJson(FILE, (t) => { t.big = { id: Number(id), shiny: !!shiny, misses: 0, ...(kind === "research" ? { research: true } : {}) }; }); }
-// a legend you already have: its coins taken instead (the card goes)
-function takeDupe(token) { if (!current || current.token !== token || !current.dupe) return false; end("coins"); return true; }
+
 async function showBig() {
   const b = state().big;
   if (!b || current || !enabled()) return null;
@@ -155,7 +151,7 @@ function setEnabled(on) {
 }
 
 module.exports = {
-  onDone, throwBall, prefetch, enabled, setEnabled, catchOdds, bigPending, startBig, showBig, takeDupe,
+  onDone, throwBall, prefetch, enabled, setEnabled, catchOdds, bigPending, startBig, showBig,
   current: () => view(current),
   setOnEnd: (fn) => { onEnd = fn; },
   setRng: (fn) => { rng = fn; }, // tests

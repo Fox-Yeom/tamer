@@ -397,9 +397,11 @@ function dex() {
   }).sort((a, b) => a.id - b.id);
   // the "새로 잡은" row: wild catches of the last 24 hours, newest first — like Pokémon GO's blue
   // background for the day's catches; whether you've looked at them is the NEW badge, not this (#18)
-  const since = now() - RECENT_HOURS * 3600;
-  const recent = mons.filter((m) => m.how === "wild" && (m.at || 0) >= since).sort((a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid).slice(0, 60)
-    .map((m) => ({ uid: m.uid, id: m.id, shiny: !!m.shiny, at: m.at, new: !!m.new, folder: m.folder || null }));
+  // and the day's hatchlings in a row of their own after it (#89) — one list, the caught first
+  const since = now() - RECENT_HOURS * 3600, newest = (a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid;
+  const row = (how) => mons.filter((m) => !m.egg && m.how === how && (m.at || 0) >= since).sort(newest).slice(0, 60)
+    .map((m) => ({ uid: m.uid, id: m.id, shiny: !!m.shiny, at: m.at, new: !!m.new, folder: m.folder || null, how }));
+  const recent = [...row("wild"), ...row("egg")];
   return { entries, recent, recentHours: RECENT_HOURS, total: 649, caught: entries.filter((e) => e.caught).length, shiny: entries.filter((e) => e.shiny).length };
 }
 
@@ -463,8 +465,17 @@ function incubatorAdd(kind) {
   return incubator();
 }
 function incubator() {
-  const q = incEggs();
-  return q.length ? { active: { uid: q[0].uid, name: EGGS[q[0].egg.kind]?.name || "알", ...eggView(q[0]).egg }, waiting: q.length - 1 } : null;
+  const q = incEggs(), v = (m) => ({ uid: m.uid, name: EGGS[m.egg.kind]?.name || "알", ...eggView(m).egg });
+  return q.length ? { active: v(q[0]), waiting: q.length - 1, queue: q.slice(1).map(v) } : null;
+}
+// 먼저 부화 (#88, PKM-25 rule 9): a waiting egg goes into the incubator, the one there becomes next —
+// each keeps its own progress (and its picked species)
+function incubatorFirst(uid) {
+  const q = incEggs(), i = q.findIndex((m) => m.uid === Number(uid));
+  if (i < 1) return null;
+  const at = (q[0].inc_at || 0) - 1;
+  updateBox((b) => { const m = monOf(b, q[i].uid); if (m?.inc) m.inc_at = at; });
+  return incubator();
 }
 // a finished task anywhere: the first egg gets one closer (and maybe hatches into the box)
 async function incubatorStep() {
@@ -569,4 +580,4 @@ async function evolveNow(uid, trade) {
   return { evolved: to, from: first };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

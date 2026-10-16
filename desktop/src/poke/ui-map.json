@@ -104,11 +104,12 @@
       ]
     },
     "bag": {
-      "what": "👜 가방 (I): 가진 아이템·켜진 효과, 사탕(이 탭 파트너 / 다른 포켓몬 고르기)·향 쓰기 (#76, PKM-23)",
+      "what": "👜 가방 (I): 가진 아이템·켜진 효과, 사탕(이 탭 파트너 / 다른 포켓몬 고르기)·향 쓰기 (#76, PKM-23) · 맨 위 🥚 부화기 섹션 — 부화 칸·차례 카드·먼저 부화·빈 부화기 (#88, PKM-25)",
       "entry": "dexView(\"bag\")",
       "scenes": [
         "bag",
-        "bag-use-candy"
+        "bag-use-candy",
+        "bag-incubator"
       ]
     }
   },
@@ -264,7 +265,7 @@
       ]
     },
     "pk-egg": {
-      "what": "🥚 알 그림(CSS — 흰 타원·무늬, 희귀 알은 금 무늬), 홈의 부화기 줄(#85), 카드 \"부화기/대기\" (#84, PKM-25)",
+      "what": "🥚 알 그림(CSS — 흰 타원·무늬, 희귀 알은 금 무늬), 홈의 부화기 줄(#85), 카드 \"부화기/대기\" (#84, PKM-25) · 가방 안 부화기 섹션(#88)",
       "files": [
         "src/poke/poke.css",
         "src/main.js",
@@ -273,20 +274,47 @@
       "selectors": [
         ".pk-egg",
         ".pk-inc",
-        ".pk-inc-row"
+        ".pk-inc-row",
+        ".pk-incsec",
+        ".pk-inc-now",
+        ".pk-incq",
+        ".pk-inc-born",
+        ".pk-inc-empty",
+        ".pk-soon"
       ],
       "functions": [
         "eggShow",
         "hatch",
         "pkCard",
         "lvLine",
-        "homeRender"
+        "homeRender",
+        "incubatorHtml"
       ],
       "screens": [
         "home",
         "box",
         "shop",
         "bag"
+      ]
+    },
+    "pk-chip-prog": {
+      "what": "진행 칩 🥚 ⭐ ✦ n/m — 메인 창 파트너 칸 레벨 줄 아래, 곧이면 금색, 좁은 칸은 숫자만, 누르면 가방/홈 (#88, PKM-30)",
+      "files": [
+        "src/poke/poke.css",
+        "src/style.css",
+        "src/main.js",
+        "index.html"
+      ],
+      "selectors": [
+        ".pk-chip-prog",
+        ".poke-prog"
+      ],
+      "functions": [
+        "progShow",
+        "progChip"
+      ],
+      "screens": [
+        "main"
       ]
     },
     "pk-grad": {
@@ -406,7 +434,7 @@
       ]
     },
     "wild-card": {
-      "what": "야생 포켓몬 카드 · 볼 고르기 칩(가진 볼만, #76) · ⭐ 대발견 금색 카드(#82) · 가진 전설 [코인으로 받기](#86)",
+      "what": "야생 포켓몬 카드 · 볼 고르기 칩(가진 볼만, #76) · ⭐ 대발견 금색 카드(#82)",
       "files": [
         "src/wild.js",
         "src/wild.css"
@@ -416,8 +444,7 @@
         ".wild-balls",
         ".wild-throw.gold",
         ".wild-badge",
-        ".wild-card.legend",
-        ".wild-dupe"
+        ".wild-card.legend"
       ],
       "functions": [
         "createWild",
@@ -577,20 +604,26 @@
       ]
     },
     "ov-cards": {
-      "what": "오버레이 카드 그리기 (오버레이 창과 설정 창 미리보기가 같이 씀) — 카드·말풍선·아이콘 줄·몬스터볼 줄·야생 알림",
+      "what": "오버레이 카드 그리기 (오버레이 창과 설정 창 미리보기가 같이 씀) — 카드·말풍선·아이콘 줄·몬스터볼 줄·야생 알림 · 진행 곧 줄·점·부화 알림(#88)",
       "files": [
         "src/overlay-view.js",
         "src/overlay-cards.css"
       ],
       "selectors": [
         ".ov",
-        ".wild-note.big"
+        ".wild-note.big",
+        ".ov-prog",
+        ".ov-prog-dot",
+        ".wild-note.hatch"
       ],
       "functions": [
         "cardsHtml",
         "wildNoteHtml",
         "applyShow",
-        "isMinimal"
+        "isMinimal",
+        "progHtml",
+        "progSoon",
+        "hatchNoteHtml"
       ],
       "screens": [
         "overlay",

@@ -336,6 +336,21 @@ module.exports = [
       { text: "env | sort > env.txt" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { probe: "done" }],
     check: ({ box }) => [ok(fs.existsSync(path.join(box.folder("proj"), "env.txt")), "env.txt가 안 생김")],
   },
+  {
+    id: "dex-hatched-row", tags: ["smoke", "poke"], what: "도감: 24시간 안에 부화한 포켓몬은 \"🥚 새로 부화한 포켓몬\" 줄에 따로(새로 잡은 줄 아래), 위 버튼도 따로 — ↓로 두 줄을 오감 (#89)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      const b = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8"));
+      b.mons.push({ uid: b.next++, id: 25, shiny: false, xp: 0, lv: 5, mile: 0, how: "egg", hatched: Math.floor(Date.now() / 1000) - 600, at: Math.floor(Date.now() / 1000) - 600, folder: null, new: true });
+      fs.writeFileSync(path.join(box.data, "box.json"), JSON.stringify(b));
+    },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, { key: "d", mods: 4 }, { wait: 1000 }, { probe: "dex" },
+      { key: "ArrowDown" }, { wait: 300 }, { probe: "down" }],
+    check: ({ probe }) => [
+      ok(JSON.stringify(probe.dex?.dexRows?.slice(0, 2)) === '["🆕 새로 잡은 포켓몬:3","🥚 새로 부화한 포켓몬:1"]', `줄 ${JSON.stringify(probe.dex?.dexRows?.slice(0, 2))}`),
+      ok(probe.down?.dexSel === "recent:25", `↓ → ${probe.down?.dexSel} (부화한 피카츄)`),
+    ],
+  },
   // ── 전설의 길 · 환상 리서치 E6 (#86, PKM-26 · PKM-27) ──
   {
     id: "legend-road", tags: ["smoke", "poke"], what: "전설의 길: 관동 일반종 120/146 = 82% → 1세대 전설(새 셋·뮤츠) 열림, 홈에 세대별 줄, 상점 전설의 향 목록에 뮤츠 (#86)",
@@ -397,7 +412,7 @@ module.exports = [
     },
   },
   {
-    id: "legend-dupe", tags: ["smoke", "poke"], what: "이미 가진 전설이 야생으로 다시 나오면 던지기 대신 [코인으로 받기 · 200코인] — 전설은 한 마리씩 (#86, PKM-26 규칙 5)",
+    id: "legend-again", tags: ["smoke", "poke"], what: "이미 가진 전설이 야생으로 다시 나와도 보통처럼 던져 잡음 — 두 마리 (#87, 전엔 코인으로 받기)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     setup: (box) => {
       birds(box);
@@ -407,17 +422,16 @@ module.exports = [
       fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 144, shiny: false } }));
       putEcon(box, { "state.json": { startSeen: true } });
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "card" },
-      { click: "#wild .wild-dupe" }, { wait: 800 }, { invoke: "economy_state", log: true }],
-    check: ({ probe, log, box }) => {
-      const rows = (ledgerRows(box) || []).filter((x) => x.kind === "legend");
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, { invoke: "wild_rig_test", args: { result: "caught" } }, ...DONE("$ws"), { wait: 1500 }, { probe: "card" },
+      { key: "b", mods: 4 }, { wait: 4500 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
+    check: ({ probe, log }) => {
+      const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]");
       return [
-        ok(probe.card?.wildDupe && /이미 함께하는 프리저예요/.test(probe.card?.wildText || ""), `카드 ${probe.card?.wildDupe} · ${probe.card?.wildText}`),
-        ok(/^wild dupe legend — 200 coins$/m.test(log) && rows[0]?.amount === 200, `200코인 ${JSON.stringify(rows)}`),
+        ok(/야생의 프리저가 나타났다!/.test(probe.card?.wildText || "") && /몬스터볼/.test(probe.card?.wildBtn || ""), `카드 ${probe.card?.wildText} · ${probe.card?.wildBtn}`),
+        ok(list.filter((m) => m.id === 144).length === 2, `프리저 ${list.filter((m) => m.id === 144).length}마리 (2여야)`),
       ];
     },
   },
-  // ── 🥚 알 · 🎓 졸업 E5 (#84, PKM-25 · PKM-19) ──
   {
     id: "egg-hatch", tags: ["smoke", "poke"], what: "부화기: 가방에서 알을 넣으면 어느 폴더든 작업 10번째에 부화 — 박스로(새 종이면 +30, 알림), 그동안 파트너도 레벨이 오름, 두 번째 알은 대기 (#85, #84)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_TEST_EGG: "172" },
@@ -435,7 +449,9 @@ module.exports = [
       const pichu = list.find((m) => m.id === 172), me = list.find((m) => m.folder === "here"), eggs = list.filter((m) => m.egg);
       return [
         ok(probe.bag?.takeBtn === "부화기에 넣기", `가방 ${probe.bag?.takeBtn}`),
-        ok(/^켜진 효과: 🥚 부화기 알 0\/10 · 대기 1$/.test(probe.in?.effects || ""), `넣은 뒤 ${probe.in?.effects}`),
+        // the bag's incubator section (#88): the egg in it, the second one in line; "켜진 효과" no longer lists it
+        ok(/^알 0\/10 · 작업 10번 남음/.test(probe.in?.bagInc?.now || "") && JSON.stringify(probe.in?.bagInc?.line) === '["1알0/10"]' && !probe.in?.effects && /🥚/.test(probe.in?.bagTab || ""),
+          `넣은 뒤 ${JSON.stringify(probe.in?.bagInc)} · 효과 ${probe.in?.effects} · 탭 ${probe.in?.bagTab}`),
         ok(/^incubator hatched 172 newdex$/m.test(log) && pichu?.lv === 5 && !pichu.folder && pichu.how === "egg", `부화 ${JSON.stringify(pichu && { lv: pichu.lv, folder: pichu.folder, how: pichu.how })}`),
         ok(me?.id === 4 && me.lv === 35, `파트너 ${JSON.stringify(me && { id: me.id, lv: me.lv })} (그동안 Lv 15 → 35)`),
         ok(eggs.length === 1 && eggs[0].inc === "active" && /^알0\/10$|^알.*0\/10/.test(probe.home?.incubator || ""), `남은 알 ${JSON.stringify(eggs.map((e) => e.inc))} · 홈 ${probe.home?.incubator}`),
@@ -454,6 +470,66 @@ module.exports = [
     check: ({ probe, log }) => {
       const inc = JSON.parse(log.match(/^lab-invoke incubator_state (.*)$/m)?.[1] || "null");
       return [ok(inc?.active?.have === 4 && inc.active.need === 10 && probe.choose?.poke === "choose", `부화기 ${JSON.stringify(inc)} · 폴더는 고르기 ${probe.choose?.poke}`)];
+    },
+  },
+  {
+    id: "incubator-first", tags: ["smoke", "poke"], what: "가방 안 부화기 섹션: 비었으면 가방의 알 [알 넣기], 넣으면 부화 칸·작업 n번 남음, 둘째 알은 차례 카드 — 고르면 [먼저 부화] 한 번에 바뀌고 진행은 알마다 그대로 (#88)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => putEcon(box, { "ledger.jsonl": [{ day: todayLocal(), kind: "start", n: 0, amount: 1000 }, { day: todayLocal(), kind: "buy", item: "egg", n: 1, amount: -500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } }),
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { wait: 300 }, { call: "closeDex" }, { wait: 300 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 800 }, { probe: "empty" },
+      { click: "#box-grid [data-incadd='egg']" }, { wait: 800 }, { probe: "one" },
+      { invoke: "incubator_add_test", args: { kind: "egg2", have: 0 } }, { wait: 800 }, { probe: "two" },
+      { click: "#box-grid .pk-incq" }, { wait: 400 }, { probe: "pick" }, { key: "Enter" }, { wait: 800 }, { probe: "first" }, { invoke: "incubator_state", log: true }],
+    check: ({ probe, log }) => {
+      const inc = JSON.parse(log.match(/^lab-invoke incubator_state (.*)$/m)?.[1] || "null");
+      return [
+        ok(/^부화기가 비었어요 — 가방에 알 1개 알 넣기$/.test(probe.empty?.bagInc?.empty || "") && !probe.empty?.bagInc?.now, `빈 부화기 ${JSON.stringify(probe.empty?.bagInc)}`),
+        ok(/^알 0\/10 · 작업 10번 남음$/.test(probe.one?.bagInc?.now || "") && probe.one?.bagInc?.line.length === 0 && !probe.one?.bagInc?.soon, `넣은 뒤 ${JSON.stringify(probe.one?.bagInc)}`),
+        ok(JSON.stringify(probe.two?.bagInc?.line) === '["1희귀알0/20"]', `둘째 알은 차례 카드 ${JSON.stringify(probe.two?.bagInc?.line)}`),
+        ok(probe.pick?.takeBtn === "먼저 부화", `고르면 ${probe.pick?.takeBtn}`),
+        ok(/^희귀 알 0\/20/.test(probe.first?.bagInc?.now || "") && JSON.stringify(probe.first?.bagInc?.line) === '["1알0/10"]' && inc?.active?.kind === "egg2" && inc.queue?.[0]?.kind === "egg",
+          `먼저 부화 뒤 ${JSON.stringify(probe.first?.bagInc)} · ${JSON.stringify(inc && { a: inc.active.kind, q: inc.queue.map((e) => e.kind) })}`),
+        ok(/^incubator first \d+ ok$/m.test(log), "로그에 incubator first … ok"),
+      ];
+    },
+  },
+  {
+    id: "progress-chips", tags: ["smoke", "poke", "app"], what: "진행 표시: 파트너 칸 칩 🥚 ⭐ ✦(곧이면 금색), 오버레이 곧 한 줄(최소 모드는 점)·부화 알림(누르면 내 포켓몬), 메뉴바 한 줄, 설정 \"진행\" 끄면 오버레이에서 빠짐, 칩 누르면 그 화면 (#88)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_TEST_EGG: "172", CVIM_STAMPS: "2" },
+    setup: (box) => {
+      fakeSpecies(box, 172, "피츄", { reach: null, next: [{ to: 25, kind: "friend" }] });
+      evolvePartner(box);
+      putEcon(box, { "state.json": { startSeen: true, stampsSince: todayLocal() } }); // today (the data has finishes today): 1/2 from the start, no breakthrough
+    },
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { invoke: "incubator_add_test", args: { kind: "egg", have: 8 } }, { wait: 600 }, { probe: "a" },
+      { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
+      ...DONE("$ws"), { wait: 1500 }, { probe: "b" }, { invoke: "overlay_dom_test", log: true }, { invoke: "tray_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "always" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "auto" } } } }, { wait: 300 },
+      ...DONE("$ws"), { wait: 1800 }, { invoke: "overlay_dom_test", log: true }, { probe: "c" },
+      { invoke: "settings_set", args: { patch: { overlay: { progress: false } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "hatch_open_test" }, { wait: 900 }, { probe: "opened" }, { key: "Escape" }, { wait: 400 },
+      { click: "main.grid:not([hidden]) .pk-chip-prog[data-prog='stamps']" }, { wait: 900 }, { probe: "home" }, { key: "Escape" },
+      { invoke: "settings_get", log: true }, { invoke: "overlay_show_test", args: { on: false } }],
+    check: ({ probe, log }) => {
+      const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const [stampsOnly, soon, dot, hatched, off] = dom;
+      const tray = JSON.parse(log.match(/^lab-invoke tray_test (.*)$/m)?.[1] || "{}"), labels = (tray.items || []).map((i) => i.label || "—");
+      const got = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
+      return [
+        ok(JSON.stringify(probe.a?.prog) === '["🥚 8/10","⭐ 곧 1/2!","✦ 0/3"]', `처음 칩 ${JSON.stringify(probe.a?.prog)}`),
+        ok(dom.length === 5 && stampsOnly?.prog === "⭐ 대발견까지 스탬프 1개" && !stampsOnly.progDot, `곧인 것이 스탬프뿐이면 그 줄 ${JSON.stringify(stampsOnly && { p: stampsOnly.prog, d: stampsOnly.progDot })}`),
+        ok(JSON.stringify(probe.b?.prog) === '["🥚 곧 9/10!","⭐ 곧 1/2!","✦ 0/3"]', `한 번 남으면 금색 곧 ${JSON.stringify(probe.b?.prog)}`),
+        ok(soon?.prog === "🥚 곧 부화 · 작업 1번" && !soon.minimal, `오버레이 곧 줄 — 둘 다 곧이면 부화가 먼저 ${soon?.prog}`),
+        ok(labels.includes("🥚 부화기 9/10 · ⭐ 스탬프 1/2 · ✦ 리서치 0/3"), `메뉴바 진행 줄 ${JSON.stringify(labels.filter((l) => /부화기|스탬프/.test(l)))}`),
+        ok(labels.some((l) => l === "진행 — 곧 일어날 일") || JSON.stringify(tray.items || []).includes("진행 — 곧 일어날 일"), "메뉴바 보일 것에 진행"),
+        ok(dot?.minimal && dot.progDot === "🥚" && !dot.prog, `최소 모드는 그림 위 점 ${JSON.stringify(dot && { m: dot.minimal, d: dot.progDot, p: dot.prog })}`),
+        ok(/^incubator hatched 172/m.test(log) && /^🐣 알에서 피츄 태어났어요/.test(hatched?.hatch || "") && hatched?.prog === "⭐ 대발견까지 스탬프 1개", `부화 알림 ${hatched?.hatch} · 다음 곧 ${hatched?.prog}`),
+        ok(JSON.stringify(probe.c?.prog) === '["⭐ 곧 1/2!","✦ 0/3"]', `부화 뒤 칩(🥚 빠짐) ${JSON.stringify(probe.c?.prog)}`),
+        ok(off && !off.prog && !off.hatch && got.overlay?.progress === false, `진행 끄면 줄·알림 없음 ${JSON.stringify(off && { p: off.prog, h: off.hatch })} 설정 ${got.overlay?.progress}`),
+        ok(/^hatch open from overlay$/m.test(log) && probe.opened?.poke === "box", `부화 알림 누르면 내 포켓몬 ${probe.opened?.poke}`),
+        ok(probe.home?.poke === "home", `⭐ 칩 누르면 홈 ${probe.home?.poke}`),
+      ];
     },
   },
   {
@@ -497,7 +573,7 @@ module.exports = [
     },
   },
   {
-    id: "breakthrough-legend", tags: ["smoke", "poke"], what: "전설의 향: 가방에서 파이어에 걸면 다음 대발견은 파이어, 향은 하나 씀 — 가진 전설에는 못 걺 (#82)",
+    id: "breakthrough-legend", tags: ["smoke", "poke"], what: "전설의 향: 가방에서 파이어에 걸면 다음 대발견은 파이어, 향은 하나 씀 — 열린 전설이 아닌 종엔 못 걺 (#82)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "2" },
     setup: (box) => {
       birds(box);
@@ -518,7 +594,7 @@ module.exports = [
     },
   },
   {
-    id: "breakthrough-owned", tags: ["smoke", "poke"], what: "열린 전설(1세대 새 셋)을 다 가졌으면 대발견은 조우 대신 200코인(+100) (#82)",
+    id: "breakthrough-owned", tags: ["smoke", "poke"], what: "열린 전설(1세대 새 셋)을 다 가졌어도 대발견은 그중 하나 — 두 번째 마리(+100) (#87, 전엔 200코인)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "2" },
     setup: (box) => {
       birds(box);
@@ -527,12 +603,12 @@ module.exports = [
       fs.writeFileSync(path.join(box.data, "box.json"), JSON.stringify(b));
       putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(1) } });
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1200 }, { probe: "after" }],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "after" }],
     check: ({ probe, log, box }) => {
       const rows = ledgerRows(box) || [];
       return [
-        ok(/every open legend is with you/.test(log) && !probe.after?.wildBig, `조우 없음 ${probe.after?.wildBig}`),
-        ok(rows.find((x) => x.kind === "legend")?.amount === 200 && rows.find((x) => x.kind === "big")?.amount === 100, `원장 ${JSON.stringify(rows.filter((x) => ["big", "legend"].includes(x.kind)))}`),
+        ok(/^breakthrough 14[4-6]$/m.test(log) && probe.after?.wildBig, `두 번째 마리 조우 ${log.match(/^breakthrough[^\n]*/m)?.[0]} · 카드 ${probe.after?.wildBig}`),
+        ok(rows.find((x) => x.kind === "big")?.amount === 100 && !rows.some((x) => x.kind === "legend"), `원장 ${JSON.stringify(rows.filter((x) => ["big", "legend"].includes(x.kind)))} (200코인 없음)`),
       ];
     },
   },

@@ -24,20 +24,12 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
       <div class="wild-text"></div>
       <div class="wild-balls" hidden></div>
       <div class="wild-actions"><button class="wild-throw" tabindex="-1">⚾ 몬스터볼 <span class="k">⌘B</span></button>
-        <button class="wild-dupe" tabindex="-1" hidden>🪙 코인으로 받기 · 200코인</button>
         <button class="wild-partner" tabindex="-1" hidden>이 탭의 파트너로</button>
         <button class="wild-dex" tabindex="-1" hidden>📕 도감에서 보기</button><span class="wild-timer dim"></span></div>
     </div>`;
   const $ = (s) => root.querySelector(s);
   const card = $(".wild-card"), img = $(".wild-poke"), ball = $(".wild-ball"), text = $(".wild-text");
-  const btn = $(".wild-throw"), adopt = $(".wild-partner"), dexBtn = $(".wild-dex"), timer = $(".wild-timer"), chips = $(".wild-balls"), dupe = $(".wild-dupe");
-  // a legend you already have (#86): 200 coins instead of a throw — one a species
-  dupe.addEventListener("mousedown", (e) => e.preventDefault());
-  dupe.addEventListener("click", async () => {
-    if (!enc) return;
-    const r = await invoke("wild_dupe", { token: enc.token }).catch(() => null);
-    if (r?.ok) { say(`이미 함께하는 ${nm(enc, "이", "가")} 돌아갔다… +${r.coins}코인`); dupe.hidden = true; clearInterval(tick); timer.textContent = ""; hideLater(2500); }
-  });
+  const btn = $(".wild-throw"), adopt = $(".wild-partner"), dexBtn = $(".wild-dex"), timer = $(".wild-timer"), chips = $(".wild-balls");
   let enc = null, busy = false, hideTimer = null, tick = null, balls = {};
 
   // the ball chips: only the balls you have (none bought = the card as it always was, one button)
@@ -65,7 +57,7 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
 
   function hide() {
     clearTimeout(hideTimer); clearInterval(tick); hideAt = 0;
-    card.hidden = true; enc = null; busy = false; adopt.hidden = true; dexBtn.hidden = true; dupe.hidden = true;
+    card.hidden = true; enc = null; busy = false; adopt.hidden = true; dexBtn.hidden = true;
   }
   // the card goes after ms — also when the window comes back after that (a window behind other apps may
   // have its timers held back, and the caught card was still there on return, #80)
@@ -91,7 +83,6 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
     card.className = `wild-card appearing${e.big ? " legend" : ""}`;
     $(".wild-badge").hidden = !e.big;
     $(".wild-badge").textContent = e.research ? "✦ 리서치" : "⭐ 대발견"; // #86
-    dupe.hidden = !e.dupe;
     img.className = "wild-poke";
     ball.className = "wild-ball pokeball-static";
     btn.hidden = false; btn.disabled = false; adopt.hidden = true; dexBtn.hidden = true;
@@ -100,8 +91,8 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
       await img.decode().catch(() => {});
       img.style.width = `${img.naturalWidth * (img.naturalWidth < 60 ? 2 : 1)}px`;
     } catch { img.removeAttribute("src"); }
-    say(e.dupe ? `야생의 ${nm(e, "이", "가")} 나타났다!<br><span class="dim">이미 함께하는 ${String(e.name).replace(/[&<>"]/g, "")}예요 — 전설은 한 마리씩</span>` : e.big ? `${e.research ? "환상의" : "전설의"} ${nm(e, "이", "가")} 나타났다!${e.pity > 1 ? `<br><span class="dim">놓칠수록 잡기 쉬워져요 ×${e.pity}</span>` : ""}` : `앗! 야생의 ${nm(e, "이", "가")} 나타났다!`);
-    if (e.dupe) { btn.hidden = true; chips.hidden = true; } else drawBalls();
+    say(e.big ? `${e.research ? "환상의" : "전설의"} ${nm(e, "이", "가")} 나타났다!${e.pity > 1 ? `<br><span class="dim">놓칠수록 잡기 쉬워져요 ×${e.pity}</span>` : ""}` : `앗! 야생의 ${nm(e, "이", "가")} 나타났다!`);
+    drawBalls();
     countdown();
     setTimeout(() => card.classList.remove("appearing"), 1200);
   }

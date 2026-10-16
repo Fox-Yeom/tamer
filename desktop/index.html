@@ -39,7 +39,7 @@
         <!-- M1: this folder's agent sessions (shown when there are 2 or more) -->
         <nav class="rail" hidden></nav>
         <aside class="side"><div class="side-split" title="끌어서 오른쪽 칸 너비 · 두 번 눌러 처음대로"></div>
-          <section class="pane pane-avatar"><div class="title">🐾 Avatar</div><div class="avatar-box"><div class="stage"><div class="pokeball" title="불러오는 중…"></div><div class="empty-ball" title="파트너가 없어요" hidden></div><img class="poke" alt="" hidden /><div class="fx"></div></div><div class="caption"><span class="poke-label"></span> <span class="state-line dim"></span></div><div class="poke-exp dim"></div><div class="poke-incense dim" hidden></div></div><ul class="activity"></ul></section>
+          <section class="pane pane-avatar"><div class="title">🐾 Avatar</div><div class="avatar-box"><div class="stage"><div class="pokeball" title="불러오는 중…"></div><div class="empty-ball" title="파트너가 없어요" hidden></div><img class="poke" alt="" hidden /><div class="fx"></div></div><div class="caption"><span class="poke-label"></span> <span class="state-line dim"></span></div><div class="poke-exp dim"></div><div class="poke-prog"></div><div class="poke-incense dim" hidden></div></div><ul class="activity"></ul></section>
           <section class="pane pane-changes"><div class="title">📝 변경 사항 <span class="changes-count"></span><span class="changes-branch dim"></span><span class="grow"></span><button class="changes-refresh" title="새로 고침">↻</button></div><ul class="changes"></ul></section>
           <section class="pane pane-shell"><div class="title">🐚 Shell</div><div class="where-banner" data-pane="shell" hidden></div><div class="term"></div></section>
         </aside>
@@ -87,6 +87,7 @@
             <label class="set-row"><input type="checkbox" data-set="overlay.partner" /> 파트너 <span class="dim">지금 탭 카드</span></label>
             <label class="set-row"><input type="checkbox" data-set="overlay.alerts" /> 알림 <span class="dim">입력 필요·완료 말풍선, 나를 기다리는 다른 탭, 아이콘 줄</span></label>
             <label class="set-row"><input type="checkbox" data-set="overlay.wild" /> 야생 포켓몬 <span class="dim">끄면 Tamer 창에서만</span></label>
+            <label class="set-row"><input type="checkbox" data-set="overlay.progress" /> 진행 — 곧 일어날 일 <span class="dim">곧 부화 · 대발견 하루 전 · 리서치 마지막, 부화 알림</span></label>
             <div class="set-row set-presets">빠른 선택 <button data-preset="all">전부</button><button data-preset="pokemon">포켓몬만</button><button data-preset="wild">야생 포켓몬만</button><button data-preset="off">끄기</button></div>
             <label class="set-row">카드 배경 <input type="range" min="0" max="100" step="5" data-set="overlay.alpha" /> <span class="set-val" data-val="overlay.alpha"></span></label>
             <label class="set-row">최소 모드 <select data-set="overlay.minimal"><option value="auto">배경 30% 이하일 때</option><option value="always">항상</option><option value="never">안 씀</option></select> <span class="dim">글자 없이 파트너·몬스터볼만</span></label>

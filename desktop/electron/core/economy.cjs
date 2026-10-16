@@ -200,11 +200,9 @@ function breakthrough() {
   save();
   return 100;
 }
-// all the open legends already with you: 200 coins instead of the encounter (PKM-24 rule 3)
 // 🎓 졸업 (#84, PKM-19): 300 coins and an egg into the bag (a gift line: {kind: "gift", item, n, amount: 0})
 function graduated() { load(); add("grad", 1, 300); add("gift", 1, 0, "egg"); save(); return 300; }
 function gift(item) { load(); add("gift", 1, 0, item); save(); } // a research's Master Ball (#86)
-function legendCoins() { load(); add("legend", 1, 200); save(); return 200; }
 // 전설의 향: which species the next breakthrough brings — set from the bag, used up then
 const legendSet = () => readJson(STATE, {}).legend || null;
 function setLegend(id) {
@@ -221,4 +219,4 @@ function takeLegend() {
   return id;
 }
 
-module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, burnIncense, incenseUntil, stamps, breakthrough, legendCoins, legendSet, setLegend, takeLegend, graduated, gift, dismissStart, CAP, PAY, _reset: () => { rows = null; } };
+module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, burnIncense, incenseUntil, stamps, breakthrough, legendSet, setLegend, takeLegend, graduated, gift, dismissStart, CAP, PAY, _reset: () => { rows = null; } };

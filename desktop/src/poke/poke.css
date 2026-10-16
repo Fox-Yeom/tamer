@@ -221,3 +221,31 @@
 #dex .pk-rgen { grid-template-columns: 48px 160px 40px 1fr; }
 #dex .pk-rstep.done { color: var(--pk-dim); }
 #dex .pk-rgen .dim { color: var(--pk-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 진행 칩 (#88, PKM-30, SCREENS_P3 S12): 🥚 ⭐ ✦ n/m under the partner pane's level line — the app's colours
+   (it sits in the main window), gold "곧" when one more to go. Its row and the narrow pane (numbers alone): src/style.css .poke-prog */
+.pk-chip-prog { border: 1px solid var(--border); border-radius: 8px; padding: 1px 7px; margin: 0 3px; font: inherit; font-size: 12px; color: var(--fg); background: var(--raised);
+  cursor: pointer; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pk-chip-prog:hover { background: var(--hover); }
+.pk-chip-prog.soon { border-color: var(--pk-coin-line); color: var(--pk-coin); font-weight: 700; }
+@container (max-width: 220px) { .pk-chip-prog .w { display: none; } .pk-chip-prog { padding: 1px 5px; margin: 0 2px; } } /* in .poke-prog (src/style.css) */
+
+/* 👜 가방 안 🥚 부화기 (#88, PKM-25 rules 8–9, SCREENS_P3 S11): the egg in it, its line (pk-item cards → 먼저 부화) */
+#dex .pk-incsec { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; }
+#dex .pk-incsec .pk-group { margin: 0; }
+#dex .pk-inc-now { display: flex; align-items: center; gap: 14px; padding: 10px 12px; border: 1px solid var(--pk-line); border-radius: var(--pk-radius); background: var(--pk-card); }
+#dex .pk-inc-now.soon { border-color: var(--pk-coin-line); background: var(--pk-coin-soft); }
+#dex .pk-inc-now .pk-egg.big { width: 46px; height: 60px; flex: 0 0 auto; }
+#dex .pk-inc-what { display: flex; flex-direction: column; gap: 5px; min-width: 0; flex: 1; max-width: 260px; font-size: 13px; color: var(--pk-fg); }
+#dex .pk-inc-what .dim { font-size: 12px; color: var(--pk-dim); }
+#dex .pk-inc-now.soon .pk-bar i { background: var(--pk-coin); }
+#dex .pk-soon { font-size: 12px; font-weight: 700; color: var(--pk-coin); }
+#dex .pk-incq-row { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+#dex .pk-incq-row > .dim { font-size: 11px; color: var(--pk-dim); }
+#dex .pk-item.pk-incq { width: 72px; padding: 6px 4px; font-size: 11px; gap: 2px; }
+#dex .pk-inc-born { display: flex; align-items: center; gap: 10px; padding: 6px 12px; border: 1px solid var(--pk-edge); border-radius: var(--pk-radius); font-size: 13px; color: var(--pk-fg); }
+#dex .pk-inc-born .dim { font-size: 12px; color: var(--pk-dim); }
+#dex .pk-inc-born button, #dex .pk-inc-empty button { margin-left: auto; border: 1px solid var(--pk-edge); border-radius: 8px; padding: 2px 9px; background: var(--pk-chip); color: var(--pk-fg); font: inherit; font-size: 12px; cursor: pointer; }
+#dex .pk-inc-empty { margin: 0; padding: 10px 12px; border: 1px dashed var(--pk-line); border-radius: var(--pk-radius); font-size: 13px; color: var(--pk-dim); display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+#dex .pk-inc-empty button { margin-left: 0; }
+#dex .pk-incsec .pk-note { margin: 0; }

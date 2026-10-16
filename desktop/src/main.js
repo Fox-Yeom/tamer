@@ -79,6 +79,7 @@ const FONT_DEFAULT = 14;
 let fontSize = FONT_DEFAULT;
 try { fontSize = Number(localStorage.getItem("cvim.fontSize")) || FONT_DEFAULT; } catch {}
 const tabs = []; // ordered Tab objects
+let prog = null, progHtml = "", lastHatch = null; // 진행 chips (#88) — set before any tab is made
 const byId = new Map(); // ws id -> Tab
 const panes = new Map(); // pane id "<ws>:<kind>" -> Pane
 let active = null;
@@ -541,6 +542,7 @@ async function openFolderNow(cwd, { resume }) {
     return byId.get(ws.id);
   }
   const view = $("#ws-template").content.firstElementChild.cloneNode(true);
+  $(".poke-prog", view).innerHTML = progHtml; // 🥚 ⭐ ✦ (#88)
   $("#views").appendChild(view);
   const tab = { id: ws.id, cwd: ws.cwd, agent: ws.agent, view, state: null, partner: null, panes: {} };
   // S2: the current session's agent pane runs a shell / the agent typed into that shell
@@ -1390,8 +1392,9 @@ async function renderPreview(show) {
     show, current, urgent: tab("pv-wait", "api-server", "waiting", others[0]),
     minis: [tab("pv-1", "web", "coding", others[1]), tab("pv-2", "docs", "idle", others[2], { ended: "done" }), tab("pv-3", "notes", "sleep", others[3])],
     more: 0, counts: { waiting: 1, working: 2, done: 1, error: 0 },
+    prog: { inc: { soon: true } }, // 진행 견본 (#88): "🥚 곧 부화 · 작업 1번"
   };
-  const off = !show.on || !(show.partner || show.alerts || show.wild);
+  const off = !show.on || !(show.partner || show.alerts || show.wild || show.progress);
   const html = off ? "" : await cardsHtml(p, { spriteUrl: (gif) => (gif ? spriteUrl(gif) : null) });
   if (seq !== previewSeq) return; // a newer change drew meanwhile
   applyShow(root, show);
@@ -1402,8 +1405,8 @@ async function renderPreview(show) {
   $("#settings .set-preview-off").hidden = !off;
 }
 const PRESETS = { // 빠른 선택
-  all: { on: true, partner: true, alerts: true, wild: true }, pokemon: { on: true, partner: true, alerts: false, wild: true },
-  wild: { on: true, partner: false, alerts: false, wild: true }, off: { on: false },
+  all: { on: true, partner: true, alerts: true, wild: true, progress: true }, pokemon: { on: true, partner: true, alerts: false, wild: true, progress: true },
+  wild: { on: true, partner: false, alerts: false, wild: true, progress: false }, off: { on: false }, // 진행 (#88)
 };
 async function setSetting(key, value) {
   const [a, b] = key.split(".");
@@ -1605,7 +1608,9 @@ async function openDex(sel, view, chooseOpts) {
     sel: sel || d.recent?.[ri]?.id || active?.partner?.id || d.entries[0]?.id || 1 };
   coins = await invoke("economy_state").catch(() => coins);
   dexTitle();
-  $("#dex-regions").innerHTML = (d.recent?.length ? `<button data-a="new" class="new-tab">🆕 새로 잡은 <span class="dim">${d.recent.length}</span></button>` : "")
+  const nWild = (d.recent || []).filter((m) => m.how !== "egg").length, nEgg = (d.recent || []).length - nWild;
+  $("#dex-regions").innerHTML = (nWild ? `<button data-a="new" class="new-tab">🆕 새로 잡은 <span class="dim">${nWild}</span></button>` : "")
+    + (nEgg ? `<button data-a="hatched" class="new-tab">🥚 새로 부화한 <span class="dim">${nEgg}</span></button>` : "") // #89
     + REGIONS.map(([name, a, b]) => {
       const got = d.entries.filter((e) => e.caught && e.id >= a && e.id <= b).length;
       return `<button data-a="${a}">${name} <span class="dim">${got}/${b - a + 1}</span></button>`;
@@ -1616,13 +1621,15 @@ async function openDex(sel, view, chooseOpts) {
   // the last 24 hours' catches, newest first (#10 #18): blue that fades with time (Pokémon GO);
   // yellow + NEW = not looked at yet
   const day = (d.recentHours || 24) * 3600;
-  const recent = d.recent?.length ? `<h4 id="region-new">🆕 새로 잡은 포켓몬</h4><div class="cells recent">`
-    + d.recent.map((m, i) => {
-      const e = byNo.get(m.id);
-      const fade = Math.max(0, Math.min(1, (Date.now() / 1000 - (m.at || 0)) / day)).toFixed(2);
-      return `<div class="cell caught${m.new ? " new" : ""}" style="--age:${fade}" data-n="${m.id}" data-ri="${i}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.folder ? " · 파트너" : ""}">`
-        + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q"></span>`) + `<i class="no">${m.id}</i>${m.shiny ? '<i class="shiny">✨</i>' : ""}${m.new ? '<i class="pk-newb">NEW</i>' : ""}</div>`;
-    }).join("") + "</div>" : "";
+  // two rows of the same kind: the day's catches, then the day's hatchlings (#89) — data-ri is the place in d.recent
+  const recentCell = (m, i) => {
+    const e = byNo.get(m.id);
+    const fade = Math.max(0, Math.min(1, (Date.now() / 1000 - (m.at || 0)) / day)).toFixed(2);
+    return `<div class="cell caught${m.new ? " new" : ""}" style="--age:${fade}" data-n="${m.id}" data-ri="${i}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.how === "egg" ? " · 알에서 부화" : ""}${m.folder ? " · 파트너" : ""}">`
+      + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q"></span>`) + `<i class="no">${m.id}</i>${m.shiny ? '<i class="shiny">✨</i>' : ""}${m.new ? '<i class="pk-newb">NEW</i>' : ""}</div>`;
+  };
+  const rowOf = (how, id, title) => { const cells = (d.recent || []).map((m, i) => [m, i]).filter(([m]) => (m.how === "egg") === (how === "egg")); return cells.length ? `<h4 id="${id}">${title}</h4><div class="cells recent">${cells.map(([m, i]) => recentCell(m, i)).join("")}</div>` : ""; };
+  const recent = rowOf("wild", "region-new", "🆕 새로 잡은 포켓몬") + rowOf("egg", "region-hatched", "🥚 새로 부화한 포켓몬");
   grid.innerHTML = recent + REGIONS.map(([name, a, b]) => {
     const cells = [];
     for (let n = a; n <= b; n++) {
@@ -1760,8 +1767,8 @@ function dexFilter() {
   $(".dex-preview").style.visibility = empty.hidden ? "" : "hidden"; // nothing found: no stale preview
   // the region buttons follow the search: its results in each, none → can't be pressed (#24)
   for (const b of document.querySelectorAll("#dex-regions button[data-a]")) {
-    const r = b.dataset.a === "new" ? null : REGIONS.find(([, a]) => String(a) === b.dataset.a);
-    const n = !q ? null : r ? d.hits.filter((x) => x >= r[1] && x <= r[2]).length : shownCells("#dex-grid .cells.recent .cell").length;
+    const r = b.dataset.a === "new" || b.dataset.a === "hatched" ? null : REGIONS.find(([, a]) => String(a) === b.dataset.a);
+    const n = !q ? null : r ? d.hits.filter((x) => x >= r[1] && x <= r[2]).length : shownCells(`#dex-grid #${b.dataset.a === "new" ? "region-new" : "region-hatched"} + .cells.recent .cell`).length;
     b.dataset.label ??= b.innerHTML;
     b.innerHTML = n == null ? b.dataset.label : `${b.dataset.label.replace(/<span class="dim">.*<\/span>/, "")}<span class="dim">${n}</span>`;
     b.disabled = n === 0;
@@ -1799,6 +1806,23 @@ const coinChip = () => (coins ? incenseChip() + `<button class="pk-coin" data-vi
 // 🪔 향 burning: a chip beside the coins and a line under each tab's partner, minutes left (#79)
 const incenseLeft = () => (coins?.incenseUntil > Date.now() ? Math.ceil((coins.incenseUntil - Date.now()) / 60000) : 0);
 const incenseChip = () => (incenseLeft() ? `<button class="pk-incense" data-view="bag" title="향이 켜져 있어요 — 야생 포켓몬이 두 배로 자주 나와요">🪔 ${incenseLeft()}분</button>` : "");
+// ── 진행 (#88, PKM-30, SCREENS_P3 S12): 🥚 ⭐ ✦ chips (pk-chip-prog) under every partner pane's level line — the
+// app's progress, so a folder without a partner shows them too. "곧" = one more to go. A click opens that screen ──
+const progChip = (k, icon, n, m, soon, title) => `<button class="pk-chip-prog${soon ? " soon" : ""}" data-prog="${k}" title="${esc(title)}">${icon}<span class="w">${soon ? " 곧" : ""}</span> ${n}<span class="w">/${m}</span></button>`;
+function progShow(v) {
+  prog = v || null;
+  progHtml = !prog ? "" : [
+    prog.inc && progChip("inc", "🥚", prog.inc.have, prog.inc.need, prog.inc.soon, `부화기 — ${prog.inc.name} · 작업 ${prog.inc.need - prog.inc.have}번 남음${prog.inc.waiting ? ` · 대기 ${prog.inc.waiting}` : ""} · 누르면 가방`),
+    prog.stamps && progChip("stamps", "⭐", prog.stamps.n, prog.stamps.need, prog.stamps.soon, `연구 스탬프 — 작업을 끝낸 날마다 하나, ${prog.stamps.need}개면 대발견 · 누르면 홈`),
+    prog.research && progChip("research", "✦", prog.research.done, prog.research.of, prog.research.soon, `리서치 — ${prog.research.title || ""} · 누르면 홈`),
+  ].filter(Boolean).join("");
+  for (const el of document.querySelectorAll(".pane-avatar .poke-prog")) el.innerHTML = progHtml;
+  if (dexOpen() && dexState) dexTitle(); // the bag tab's 🥚
+}
+listen("progress", (e) => progShow(e.payload));
+invoke("progress_state").then(progShow).catch(() => {});
+$("#views").addEventListener("click", (e) => { const c = e.target.closest(".pk-chip-prog"); if (c) openDex(undefined, c.dataset.prog === "inc" ? "bag" : "home"); });
+
 function incenseShow() {
   const n = incenseLeft();
   for (const el of document.querySelectorAll(".pane-avatar .poke-incense")) { el.hidden = !n; el.textContent = n ? `🪔 향 ${n}분 · 야생 ×2` : ""; }
@@ -1814,7 +1838,7 @@ function dexTitle() {
   const cur = d.chooseOpts?.current;
   $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button>${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
     + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button>`
-    + `<button data-view="shop"${on("shop")}>🛒 상점</button><button data-view="bag"${on("bag")}>👜 가방${coins?.bagN ? ` <span class="dim">${coins.bagN}</span>` : ""}</button></span>`
+    + `<button data-view="shop"${on("shop")}>🛒 상점</button><button data-view="bag"${on("bag")}>👜 가방${coins?.bagN ? ` <span class="dim">${coins.bagN}</span>` : ""}${prog?.inc ? ' <span class="dim">· 🥚</span>' : ""}</button></span>`
     + (view === "choose" && tab ? `<span class="pk-sub">${esc(base(tab.cwd))}의 파트너 — ${cur ? `지금 ${cur.shiny ? "✨" : ""}${esc(cur.name)} · Lv ${cur.lv ?? "?"}` : "아직 없어요"}</span>`
       + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>' : `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
     + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`
@@ -1863,7 +1887,7 @@ async function dexView(v) {
   if (v !== "choose") dexLastView = v; // 파트너 고르기 opens for a reason; the window remembers the other two
   viewChrome(v);
   if (v === "home") { dexTitle(); return homeRender(); }
-  if (v === "shop" || v === "bag") { d.pick = false; d.ii = 0; d.qty = 1; dexTitle(); return shopRender(); }
+  if (v === "shop" || v === "bag") { d.pick = false; d.ii = v === "bag" ? null : 0; d.qty = 1; dexTitle(); return shopRender(); }
   if (v === "dex") {
     $(".dex-preview").style.visibility = "";
     dexFilter();
@@ -1916,7 +1940,7 @@ async function homeRender() {
   const stampHtml = stp ? `<section class="pk-stamps"><h4 class="pk-group">연구 스탬프<span class="dim">작업을 끝낸 날마다 하나 · ${stp.need}개면 대발견(전설 확정)</span></h4>
     <div class="pk-stamp">${Array.from({ length: stp.need }, (_, i) => stp.days[i] ? `<span class="on" title="${stp.days[i]}">${Number(stp.days[i].slice(5, 7))}/${Number(stp.days[i].slice(8))}</span>` : "<span></span>").join("")}
     <b>${stp.n >= stp.need ? "⭐ 대발견!" : `${stp.need - stp.n}개 남음`}</b></div>
-    <p class="pk-note">다음 대발견: ${coins.legend ? `⭐ ${legendName(coins.legend)} (전설의 향)` : wantL.length ? `열린 전설 중 아직 없는 종 — ${wantL.map((l) => l.name).join("·")}` : "열린 전설을 모두 함께하고 있어요 — 200코인"}</p></section>` : "";
+    <p class="pk-note">다음 대발견: ${coins.legend ? `⭐ ${legendName(coins.legend)} (전설의 향)` : wantL.length ? `열린 전설 중 아직 없는 종 — ${wantL.map((l) => l.name).join("·")}` : `열린 전설 중 하나 — 두 번째 마리도 와요`}</p></section>` : "";
   const rs = lr?.research;
   const researchHtml = rs?.title ? `<section class="pk-research"><h4 class="pk-group">리서치<span class="dim">✦ ${esc(rs.title)} — 끝내면 ${esc(rs.name)}와 확정 조우 + 마스터볼</span></h4>
     ${rs.steps.map((st) => `<div class="pk-rstep${st.done ? " done" : ""}"><span>${st.done ? "✔" : "▸"} ${esc(st.text)}</span><span class="pk-bar"><i style="width:${Math.round((st.have / st.n) * 100)}%"></i></span><span>${st.have}/${st.n}</span></div>`).join("")}</section>`
@@ -1971,9 +1995,8 @@ async function shopRender() {
   if (d.pick) return pickRender();
   const grid = $("#box-grid");
   const card = (it, i) => {
-    const noLegend = it.id === "legend" && !st.legends?.some((l) => !l.owned);
-    const off = d.view === "shop" && (it.left === 0 || it.price > st.balance || noLegend);
-    const tail = d.view === "bag" ? `×${st.bag[it.id]}${it.id === "legend" && coins?.legend ? " · 걸어 둠" : ""}` : it.left === 0 ? "이번 주 샀음" : noLegend ? "다 가졌어요" : coinTxt(it.price);
+    const off = d.view === "shop" && (it.left === 0 || it.price > st.balance);
+    const tail = d.view === "bag" ? `×${st.bag[it.id]}${it.id === "legend" && coins?.legend ? " · 걸어 둠" : ""}` : it.left === 0 ? "이번 주 샀음" : coinTxt(it.price);
     const on = it.id === "incense" && st.incenseUntil;
     return `<div class="pk-item${off ? " off" : ""}" data-i="${i}">${on ? '<span class="pk-on" title="켜져 있어요"></span>' : ""}<span class="pk-icon">${ITEM_ICON[it.id] || "🎁"}</span><b>${esc(it.name)}</b><span class="dim">${esc(it.effect)}</span><span class="pk-price">${tail}</span></div>`;
   };
@@ -1984,15 +2007,40 @@ async function shopRender() {
       return items.length ? `<h4 class="pk-group">${title}</h4>${items.map(([it, i]) => card(it, i)).join("")}` : "";
     }).join("");
   } else {
-    d.list = st.items.filter((it) => st.bag[it.id]);
-    const fx = [st.incenseUntil && `🪔 향 ${minsLeft(st.incenseUntil)}분 남음`, st.incubator && `🥚 부화기 ${st.incubator.active.name} ${st.incubator.active.have}/${st.incubator.active.need}${st.incubator.waiting ? ` · 대기 ${st.incubator.waiting}` : ""}`].filter(Boolean);
+    // the incubator's waiting eggs come first in the list (cards in its section, #88), then the bag's items
+    const q = (st.incubator?.queue || []).map((e, k) => ({ id: "incq", group: "incq", pos: k + 1, ...e }));
+    const items = st.items.filter((it) => st.bag[it.id]);
+    d.list = [...q, ...items];
+    if (d.ii == null) d.ii = items.length ? q.length : 0; // opening the bag: its first item, not the incubator's line
+    const fx = [st.incenseUntil && `🪔 향 ${minsLeft(st.incenseUntil)}분 남음`].filter(Boolean); // the incubator has its own section now
     const fxHtml = fx.length ? `<div class="pk-effects">켜진 효과: ${fx.join(" · ")}</div>` : "";
-    grid.innerHTML = fxHtml + (d.list.length ? d.list.map(card).join("") + '<p class="pk-note">볼은 야생 포켓몬이 나오면 카드에서 골라 던져요</p>'
+    grid.innerHTML = incubatorHtml(st, q) + fxHtml + (items.length ? items.map((it, k) => card(it, q.length + k)).join("") + '<p class="pk-note">볼은 야생 포켓몬이 나오면 카드에서 골라 던져요</p>'
       : '<p class="pk-empty">가방이 비었어요 — 🛒 상점에서 사요 <button class="pk-goods">상점 열기</button></p>');
   }
   $("#dex-found").textContent = "";
   if (!d.list.length) { itemPreview(null); return; }
   itemSelect(Math.min(d.ii || 0, d.list.length - 1));
+}
+// 🥚 부화기 섹션 (#88, PKM-25 rules 8–9, SCREENS_P3 S11): the egg in it (big), its line (cards to pick → 먼저 부화),
+// a hatch of the last 30 minutes; empty → the eggs in the bag to put in, or the shop
+const HATCH_SHOWN = 30 * 60000;
+function incubatorHtml(st, q) {
+  const a = st.incubator?.active, egg = (kind, big) => `<i class="pk-egg${big ? " big" : ""}${kind === "egg2" ? " rare" : ""}"></i>`;
+  const head = '<h4 class="pk-group">🥚 부화기<span class="dim">어느 폴더든 작업을 끝낼 때마다 하나 · 한 번에 하나</span></h4>';
+  const born = lastHatch && Date.now() - lastHatch.at < HATCH_SHOWN
+    ? `<div class="pk-inc-born">🐣 <b>${esc(`${lastHatch.shiny ? "✨" : ""}${josa(lastHatch.name, "이", "가")}`)} 태어났어요!</b><span class="dim">내 포켓몬에 NEW · 도감 "🥚 새로 부화한" 줄</span><button data-view="box">보기</button></div>` : "";
+  if (!a) {
+    const eggs = [["egg", "알"], ["egg2", "희귀 알"]].filter(([k]) => st.bag[k] > 0);
+    return `<section class="pk-incsec">${head}${born}<p class="pk-inc-empty">부화기가 비었어요 — ${eggs.length
+      ? `가방에 ${eggs.map(([k, n]) => `${n} ${st.bag[k]}개`).join(" · ")} ${eggs.map(([k, n]) => `<button data-incadd="${k}">${n} 넣기</button>`).join("")}`
+      : '알은 🛒 상점에서 (알 500 · 희귀 알 2,000) <button class="pk-goods">상점 열기</button>'}</p></section>`;
+  }
+  const left = a.need - a.have, soon = left === 1;
+  const line = q.map((e, i) => `<div class="pk-item pk-incq" data-i="${i}" title="${esc(e.name)} — 고르면 [먼저 부화]"><b>${e.pos}</b>${egg(e.kind)}<span>${esc(e.name)}</span><span class="dim">${e.have}/${e.need}</span></div>`).join("");
+  return `<section class="pk-incsec">${head}${born}<div class="pk-inc-now${soon ? " soon" : ""}">${egg(a.kind, true)}<div class="pk-inc-what"><b>${esc(a.name)}</b>
+    <span class="pk-bar"><i style="width:${Math.round((a.have / a.need) * 100)}%"></i></span><span class="${soon ? "pk-soon" : "dim"}">${a.have}/${a.need} · ${soon ? "곧 태어나요 — 작업 1번" : `작업 ${left}번 남음`}</span></div>
+    ${line ? `<div class="pk-incq-row"><span class="dim">차례</span>${line}</div>` : ""}</div>
+    <p class="pk-note">최근 태어난 포켓몬은 📕 도감 "🥚 새로 부화한" 줄에서</p></section>`;
 }
 function itemSelect(i) {
   const d = dexState;
@@ -2022,13 +2070,20 @@ function itemPreview(it, note = "") {
     $("#dex-meta").innerHTML = `${esc(it.effect)}<br>가진 수 ${have}${it.weekly ? ` · 한 주에 ${it.weekly}개(월요일에 다시)` : ""}`
       + (it.many ? `<br><span class="pk-qty"><button data-q="-1" title="−">−</button><b>${d.qty}</b><button data-q="1" title="+">+</button></span><br>합계 ${coinTxt(cost)}` : "");
     if (it.left === 0) { b.disabled = true; b.textContent = "이번 주 샀음 · 월요일에 다시"; }
-    else if (it.id === "legend" && !st.legends?.some((l) => !l.owned)) { b.disabled = true; b.textContent = "열린 전설을 다 가졌어요"; }
     else if (cost > st.balance) { b.disabled = true; b.textContent = `${coinTxt(cost - st.balance)} 더 필요`; }
     else if (cost >= st.confirmAt && d.askBuy) { b.className = "confirm"; b.textContent = `한 번 더 눌러 사기 · ${coinTxt(cost)}`; }
     else b.textContent = `사기 · ${coinTxt(cost)}`;
     return;
   }
   // 👜 the bag
+  if (it.id === "incq") { // 🥚 a waiting egg (#88): 먼저 부화 — the one in the incubator goes back to the front of the line
+    const a = st.incubator?.active;
+    $("#dex-name").innerHTML = `<span class="pk-icon big"><i class="pk-egg${it.kind === "egg2" ? " rare" : ""}"></i></span>${esc(it.name)}`;
+    $("#dex-meta").innerHTML = `부화기 차례 ${it.pos} · ${it.have}/${it.need} · 작업 ${it.need - it.have}번${it.kind === "egg2" ? " · 이로치 ×2" : ""}`
+      + (a ? `<br>지금 부화 중: ${esc(a.name)} ${a.have}/${a.need} — 먼저 부화하면 차례 1로(진행은 그대로)` : "");
+    b.textContent = "먼저 부화";
+    return;
+  }
   if (it.group === "ball") { $("#dex-meta").innerHTML = `${esc(it.effect)}<br>가진 수 ${have}<br>야생 포켓몬이 나오면 카드에서 골라 던져요`; b.hidden = true; return; }
   if (it.id === "incense") {
     $("#dex-meta").innerHTML = `${esc(it.effect)} · 대기 시간 절반<br>가진 수 ${have}${st.incenseUntil ? `<br>지금 켜져 있어요 — ${minsLeft(st.incenseUntil)}분 남음` : ""}`;
@@ -2043,10 +2098,10 @@ function itemPreview(it, note = "") {
     return;
   }
   if (it.id === "legend") { // 전설의 향 (#82): which open legend the next breakthrough brings
-    const set = coins?.legend, can = (st.legends || []).filter((l) => !l.owned);
+    const set = coins?.legend, can = st.legends || []; // any open one — had ones too (#87)
     $("#dex-meta").innerHTML = `${esc(it.effect)} — 대발견 때 하나 써요<br>가진 수 ${have}${set ? `<br>지금: ⭐ ${esc((st.legends || []).find((l) => l.id === set)?.name || `#${set}`)}에 걸어 둠` : ""}`;
     b.hidden = true;
-    $("#dex-from").innerHTML += can.length ? can.map((l) => `<button data-legend="${l.id}"${l.id === set ? ' class="on"' : ""}>⭐ ${esc(l.name)}${l.id === set ? " ✓" : "에 걸기"}</button>`).join("") : '<p class="pk-note">열린 전설을 모두 함께하고 있어요</p>';
+    $("#dex-from").innerHTML += can.length ? can.map((l) => `<button data-legend="${l.id}"${l.id === set ? ' class="on"' : ""}>⭐ ${esc(l.name)}${l.owned ? " ●" : ""}${l.id === set ? " ✓" : "에 걸기"}</button>`).join("") : "";
     return;
   }
   if (it.id === "candy") {
@@ -2089,6 +2144,11 @@ async function itemAct() {
   }
   if (it.id === "incense") { const r = await invoke("bag_use", { item: "incense" }).catch(() => null); if (r?.ok) toast(`🪔 향을 피웠어요 — ${minsLeft(r.until)}분 동안 야생 포켓몬이 더 자주 나와요`); return shopRender(); }
   if (it.id === "candy") return candyGive(d.box?.find((m) => m.folder === "here"));
+  if (it.id === "incq") { // 먼저 부화 (#88): one press
+    const r = await invoke("incubator_first", { uid: it.uid }).catch(() => null);
+    if (r?.ok) { toast(`🥚 ${josa(it.name, "이", "가")} 먼저 부화해요 — 지금 알은 차례 1로`); d.ii = 0; }
+    return shopRender();
+  }
   if (it.id === "egg" || it.id === "egg2") { // 🥚 (#85)
     const r = await invoke("bag_use", { item: it.id }).catch(() => null);
     if (!r?.ok) { toast("알이 없어요"); return shopRender(); }
@@ -2449,15 +2509,15 @@ function dexKey(e) {
   else if (k === "Enter") dexChoose();
   else if (d.hits && dexKeyFiltered(k, e)) { /* searching: shown cells only */ }
   else if (d.zone === "recent" && ["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown", "h", "l", "k", "j", "Home", "End"].includes(k)) {
-    // inside the "새로 잡은" row; ↓ from its last line goes to this Pokémon's place in the grid
-    const n = d.recent.length, line = Math.floor(d.ri / cols), last = Math.floor((n - 1) / cols);
+    // inside the "새로 잡은" / "새로 부화한" rows (#89): ←→ in order, ↑↓ by where the cells are on screen;
+    // ↓ from the last line goes to this Pokémon's place in the grid
+    const n = d.recent.length, row = [...document.querySelectorAll("#dex-grid .cells.recent .cell")];
+    const cur = $(`#dex-grid .cells.recent .cell[data-ri="${d.ri}"]`);
     if (k === "ArrowLeft" || k === "h") dexRecent(d.ri - 1);
     else if (k === "ArrowRight" || k === "l") dexRecent(d.ri + 1);
-    else if (k === "ArrowUp" || k === "k") dexRecent(line > 0 ? d.ri - cols : d.ri);
     else if (k === "Home") dexRecent(0);
     else if (k === "End") dexRecent(n - 1);
-    else if (line < last) dexRecent(Math.min(d.ri + cols, n - 1));
-    else dexSelect(d.sel);
+    else { const up = k === "ArrowUp" || k === "k", to = cur && dexGeo(cur, row, up ? -1 : 1); if (to) dexRecent(Number(to.dataset.ri)); else if (!up) dexSelect(d.sel); }
   }
   // ↑ from the grid's first line: back to the "새로 잡은" row, where you were
   else if ((k === "ArrowUp" || k === "k") && d.sel <= cols && d.recent?.length) {
@@ -2490,8 +2550,8 @@ $("#dex-regions").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
   const d = dexState;
-  if (b.dataset.a === "new") {
-    const first = shownCells("#dex-grid .cells.recent .cell")[0];
+  if (b.dataset.a === "new" || b.dataset.a === "hatched") { // 🆕 / 🥚 (#89): that row's first
+    const first = shownCells(`#dex-grid #${b.dataset.a === "new" ? "region-new" : "region-hatched"} + .cells.recent .cell`)[0];
     dexRecent(first ? Number(first.dataset.ri) : 0);
   } else if (d?.hits) { // searching: the region's first result
     const r = REGIONS.find(([, a]) => String(a) === b.dataset.a);
@@ -2527,6 +2587,12 @@ $("#box-grid").addEventListener("click", async (e) => {
     return itemSelect(i);
   }
   if (e.target.closest(".pk-goods")) return shopView(); // 빈 가방 → 상점
+  const add = e.target.closest("[data-incadd]"); // 빈 부화기 → 가방의 알 넣기 (#88)
+  if (add) {
+    const r = await invoke("bag_use", { item: add.dataset.incadd }).catch(() => null);
+    if (r?.ok) toast("🥚 부화기에 넣었어요 — 어느 폴더든 작업을 끝낼 때마다 부화가 가까워져요");
+    return shopRender();
+  }
   if (e.target.closest(".pk-back")) { dexState.pick = false; return shopRender(); }
   const c = e.target.closest(".pk-card[data-i]"); if (c && Number(c.dataset.i) >= 0) boxSelect(Number(c.dataset.i));
 });
@@ -2896,8 +2962,13 @@ listen("economy", (e) => {
   if (dexOpen() && dexState) { dexTitle(); if (dexState.view === "home") homeRender(); }
 });
 // 🐣 the incubator hatched an egg (#85): it's in the box now
-listen("hatched", (e) => { const h = e.payload; toast(`🐣 부화기에서 ${h.shiny ? "✨" : ""}${josa(h.name, "이", "가")} 태어났다! — 내 포켓몬에서 파트너로 데려올 수 있어요${h.coins ? ` · +${coinTxt(h.coins)} 새 종` : ""}`, 5000); if (dexOpen() && dexState) { dexState.box = null; if (dexState.view === "home") homeRender(); } });
-listen("incubator", () => { if (dexOpen() && dexState?.view === "home") homeRender(); });
+listen("hatched", (e) => {
+  const h = e.payload;
+  lastHatch = { ...h, at: Date.now() }; // the bag's incubator says so for a while (#88)
+  toast(`🐣 부화기에서 ${h.shiny ? "✨" : ""}${josa(h.name, "이", "가")} 태어났다! — 내 포켓몬에서 파트너로 데려올 수 있어요${h.coins ? ` · +${coinTxt(h.coins)} 새 종` : ""}`, 5000);
+  if (dexOpen() && dexState) { dexState.box = null; if (dexState.view === "home") homeRender(); }
+});
+listen("incubator", () => { if (dexOpen() && dexState?.view === "home") homeRender(); if (dexOpen() && dexState?.view === "bag" && !dexState.pick) shopRender(); });
 listen("open-folder", (e) => openFolder(e.payload.cwd));
 listen("toast", (e) => toast(e.payload.text, e.payload.ms || 1800)); // from the main process (a shell environment that couldn't be read …)
 listen("select-tab", (e) => selectTab(byId.get(e.payload.ws))); // overlay click
@@ -2938,7 +3009,7 @@ listen("shell-agent", (e) => { const t = byId.get(e.payload.ws); if (t) { t.shel
 window.addEventListener("blur", () => document.body.classList.add("away"));
 window.addEventListener("focus", () => document.body.classList.remove("away"));
 listen("wild", (e) => wild.show(e.payload));
-listen("open-dex", (e) => { wild.hide(); openDex(e.payload?.id || undefined); }); // the Pokédex on a species (#25; the lab's wild_dex_test)
+listen("open-dex", (e) => { wild.hide(); openDex(e.payload?.id || undefined, e.payload?.view); }); // the Pokédex on a species (#25; the lab's wild_dex_test) · a view (the overlay's hatch notice, #88)
 listen("wild-throw", (e) => wild.play(e.payload));
 listen("wild-end", (e) => wild.end(e.payload));
 
@@ -3215,9 +3286,16 @@ function labState() {
     gradBand: active ? $(".pk-grad", active.view)?.textContent || null : null,
     eggShown: active ? !!$(".pane-avatar .pk-egg", active.view) : null,
     incubator: dexOpen() ? $("#box-grid .pk-inc-row")?.textContent || null : null, // #85
+    // 진행 (#88): the partner pane's chips · the bag's incubator section (now · line · empty / hatched)
+    prog: active ? [...$(".poke-prog", active.view)?.querySelectorAll(".pk-chip-prog") || []].map((c) => `${c.textContent}${c.classList.contains("soon") ? "!" : ""}`) : null,
+    progShort: active ? [...$(".poke-prog", active.view)?.querySelectorAll(".pk-chip-prog") || []].map((c) => c.innerText) : null,
+    bagInc: dexOpen() ? { now: $("#box-grid .pk-inc-now")?.textContent.replace(/\s+/g, " ").trim() || null, soon: !!$("#box-grid .pk-inc-now.soon"),
+      line: [...document.querySelectorAll("#box-grid .pk-incq")].map((c) => c.textContent.replace(/\s+/g, "")), empty: $("#box-grid .pk-inc-empty")?.textContent.replace(/\s+/g, " ").trim() || null,
+      born: $("#box-grid .pk-inc-born")?.textContent.replace(/\s+/g, " ").trim() || null } : null,
+    bagTab: dexOpen() ? $('#dex-title [data-view="bag"]')?.textContent || null : null,
     road: dexOpen() ? [...document.querySelectorAll("#box-grid .pk-rgen")].map((r) => r.textContent.replace(/\s+/g, " ").trim()) : null, // #86
     research: dexOpen() ? [...document.querySelectorAll("#box-grid .pk-rstep")].map((r) => r.textContent.replace(/\s+/g, " ").trim()) : null,
-    wildDupe: !!$("#wild .wild-dupe:not([hidden])"), wildBadge: $("#wild .wild-badge:not([hidden])")?.textContent || null,
+    wildBadge: $("#wild .wild-badge:not([hidden])")?.textContent || null,
     agent: active ? (() => { const s = curSession(active); return s?.hostAgent?.key || (s?.running ? s?.agent?.key || s?.agent?.label : null) || null; })() : null, // the agent state the top bar shows (waiting = 입력 필요)
     tsearch: $("#tsearch").hidden ? null : { q: $("#tsearch-q").value, n: $("#tsearch-n").textContent, pane: tsearchPane?.kind || null, alt: !$("#tsearch-alt").hidden },
     // the top bar and the hint line stay one line, nothing pushed out (#38)
@@ -3226,6 +3304,8 @@ function labState() {
     preview: dexOpen() ? $("#dex-meta")?.textContent || null : null,
     pokeTab: dexOpen() ? $("#dex .pk-tabs button.on")?.dataset.view || null : null,
     pos: dexOpen() ? $("#dex-pos")?.textContent || null : null,
+    dexRows: dexOpen() ? [...document.querySelectorAll("#dex-grid h4[id^='region-']")].map((h) => `${h.textContent}:${h.nextElementSibling?.querySelectorAll(".cell").length}`) : null, // #89
+    dexSel: dexState ? `${dexState.zone}:${dexState.sel}` : null,
     coin: dexOpen() ? $("#dex-title .pk-coin")?.textContent || null : null, // 🪙 (#72)
     stamps: dexOpen() ? $("#box-grid .pk-stamp")?.textContent?.replace(/\s+/g, " ").trim() || null : null, // ⭐ (#82)
     nextBig: dexOpen() ? $("#box-grid .pk-stamps .pk-note")?.textContent || null : null,
@@ -3487,6 +3567,7 @@ async function uiScenes(set) {
       await invoke("win_resize_test", { w: 1400, h: 900 }); await wait(400);
       await invoke("incubator_add_test", { kind: "egg", have: 3 }); await invoke("incubator_add_test", { kind: "egg2", have: 0 });
       await openDex(); await dexView("home"); await wait(500); await shot("home-incubator"); closeDex();
+      await openDex(); await dexView("bag"); await wait(500); await shot("bag-incubator"); closeDex(); // 🥚 the bag's incubator section with its line (#88)
       { const m = (await invoke("box_list", { ws: tab.id }))[0];
         await showPartner(tab, { ...m, lv: 100, final: true, grad: 1, gradAsk: true }); await wait(800); await shot("graduate"); }
     }

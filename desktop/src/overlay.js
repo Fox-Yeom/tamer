@@ -4,7 +4,7 @@
 // see-through except over the cards. The cards themselves: src/overlay-view.js (the 설정 창's
 // preview draws the same).
 import { invoke, listen } from "./host.js";
-import { cardsHtml, sizePokes, applyShow, wildNoteHtml } from "./overlay-view.js";
+import { cardsHtml, sizePokes, applyShow, wildNoteHtml, hatchNoteHtml } from "./overlay-view.js";
 
 const sprites = new Map(); // gif path -> data URL
 async function spriteUrl(gif) {
@@ -30,7 +30,23 @@ async function render(p) {
   sizePokes(box);
   if (hoverTip && stack.classList.contains("ov-minimal")) showTip(hoverTip.ws, hoverTip.text); else setTip(null);
   if (!show.wild) note.hide(); // 야생 포켓몬 off (#59): in the main window only
+  if (show.progress === false) hatchNote.hide();
 }
+
+// ── 🐣 부화 알림 (#88, PKM-30 rule 5): 4 s under the wild notice; a click → Tamer's 내 포켓몬 ──
+const hatchNote = (() => {
+  const root = document.getElementById("hatch");
+  let timer = null;
+  const hide = () => { clearTimeout(timer); root.innerHTML = ""; };
+  async function showNote(h) {
+    if (!h || show.progress === false) return;
+    const url = await spriteUrl(h.gif);
+    root.innerHTML = hatchNoteHtml(h, url);
+    clearTimeout(timer); timer = setTimeout(hide, 4000);
+  }
+  return { show: showNote, hide };
+})();
+listen("hatched", (e) => hatchNote.show(e.payload));
 
 // ── 야생 알림 (#66): the encounter's notice; ✕ closes it for this encounter only ──
 const note = (() => {
@@ -116,6 +132,7 @@ function endDrag(e, click) {
   drag = null;
   if (d.moved) invoke("overlay_drag", { phase: "end", x: e.screenX, y: e.screenY });
   else if (click && d.act === "wild") invoke("wild_open");
+  else if (click && d.act === "hatch") invoke("hatch_open");
   else if (click && d.ws) invoke("overlay_click", { ws: d.ws });
 }
 document.addEventListener("mouseup", (e) => { if (drag) endDrag(e, true); });

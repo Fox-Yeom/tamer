@@ -524,10 +524,12 @@ function onCoreEvent(msg) {
         const coins = r.newdex ? economy.onNewDex() : 0;
         logLine(`incubator hatched ${r.hatched.id}${r.hatched.shiny ? "s" : ""}${coins ? " newdex" : ""}`);
         if (research.onCatch(caughtSet().size)) researchCheck();
-        send("hatched", { id: r.hatched.id, name: r.hatched.name, shiny: r.hatched.shiny, coins });
+        // the overlay shows it too (#88, PKM-30 rule 5) — with its picture, no further download
+        broadcast("hatched", { id: r.hatched.id, name: r.hatched.name, shiny: r.hatched.shiny, coins, gif: partner.loadSprite(r.hatched.id, r.hatched.shiny)?.gif || null });
         send("economy", economy.summary());
       }
       send("incubator", partner.incubator());
+      progressBump(); // the stamp of the day too (stats are in by now)
     }).catch((e) => logLine(`incubator error ${e}`));
     // a finished task: EXP for the folder's partner, maybe an evolution
     const t0 = Date.now();
@@ -539,6 +541,7 @@ function onCoreEvent(msg) {
       const gradCoins = graduated ? economy.graduated() : 0; // 🎓 300 + an egg (#84)
       if (evolved || hatched) { ws.partner = { ...(evolved || hatched), ...partner.progress(ws.cwd) }; overlayUpdate(); }
       if (evolved || mileCoins || gradCoins || coins) send("economy", economy.summary());
+      if (evolved) progressBump(); // ✦ "진화 3번"
       send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins, mile: miles.at(-1) || null, mileCoins,
         hatched: hatched || null, graduated: !!graduated, gradCoins });
     }).catch((e) => logLine(`exp error ${e}`));
@@ -846,7 +849,7 @@ const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
 // 설정 창 (APP-19, #59): only known keys, each checked — anything else falls back to the default,
 // which is how the app behaved before (everything on)
 const SETTINGS = path.join(CACHE, "ui", "settings.json");
-const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, alpha: 82, shadow: true, minimal: "auto" }, tabGlow: true, theme: "system",
+const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 82, shadow: true, minimal: "auto" }, tabGlow: true, theme: "system",
   menubar: { on: true, text: "waiting" } }; // 메뉴바 (STA-19, #64)
 const MENUBAR_TEXT = ["waiting", "limit", "none"];
 const MINIMAL = ["auto", "always", "never"]; // 최소 모드 (#63): by the background (≤ 30 %), always, never
@@ -855,7 +858,7 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
   const o = raw?.overlay || {}, d = SETTINGS_DEFAULT.overlay, b = (v, def) => (typeof v === "boolean" ? v : def);
   const a = Number(o.alpha);
   return {
-    overlay: { on: b(o.on, d.on), partner: b(o.partner, d.partner), alerts: b(o.alerts, d.alerts), wild: b(o.wild, d.wild),
+    overlay: { on: b(o.on, d.on), partner: b(o.partner, d.partner), alerts: b(o.alerts, d.alerts), wild: b(o.wild, d.wild), progress: b(o.progress, d.progress), // #88
       alpha: Number.isFinite(a) ? Math.round(Math.min(100, Math.max(0, a))) : d.alpha,
       shadow: b(o.shadow, d.shadow), minimal: MINIMAL.includes(o.minimal) ? o.minimal : d.minimal }, // #65 #63
     tabGlow: b(raw?.tabGlow, SETTINGS_DEFAULT.tabGlow),
@@ -913,9 +916,11 @@ function bigCheck() {
   const st = economy.stamps();
   if (st.n < st.need) return;
   economy.breakthrough();
-  const owned = partner.ownedSpecies(), want = economy.takeLegend();
-  const pool = want && !owned.has(want) ? [want] : legends.openLegends(caughtSet(), owned).map((l) => l.id).filter((id) => !owned.has(id));
-  if (!pool.length) { economy.legendCoins(); logLine("breakthrough: every open legend is with you — 200 coins"); send("economy", economy.summary()); return; }
+  // 전설의 향's species (even one you have), else an open legend you don't have yet — all had: any open one,
+  // a second of it (legends can be had more than once, #87)
+  const owned = partner.ownedSpecies(), want = economy.takeLegend(), open = legends.openLegends(caughtSet(), owned).map((l) => l.id);
+  const fresh = open.filter((id) => !owned.has(id));
+  const pool = want ? [want] : fresh.length ? fresh : open;
   const id = pool[Math.floor(Math.random() * pool.length)];
   wild.startBig(id, Math.random() < 1 / 64);
   logLine(`breakthrough ${id}${want ? " (전설의 향)" : ""}`);
@@ -925,9 +930,32 @@ function bigCheck() {
 // the open legends and whether you have each (the shop's 전설의 향, the bag's choice)
 const legendsView = () => { const owned = partner.ownedSpecies(); return legends.openLegends(caughtSet(), owned).map((l) => ({ id: l.id, name: l.name, owned: l.owned })); };
 const shopNow = () => ({ ...economy.shopState(), legends: legendsView(), incubator: partner.incubator() });
+// 진행 (#88, PKM-30): the incubator · stamps · research for the partner pane, the overlay and the menu bar.
+// "soon" = one more to go. Read from what's already kept (nothing new stored); cached until something moves
+let progCache = null;
+function progressNow() {
+  if (progCache && Date.now() - progCache.at < 5000) return progCache.v;
+  const v = {};
+  try {
+    const a = partner.incubator();
+    if (a) v.inc = { name: a.active.name, kind: a.active.kind, have: a.active.have, need: a.active.need, waiting: a.waiting, soon: a.active.need - a.active.have === 1 };
+  } catch {}
+  try { const st = economy.stamps(); v.stamps = { n: st.n, need: st.need, soon: st.n === st.need - 1 }; } catch {}
+  try {
+    const r = research.view(caughtSet().size, partner.ownedSpecies());
+    if (r.title && !r.ready) {
+      const done = r.steps.filter((x) => x.done).length, cur = r.steps[done];
+      v.research = { name: r.name, title: r.title, done, of: r.steps.length, soon: done === r.steps.length - 1 && !!cur && cur.n - cur.have === 1 };
+    }
+  } catch {}
+  progCache = { at: Date.now(), v };
+  return v;
+}
+const progSoon = (v = progressNow()) => !!(v.inc?.soon || v.stamps?.soon || v.research?.soon);
+function progressBump() { progCache = null; send("progress", progressNow()); overlaySync(); overlayUpdate(); }
 // the balls in the bag, for the wild card's ball chips (#76)
 const ballsOwned = () => { try { const b = economy.bag(); return { great: b.great || 0, ultra: b.ultra || 0, master: b.master || 0 }; } catch { return {}; } };
-const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow() });
+const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow(), prog: progressNow() });
 function trayAct(act) {
   if (act?.tab) focusMain(String(act.tab));
   else if (act?.set) setSettings(act.set);
@@ -988,6 +1016,7 @@ function overlayPayload() {
     counts: { waiting: count((t) => t.state === "waiting"), working: count((t) => WORKING.includes(t.state)),
       done: count((t) => t.ended === "done"), error: count((t) => t.ended === "error") },
     wild: settings.overlay.wild ? wild.current() : null, stallMs: STALL_MS, show: settings.overlay, theme: settings.theme, // #59 #60
+    prog: settings.overlay.progress ? progressNow() : null, // #88
   };
 }
 
@@ -1048,7 +1077,7 @@ function overlaySync() {
   // a test window never has focus: its overlay shows only when a test asks (it sat on the user's screen)
   const away = !BrowserWindow.getFocusedWindow() && !QUIET_TEST;
   // the 설정 창 (#59): off, or nothing chosen to show (a wild card counts only while one is out)
-  const o = settings.overlay, something = o.partner || o.alerts || (o.wild && wild.current());
+  const o = settings.overlay, something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progSoon()); // #88: a "soon" line alone
   if ((away || overlayForced) && workspaces.size && o.on && something) {
     overlayUpdate();
     if (!overlay.isVisible()) overlay.showInactive();
@@ -1073,6 +1102,8 @@ const overlayCommands = {
   overlay_click({ ws }) { focusMain(String(ws)); },
   // the wild notice (#66): Tamer in front (keyboard included) — its own wild card shows there, to catch
   wild_open() { focusMain(); logLine("wild open from overlay"); },
+  // the hatch notice (#88): Tamer, on 🎒 내 포켓몬 where the hatchling is
+  hatch_open() { focusMain(); send("open-dex", { view: "box" }); logLine("hatch open from overlay"); },
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
   overlay_fit({ width, height }) {
     if (drag) return;
@@ -1426,16 +1457,17 @@ const commands = {
   // 🛒 상점 · 👜 가방 (#76, PKM-22·23): the screen asks, the main process checks and writes (POL-SEC-02)
   shop_state: () => shopNow(),
   incubator_state: () => partner.incubator(), // 🥚 (#85)
+  // 먼저 부화 (#88): a waiting egg into the incubator, the one there next in line
+  incubator_first({ uid }) {
+    const inc = partner.incubatorFirst(uid);
+    logLine(`incubator first ${uid} ${inc ? "ok" : "no"}`);
+    if (inc) { send("incubator", inc); progressBump(); }
+    return { ok: !!inc, incubator: inc, ...shopNow() };
+  },
+  progress_state: () => progressNow(), // #88
   // 전설의 길 · 리서치 (#86): each generation's share and legends, the research's steps
   legend_road: () => { const c = caughtSet(), owned = partner.ownedSpecies(); return { road: legends.road(c, owned), research: research.view(c.size, owned) }; },
-  // a legend you already have came out: 200 coins instead (PKM-26 rule 5)
-  wild_dupe({ token }) {
-    if (!wild.takeDupe(String(token))) return { ok: false };
-    const coins = economy.legendCoins();
-    logLine("wild dupe legend — 200 coins");
-    send("economy", economy.summary());
-    return { ok: true, coins };
-  },
+
   shop_buy({ item, n }) {
     const r = economy.buy(String(item), Number(n));
     logLine(`shop buy ${item} ×${n} ${r.ok ? "ok" : r.why}`);
@@ -1447,11 +1479,11 @@ const commands = {
       if (!economy.use(item)) return { ok: false, why: "none", ...shopNow() };
       const inc = partner.incubatorAdd(item);
       logLine(`bag use ${item} incubator ${JSON.stringify(inc?.active)} waiting=${inc?.waiting}`);
-      send("economy", economy.summary()); send("incubator", inc);
+      send("economy", economy.summary()); send("incubator", inc); progressBump();
       return { ok: true, incubator: inc, ...shopNow() };
     }
     if (item === "legend") { // 전설의 향 on one open legend you don't have (#82) — used when the breakthrough comes
-      const ok = legendsView().some((l) => l.id === Number(id) && !l.owned) && economy.setLegend(Number(id));
+      const ok = legendsView().some((l) => l.id === Number(id)) && economy.setLegend(Number(id)); // any open one, had or not (#87)
       logLine(`bag use legend ${id} ${ok ? "ok" : "no"}`);
       if (ok) send("economy", economy.summary());
       return { ok, ...shopNow() };
@@ -1498,7 +1530,7 @@ const commands = {
     r.balls = ballsOwned();
     if (r.ball && r.ball !== "poke" && r.result !== "noball") send("economy", economy.summary());
     if (r.newdex) { r.coins = economy.onNewDex(); send("economy", economy.summary()); } // a species never caught before: 🪙 +₽30 (#72)
-    if (r.result === "caught") research.onCatch(caughtSet().size); // ✦ "20종 잡기" — its encounter after this one ends (#86)
+    if (r.result === "caught") { research.onCatch(caughtSet().size); progressBump(); } // ✦ "20종 잡기" — its encounter after this one ends (#86)
     logLine(`wild throw ${r.result} shakes=${r.shakes}${r.coins ? ` coins=${r.coins}` : ""}`);
     if (r.result !== "gone") broadcast("wild-throw", r);
     return r;
@@ -1550,6 +1582,7 @@ const testCommands = {
   // the Pokédex on a species, as the wild card's "도감에서 보기" (#25) asks
   wild_dex_test({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); },
   wild_open_test: () => overlayCommands.wild_open(),
+  hatch_open_test: () => overlayCommands.hatch_open(), // #88
   // the pointer over the current tab's partner / gone (scenes, #68)
   // 메뉴바 (#64): the icon's text and the menu as data (a test app shows no icon); a menu item's click by its labels
   tray_test: () => ({ shown: !!tray, ...trayNow() }),
@@ -1584,7 +1617,9 @@ const testCommands = {
       minis: document.querySelectorAll(".mini").length, meta: !!document.querySelector(".card .meta"), counts: !!document.querySelector(".counts"),
       bubbles: [...document.querySelectorAll(".bubble")].map((b) => b.textContent.trim()), shadow: card ? getComputedStyle(card).boxShadow : null,
       bg: card ? getComputedStyle(card).backgroundColor : null, note: note ? note.textContent.replace(/\\s+/g, " ").trim() : null,
-      noteShadow: note ? getComputedStyle(note).boxShadow : null };
+      noteShadow: note ? getComputedStyle(note).boxShadow : null,
+      prog: document.querySelector(".ov-prog")?.textContent || null, progDot: document.querySelector(".ov-prog-dot")?.textContent || null, // #88
+      hatch: document.querySelector(".wild-note.hatch")?.textContent.replace(/\\s+/g, " ").trim() || null };
   })()`),
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)
   async click_test({ x, y, modifiers = 0, button = "left", count = 1 }) {
@@ -1668,7 +1703,7 @@ const testCommands = {
   incubator_add_test({ kind = "egg", have = 0 }) {
     partner.incubatorAdd(kind);
     for (let i = 0; i < have; i++) partner.incubatorStep();
-    send("incubator", partner.incubator());
+    send("incubator", partner.incubator()); progressBump();
     return partner.incubator();
   },
   // 🪙 finishes counted straight into the ledger (UI scenes: today's coins without touching EXP or stats)

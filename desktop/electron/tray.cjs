@@ -25,7 +25,7 @@ function tabRow(t) {
 }
 
 // tabs: [{ ws, name, state, ended, active }] · usage: { claude: { five_hour, seven_day } } · settings: readSettings()
-function trayModel({ tabs = [], usage = {}, settings, coins = null, now = Date.now() }) {
+function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null, now = Date.now() }) {
   const mb = settings.menubar, o = settings.overlay;
   const waiting = tabs.filter((t) => t.state === "waiting").length;
   const fives = AGENTS.map(([k]) => usage[k]?.five_hour).filter((w) => live(w, now)).map((w) => w.pct);
@@ -51,6 +51,10 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, now = Date.n
   if (!any) items.push({ label: "한도: 에이전트가 아직 알려 주지 않았어요", enabled: false });
   // 🪙 포켓코인 (#72, SCREENS_P3 S10): one line, not clickable — never on the icon's text
   if (coins) items.push({ label: `🪙 포켓코인 ${coins.balance.toLocaleString("en-US")} · 오늘 +${coins.today.earned.toLocaleString("en-US")}`, enabled: false });
+  // 진행 (#88, PKM-30 rule 7): what there is of the incubator · stamps · research, one line, not clickable
+  const pl = prog && [prog.inc && `🥚 부화기 ${prog.inc.have}/${prog.inc.need}`, prog.stamps && `⭐ 스탬프 ${prog.stamps.n}/${prog.stamps.need}`,
+    prog.research && `✦ 리서치 ${prog.research.done}/${prog.research.of}`].filter(Boolean);
+  if (pl?.length) items.push({ label: pl.join(" · "), enabled: false });
   items.push({ type: "separator" });
 
   const alphas = [100, 82, 50, 30, 0];
@@ -61,6 +65,7 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, now = Date.n
       { label: "파트너", type: "checkbox", checked: o.partner, act: { set: { overlay: { partner: !o.partner } } } },
       { label: "알림", type: "checkbox", checked: o.alerts, act: { set: { overlay: { alerts: !o.alerts } } } },
       { label: "야생 포켓몬", type: "checkbox", checked: o.wild, act: { set: { overlay: { wild: !o.wild } } } },
+      { label: "진행 — 곧 일어날 일", type: "checkbox", checked: o.progress, act: { set: { overlay: { progress: !o.progress } } } }, // #88
     ] },
     { label: "최소 모드", enabled: o.on, submenu: [["auto", "배경 30% 이하일 때"], ["always", "항상"], ["never", "안 씀"]]
       .map(([v, l]) => ({ label: l, type: "radio", checked: o.minimal === v, act: { set: { overlay: { minimal: v } } } })) },
