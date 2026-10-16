@@ -4,7 +4,8 @@
 //                         agents or text (POL-DATA-02 rule 6). The balance is its sum.
 //   economy/wallet.json   { balance } — a cache, rebuilt from the ledger when missing or different
 //   economy/today.json    { day, seen: [turn start ms] } — the same finish counted once; today only
-//   economy/state.json    { startSeen, incenseUntil } — the 시작 코인 band was closed · 향 burns until (ms)
+//   economy/state.json    { startSeen, incenseUntil, stampsSince, legend } — the 시작 코인 band was closed ·
+//                         향 burns until (ms) · stamps count from this day · 전설의 향 set on this species (#82)
 // 🛒 the shop and 👜 the bag (E3, #76, PKM-22·23): a purchase is a ledger line {day, kind: "buy",
 // item, n, amount: −price × n}, using one {day, kind: "use", item, n, amount: 0} — the bag is buys − uses
 const fs = require("node:fs");
@@ -69,7 +70,7 @@ function init() {
   if (first) {
     const n = stats.total();
     add("start", n, Math.min(n * START_PER, START_MAX));
-    writeJson(STATE, { startSeen: !rows.get(key(today(), "start")).amount }); // ₽0: no band
+    writeJson(STATE, { ...readJson(STATE, {}), startSeen: !rows.get(key(today(), "start")).amount }); // ₽0: no band — the rest of the state kept
     save();
   } else if (readJson(WALLET, {}).balance !== balance()) save();
   return summary();
@@ -109,10 +110,10 @@ function summary() {
   const capLeft = Math.max(0, CAP - amount(d, "done") - amount(d, "fast"));
   const st = [...rows.values()].find((r) => r.kind === "start");
   const show = readJson(STATE, {}).startSeen === false; // written so on the first launch only — a lost state file never shows it again
-  return { balance: balance(), bagN: Object.values(bag()).reduce((s, n) => s + n, 0), incenseUntil: incenseUntil(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
+  return { balance: balance(), bagN: Object.values(bag()).reduce((s, n) => s + n, 0), incenseUntil: incenseUntil(), stamps: stamps(), legend: legendSet(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
 }
 function dismissStart() { writeJson(STATE, { ...readJson(STATE, {}), startSeen: true }); return summary(); }
-const EARN = new Set(["done", "fast", "first", "evolve", "newdex", "level"]); // what "오늘 번 코인" counts
+const EARN = new Set(["done", "fast", "first", "evolve", "newdex", "level", "big", "legend"]); // what "오늘 번 코인" counts
 
 // ── 🛒 the shop (E3, #76, PKM-22): only what this phase has (later items appear with their phase —
 // no "coming soon" cards). Prices and limits never go up (POL-FUT-01 rule 10) ───────────────────
@@ -122,6 +123,7 @@ const SHOP = [
   { id: "master", group: "ball", name: "마스터볼", price: 1500, effect: "반드시 잡혀요", weekly: 1 },
   { id: "candy", group: "grow", name: "이상한사탕", price: 30, effect: "레벨 +1", many: true },
   { id: "incense", group: "explore", name: "향", price: 80, effect: "1시간 야생 ×2", many: true },
+  { id: "legend", group: "explore", name: "전설의 향", price: 800, effect: "다음 대발견 전설 고르기" }, // E4 (#82)
 ];
 const CONFIRM_AT = 1000; // a price this high asks for a second press (the screen; the main process doesn't need it)
 const INCENSE_MS = 60 * 60 * 1000;
@@ -175,4 +177,42 @@ function burnIncense() {
   return until;
 }
 
-module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, burnIncense, incenseUntil, dismissStart, CAP, PAY, _reset: () => { rows = null; } };
+// ── 연구 스탬프 · 주간 대발견 (E4, #82, PKM-24) ─────────────────────────────────────────────
+// a stamp = a day with a finish since stampsSince (stats.json — nothing new is kept). The first
+// stampsSince is the day this first ran (old days don't trigger one at once); after a breakthrough
+// it is the next day
+const STAMPS = (TEST && Number(process.env.CVIM_STAMPS)) || 7;
+const nextDay = (d) => { const t = new Date(`${d}T12:00`); t.setDate(t.getDate() + 1); return stats.dayOf(t); };
+function stamps() {
+  const st = readJson(STATE, {});
+  if (!st.stampsSince) { st.stampsSince = today(); writeJson(STATE, st); }
+  const days = stats.doneDays().filter((d) => d >= st.stampsSince);
+  return { n: Math.min(STAMPS, days.length), need: STAMPS, days: days.slice(0, STAMPS) };
+}
+// the 7th stamp: +100 coins, and the stamps start again tomorrow
+function breakthrough() {
+  load();
+  writeJson(STATE, { ...readJson(STATE, {}), stampsSince: nextDay(today()) });
+  add("big", 1, 100);
+  save();
+  return 100;
+}
+// all the open legends already with you: 200 coins instead of the encounter (PKM-24 rule 3)
+function legendCoins() { load(); add("legend", 1, 200); save(); return 200; }
+// 전설의 향: which species the next breakthrough brings — set from the bag, used up then
+const legendSet = () => readJson(STATE, {}).legend || null;
+function setLegend(id) {
+  if (!(bag().legend > 0)) return false;
+  writeJson(STATE, { ...readJson(STATE, {}), legend: Number(id) });
+  return true;
+}
+function takeLegend() {
+  const id = legendSet();
+  if (!id || !use("legend")) return null;
+  const st = readJson(STATE, {});
+  delete st.legend;
+  writeJson(STATE, st);
+  return id;
+}
+
+module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, burnIncense, incenseUntil, stamps, breakthrough, legendCoins, legendSet, setLegend, takeLegend, dismissStart, CAP, PAY, _reset: () => { rows = null; } };

@@ -493,6 +493,7 @@ function onCoreEvent(msg) {
   }
   if (msg.event === "transition" && msg.to === "done" && msg.from !== "done") {
     stats.recordDone(); // Home: today's count, the streak (#44) — every finished task, guessed ones too
+    bigCheck(); // ⭐ the 7th 연구 스탬프 brings a legend (#82)
     // an agent without events (any CLI, or one whose events never came): "done" was guessed from its
     // output — it still raises the partner, at half the pace (every other one), and brings no wild
     if (msg.guess) {
@@ -867,6 +868,29 @@ let trayTimer = null;
 const trayTabs = () => [...workspaces.values()].map((ws) => ({ ws: ws.id, name: path.basename(ws.cwd), state: ws.state || "idle", active: ws.id === activeWs,
   ended: ws.ended && Date.now() - ws.ended.at < 15000 ? ws.ended.how : null }));
 const coinsNow = () => { try { return economy.summary(); } catch { return null; } };
+// ⭐ 연구 스탬프 · 주간 대발견 (#82, PKM-24): 7 days with a finish → a legend that stays until caught
+// (전설의 향's species, else an open one you don't have — all of them had: 200 coins), +100 coins
+async function bigShow() {
+  const v = await wild.showBig().catch(() => null);
+  if (v) { logLine(`wild big ${v.id}${v.shiny ? "s" : ""}`); broadcast("wild", { ...v, balls: ballsOwned() }); overlayUpdate(); }
+}
+function bigCheck() {
+  if (wild.bigPending()) return bigShow(); // still waiting (shown after another encounter, or offline before)
+  const st = economy.stamps();
+  if (st.n < st.need) return;
+  economy.breakthrough();
+  const owned = partner.ownedSpecies(), want = economy.takeLegend();
+  const pool = want && !owned.has(want) ? [want] : wild.OPEN_LEGENDS.map((l) => l.id).filter((id) => !owned.has(id));
+  if (!pool.length) { economy.legendCoins(); logLine("breakthrough: every open legend is with you — 200 coins"); send("economy", economy.summary()); return; }
+  const id = pool[Math.floor(Math.random() * pool.length)];
+  wild.startBig(id, Math.random() < 1 / 64);
+  logLine(`breakthrough ${id}${want ? " (전설의 향)" : ""}`);
+  send("economy", economy.summary());
+  return bigShow();
+}
+// the open legends and whether you have each (the shop's 전설의 향, the bag's choice)
+const legendsView = () => { const owned = partner.ownedSpecies(); return wild.OPEN_LEGENDS.map((l) => ({ ...l, owned: owned.has(l.id) })); };
+const shopNow = () => ({ ...economy.shopState(), legends: legendsView() });
 // the balls in the bag, for the wild card's ball chips (#76)
 const ballsOwned = () => { try { const b = economy.bag(); return { great: b.great || 0, ultra: b.ultra || 0, master: b.master || 0 }; } catch { return {}; } };
 const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow() });
@@ -1358,19 +1382,25 @@ const commands = {
   economy_state: () => economy.summary(),
   economy_start_seen: () => economy.dismissStart(),
   // 🛒 상점 · 👜 가방 (#76, PKM-22·23): the screen asks, the main process checks and writes (POL-SEC-02)
-  shop_state: () => economy.shopState(),
+  shop_state: () => shopNow(),
   shop_buy({ item, n }) {
     const r = economy.buy(String(item), Number(n));
     logLine(`shop buy ${item} ×${n} ${r.ok ? "ok" : r.why}`);
     if (r.ok) send("economy", economy.summary());
-    return r;
+    return r.ok ? { ...r, ...shopNow() } : r;
   },
-  async bag_use({ item, uid }) {
+  async bag_use({ item, uid, id }) {
+    if (item === "legend") { // 전설의 향 on one open legend you don't have (#82) — used when the breakthrough comes
+      const ok = legendsView().some((l) => l.id === Number(id) && !l.owned) && economy.setLegend(Number(id));
+      logLine(`bag use legend ${id} ${ok ? "ok" : "no"}`);
+      if (ok) send("economy", economy.summary());
+      return { ok, ...shopNow() };
+    }
     if (item === "incense") {
       const until = economy.burnIncense();
       logLine(`bag use incense ${until ? "ok" : "none"}`);
       if (until) send("economy", economy.summary());
-      return { ok: !!until, until, ...economy.shopState() };
+      return { ok: !!until, until, ...shopNow() };
     }
     if (item !== "candy") return { ok: false, why: "unknown" };
     if (!partner.candyOk(uid)) return { ok: false, why: "lv" };
@@ -1386,7 +1416,7 @@ const commands = {
       send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved || null, from: r.from || null, coins, mile: r.miles.at(-1) || null, mileCoins });
     }
     send("economy", economy.summary());
-    return { ok: true, uid: r?.uid, lv: r?.lv, evolved: r?.evolved ? { id: r.evolved.id, name: r.evolved.name } : null, coins, mileCoins, ...economy.shopState() };
+    return { ok: true, uid: r?.uid, lv: r?.lv, evolved: r?.evolved ? { id: r.evolved.id, name: r.evolved.name } : null, coins, mileCoins, ...shopNow() };
   },
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
@@ -1726,7 +1756,7 @@ app.whenReady().then(() => {
   win.on("blur", () => setTimeout(overlaySync, 250)); // focus may be moving to our own dialog
   createOverlay();
   trayUpdate(); // 메뉴바 (STA-19)
-  wild.setOnEnd((e) => { logLine(`wild end ${e.reason}`); broadcast("wild-end", e); overlayUpdate(); });
+  wild.setOnEnd((e) => { logLine(`wild end ${e.reason}`); broadcast("wild-end", e); overlayUpdate(); if (wild.bigPending()) setTimeout(bigShow, 1500); }); // a waiting breakthrough after it (#82)
   if (wild.enabled()) wild.prefetch();
   // S1: owner-only data, old hook logs pruned (7 days without changes)
   try {
@@ -1736,6 +1766,7 @@ app.whenReady().then(() => {
   } catch (e) { logLine(`privacy error ${e}`); }
   partner.migrate(); // box.json (first run: from folders.json / pokedex.json, backed up)
   try { const e = economy.init(); logLine(`economy balance=${e.balance}${e.start ? ` start=${e.start.amount}` : ""}`); } catch (e) { logLine(`economy init error ${e}`); } // 🪙 (#72)
+  bigShow(); // a breakthrough not caught last time is back (#82)
   loadStarter(); // the first partner's starters (only while the box is empty)
   setInterval(() => { if (workspaces.size) scanShells().catch((e) => logLine(`scan error ${e}`)); }, 1500);
 });

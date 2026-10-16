@@ -94,3 +94,4 @@
 .ov .wild-note-timer { display: inline-block; min-width: 3.4em; font-variant-numeric: tabular-nums; } /* 10초 → 9초 keeps the width (#68) */
 .ov .wild-note-close { border: 0; background: transparent; color: var(--ov-dim); cursor: pointer; font-size: 12px; padding: 2px 4px; align-self: flex-start; }
 .ov .wild-note-close:hover { color: var(--ov-text); }
+.ov .wild-note.big { border: 2px solid #e8b04a; box-shadow: 0 0 0 3px rgba(232, 176, 74, .18); } /* ⭐ 대발견 (#82) */

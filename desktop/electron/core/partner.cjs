@@ -230,6 +230,8 @@ function progress(cwd) {
   const m = readBox().mons.find((x) => x.folder === cwd);
   return m ? { xp: m.xp || 0, uid: m.uid, ...lvView(m) } : { xp: 0, lv: null, final: false, next: null };
 }
+// the species you have (a legend comes once a species, #82)
+const ownedSpecies = () => new Set(readBox().mons.map((m) => m.id));
 // the level of a folder's partner (catch bonus, PKM-21 rule 6), 0 without one
 const levelAt = (cwd) => { const m = cwd && readBox().mons.find((x) => x.folder === cwd); return m ? lvOf(m) : 0; };
 
@@ -477,4 +479,4 @@ async function evolveNow(uid, trade) {
   return { evolved: to, from: first };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, ownedSpecies, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

@@ -1873,9 +1873,15 @@ async function homeRender() {
     return `<div class="pk-meter ${lv}"><b>${label}</b><span class="pk-bar"><i style="width:${p}%"></i></span><span>${p}% 남음</span><span class="dim">${untilReset(w.resets_at).replace(/^\s*↻/, "") ? `${untilReset(w.resets_at).replace(/^\s*↻/, "")} 뒤 회복` : ""}</span></div>`;
   };
   const agentsHtml = HOME_AGENTS.map(([k, name]) => { const l = lastUsage(k); return (l.five_hour || l.seven_day) ? `<div class="pk-agent"><h5>${name}${l.model ? ` <span class="dim">${esc(l.model)}</span>` : ""}</h5>${meter("5시간", l.five_hour)}${meter("주간", l.seven_day)}</div>` : ""; }).join("");
+  // ⭐ 연구 스탬프 (#82, PKM-24): a stamp for each day with a finish, 7 = a legend
+  const stp = coins?.stamps, legendName = (id) => ({ 144: "프리저", 145: "썬더", 146: "파이어" })[id] || `#${id}`;
+  const stampHtml = stp ? `<section class="pk-stamps"><h4 class="pk-group">연구 스탬프<span class="dim">작업을 끝낸 날마다 하나 · ${stp.need}개면 대발견(전설 확정)</span></h4>
+    <div class="pk-stamp">${Array.from({ length: stp.need }, (_, i) => stp.days[i] ? `<span class="on" title="${stp.days[i]}">${Number(stp.days[i].slice(5, 7))}/${Number(stp.days[i].slice(8))}</span>` : "<span></span>").join("")}
+    <b>${stp.n >= stp.need ? "⭐ 대발견!" : `${stp.need - stp.n}개 남음`}</b></div>
+    <p class="pk-note">다음 대발견: ${coins.legend ? `⭐ ${legendName(coins.legend)} (전설의 향)` : "열린 전설 중 아직 없는 종 — 프리저·썬더·파이어"}</p></section>` : "";
   $("#box-grid").innerHTML = `<div class="pk-home">${band}
     <section class="pk-today"><div><b>${st?.today ?? 0}</b><span>오늘 끝낸 작업</span></div><div><b>${st?.streak ? `🔥 ${st.streak}` : "0"}</b><span>일 연속</span></div>${coinBox}
-      <div class="pk-week" title="최근 7일 끝낸 작업">${week}</div></section>
+      <div class="pk-week" title="최근 7일 끝낸 작업">${week}</div></section>${stampHtml}
     <section><h4 class="pk-group">사용 한도<span class="dim">남은 비율 · 마지막으로 알려 준 값</span></h4>${agentsHtml || '<p class="pk-note">아직 한도 정보가 없어요 — Claude Code나 Codex가 한 번 응답하면 보여요</p>'}</section>
   </div>`;
   $("#dex-found").textContent = "";
@@ -1895,7 +1901,7 @@ async function homeRender() {
 
 // ── 🛒 상점 · 👜 가방 (#76, PKM-22·23, SCREENS_P3 S3·S4): items as cards (pk-item), the preview buys
 // (pk-qty · pk-buy = #dex-take) or uses them. The main process checks every purchase and use ──
-const ITEM_ICON = { great: '<i class="pk-ball great"></i>', ultra: '<i class="pk-ball ultra"></i>', master: '<i class="pk-ball master"></i>', candy: "🍬", incense: "🪔" };
+const ITEM_ICON = { great: '<i class="pk-ball great"></i>', ultra: '<i class="pk-ball ultra"></i>', master: '<i class="pk-ball master"></i>', candy: "🍬", incense: "🪔", legend: "🏮" };
 const ITEM_GROUPS = [["ball", "볼"], ["grow", "성장"], ["explore", "탐험"]];
 let shopSt = null; // the last shop_state
 const shopView = () => dexView("shop");
@@ -1911,8 +1917,9 @@ async function shopRender() {
   if (d.pick) return pickRender();
   const grid = $("#box-grid");
   const card = (it, i) => {
-    const off = d.view === "shop" && (it.left === 0 || it.price > st.balance);
-    const tail = d.view === "bag" ? `×${st.bag[it.id]}` : it.left === 0 ? "이번 주 샀음" : coinTxt(it.price);
+    const noLegend = it.id === "legend" && !st.legends?.some((l) => !l.owned);
+    const off = d.view === "shop" && (it.left === 0 || it.price > st.balance || noLegend);
+    const tail = d.view === "bag" ? `×${st.bag[it.id]}${it.id === "legend" && coins?.legend ? " · 걸어 둠" : ""}` : it.left === 0 ? "이번 주 샀음" : noLegend ? "다 가졌어요" : coinTxt(it.price);
     const on = it.id === "incense" && st.incenseUntil;
     return `<div class="pk-item${off ? " off" : ""}" data-i="${i}">${on ? '<span class="pk-on" title="켜져 있어요"></span>' : ""}<span class="pk-icon">${ITEM_ICON[it.id] || "🎁"}</span><b>${esc(it.name)}</b><span class="dim">${esc(it.effect)}</span><span class="pk-price">${tail}</span></div>`;
   };
@@ -1960,6 +1967,7 @@ function itemPreview(it, note = "") {
     $("#dex-meta").innerHTML = `${esc(it.effect)}<br>가진 수 ${have}${it.weekly ? ` · 한 주에 ${it.weekly}개(월요일에 다시)` : ""}`
       + (it.many ? `<br><span class="pk-qty"><button data-q="-1" title="−">−</button><b>${d.qty}</b><button data-q="1" title="+">+</button></span><br>합계 ${coinTxt(cost)}` : "");
     if (it.left === 0) { b.disabled = true; b.textContent = "이번 주 샀음 · 월요일에 다시"; }
+    else if (it.id === "legend" && !st.legends?.some((l) => !l.owned)) { b.disabled = true; b.textContent = "열린 전설을 다 가졌어요"; }
     else if (cost > st.balance) { b.disabled = true; b.textContent = `${coinTxt(cost - st.balance)} 더 필요`; }
     else if (cost >= st.confirmAt && d.askBuy) { b.className = "confirm"; b.textContent = `한 번 더 눌러 사기 · ${coinTxt(cost)}`; }
     else b.textContent = `사기 · ${coinTxt(cost)}`;
@@ -1970,6 +1978,13 @@ function itemPreview(it, note = "") {
   if (it.id === "incense") {
     $("#dex-meta").innerHTML = `${esc(it.effect)} · 대기 시간 절반<br>가진 수 ${have}${st.incenseUntil ? `<br>지금 켜져 있어요 — ${minsLeft(st.incenseUntil)}분 남음` : ""}`;
     b.textContent = st.incenseUntil ? "1시간 늘리기" : "향 피우기";
+    return;
+  }
+  if (it.id === "legend") { // 전설의 향 (#82): which open legend the next breakthrough brings
+    const set = coins?.legend, can = (st.legends || []).filter((l) => !l.owned);
+    $("#dex-meta").innerHTML = `${esc(it.effect)} — 대발견 때 하나 써요<br>가진 수 ${have}${set ? `<br>지금: ⭐ ${esc((st.legends || []).find((l) => l.id === set)?.name || `#${set}`)}에 걸어 둠` : ""}`;
+    b.hidden = true;
+    $("#dex-from").innerHTML += can.length ? can.map((l) => `<button data-legend="${l.id}"${l.id === set ? ' class="on"' : ""}>⭐ ${esc(l.name)}${l.id === set ? " ✓" : "에 걸기"}</button>`).join("") : '<p class="pk-note">열린 전설을 모두 함께하고 있어요</p>';
     return;
   }
   if (it.id === "candy") {
@@ -2452,6 +2467,7 @@ $("#dex").addEventListener("mousedown", (e) => { if (e.target === $("#dex")) dex
 $("#dex-from").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (b?.dataset.a === "pick") { dexState.pick = true; return shopRender(); } // 🍬 다른 포켓몬 고르기 (#76)
+  if (b?.dataset.legend) return invoke("bag_use", { item: "legend", id: Number(b.dataset.legend) }).then((r) => { if (r?.ok) toast("⭐ 다음 대발견에 걸어 뒀어요"); return shopRender(); }); // #82
   if (b) dexFrom(Number(b.dataset.i));
 });
 
@@ -3130,6 +3146,9 @@ function labState() {
     pokeTab: dexOpen() ? $("#dex .pk-tabs button.on")?.dataset.view || null : null,
     pos: dexOpen() ? $("#dex-pos")?.textContent || null : null,
     coin: dexOpen() ? $("#dex-title .pk-coin")?.textContent || null : null, // 🪙 (#72)
+    stamps: dexOpen() ? $("#box-grid .pk-stamp")?.textContent?.replace(/\s+/g, " ").trim() || null : null, // ⭐ (#82)
+    nextBig: dexOpen() ? $("#box-grid .pk-stamps .pk-note")?.textContent || null : null,
+    wildBig: !!$("#wild .wild-card.legend:not([hidden])"), wildText: $("#wild .wild-text")?.textContent || null,
     coinToday: dexOpen() ? $("#box-grid .pk-coins")?.textContent || null : null,
     coinBand: dexOpen() ? $("#box-grid .pk-band")?.textContent || null : null,
     takeBtn: dexOpen() && !$("#dex-take").hidden ? `${$("#dex-take").textContent}${$("#dex-take").disabled ? " (꺼짐)" : ""}${$("#dex-take").classList.contains("confirm") ? " (확인)" : ""}` : null, // #76
@@ -3324,6 +3343,10 @@ async function uiScenes(set) {
       const kept = tab.state;
       tab.state = { ...tab.state, state: "error", detail: "server_overloaded" }; renderBar(tab); renderTab(tab);
       await shot("bar-failed");
+      // ⭐ 대발견 카드 (#82): gold border, the badge, "도망가지 않아요", the pity — a seeded sprite stands in
+      { const m = (await invoke("box_list", { ws: tab.id }))[0];
+        await wild.show({ token: "scene", id: m.id, name: m.name, gif: m.gif, shiny: false, big: true, pity: 1.44, balls: {} }); await wait(1500);
+        await shot("wild-breakthrough"); wild.hide(); }
       tab.state = kept; renderBar(tab); renderTab(tab);
       // 변경 사항 칸 제목의 브랜치 (TRM-18): a long name (… in the narrow title), ahead/behind, a short list
       const keep = tab.changes;

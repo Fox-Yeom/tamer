@@ -18,6 +18,7 @@ let lastBall = "poke"; // ⌘B throws the ball picked last (back to the Poké Ba
 export function createWild(root, { invoke, partnerButton, dexButton, log = () => {} }) {
   root.innerHTML = `
     <div class="wild-card" hidden>
+      <span class="wild-badge" hidden>⭐ 대발견</span>
       <div class="wild-stage"><div class="grass"><span>🌿</span><span>🌿</span><span>🌿</span></div>
         <img class="wild-poke" alt="" /><div class="wild-ball pokeball-static"></div><div class="fx"></div></div>
       <div class="wild-text"></div>
@@ -68,6 +69,7 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
 
   function countdown() {
     clearInterval(tick);
+    if (enc?.big) { timer.textContent = "도망가지 않아요"; return; } // ⭐ a breakthrough waits (#82)
     const draw = () => { if (enc?.until) timer.textContent = `${Math.max(0, Math.ceil((enc.until - Date.now()) / 1000))}초`; };
     draw();
     tick = setInterval(draw, 500);
@@ -78,7 +80,8 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
     enc = e; busy = false;
     if (e.balls) balls = e.balls;
     card.hidden = false;
-    card.className = "wild-card appearing";
+    card.className = `wild-card appearing${e.big ? " legend" : ""}`;
+    $(".wild-badge").hidden = !e.big;
     img.className = "wild-poke";
     ball.className = "wild-ball pokeball-static";
     btn.hidden = false; btn.disabled = false; adopt.hidden = true; dexBtn.hidden = true;
@@ -87,7 +90,7 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
       await img.decode().catch(() => {});
       img.style.width = `${img.naturalWidth * (img.naturalWidth < 60 ? 2 : 1)}px`;
     } catch { img.removeAttribute("src"); }
-    say(`앗! 야생의 ${nm(e, "이", "가")} 나타났다!`);
+    say(e.big ? `전설의 ${nm(e, "이", "가")} 나타났다!${e.pity > 1 ? `<br><span class="dim">놓칠수록 잡기 쉬워져요 ×${e.pity}</span>` : ""}` : `앗! 야생의 ${nm(e, "이", "가")} 나타났다!`);
     drawBalls();
     countdown();
     setTimeout(() => card.classList.remove("appearing"), 1200);
@@ -149,7 +152,8 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
         clearInterval(tick); timer.textContent = "";
         hideLater(3000);
       } else {
-        say(r.shakes >= 2 ? "아깝다! 조금만 더 하면 잡을 수 있었는데!" : "앗! 볼에서 나와버렸다!");
+        if (r.big) enc.pity = r.pity;
+        say((r.shakes >= 2 ? "아깝다! 조금만 더 하면 잡을 수 있었는데!" : "앗! 볼에서 나와버렸다!") + (r.big ? `<br><span class="dim">도망가지 않아요 · 다음엔 ×${r.pity}</span>` : ""));
         if (r.left) enc.until = Date.now() + r.left;
         countdown();
         busy = false; btn.disabled = false;

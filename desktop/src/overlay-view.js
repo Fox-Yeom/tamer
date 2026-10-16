@@ -97,8 +97,9 @@ export function sizePokes(root) {
 // 야생 알림 (#66, PKM-08): "야생의 ○○ 등장!" · seconds left · ✕ — a click brings Tamer to catch it
 export function wildNoteHtml(e, url) {
   const name = `${e.shiny ? "✨" : ""}${esc(e.name)}`;
-  return `<div class="wild-note hit" data-act="wild" title="클릭: Tamer에서 잡기">
+  // ⭐ a breakthrough (#82, SCREENS_P3 S9): gold border, no seconds — it doesn't run away
+  return `<div class="wild-note hit${e.big ? " big" : ""}" data-act="wild" title="클릭: Tamer에서 잡기">
     ${url ? `<img class="wild-note-poke" src="${url}" alt="" />` : '<div class="pokeball"></div>'}
-    <div class="wild-note-text"><b>야생의 ${name}</b> 등장!<div class="wild-note-sub">눌러서 잡기 <span class="wild-note-timer"></span></div></div>
+    <div class="wild-note-text">${e.big ? `⭐ 대발견! 전설의 <b>${name}</b>` : `<b>야생의 ${name}</b> 등장!`}<div class="wild-note-sub">눌러서 잡기 <span class="wild-note-timer">${e.big ? "· 도망가지 않아요" : ""}</span></div></div>
     <button class="wild-note-close" title="알림 닫기">✕</button></div>`;
 }

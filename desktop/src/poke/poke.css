@@ -8,6 +8,7 @@
   --pk-card: rgba(0, 0, 0, .18); --pk-field: rgba(0, 0, 0, .25);
   --pk-new: #f5c542; --pk-new-soft: rgba(245, 197, 66, .14); --pk-recent: 90, 160, 255; --pk-here: var(--accent);
   --pk-coin: #f2c14e; --pk-coin-soft: rgba(242, 193, 78, .1); --pk-coin-line: #6b5a2a; /* 🪙 포켓코인 (#72) */
+  --pk-legend: #e8b04a; /* ⭐ 대발견 (#82) */
   --pk-radius: 10px; --pk-gap: 8px;
 }
 
@@ -188,3 +189,11 @@
 #dex .pk-lvup { font-weight: 800; color: var(--pk-coin); animation: pk-lvup .5s ease-out; } /* 🍬 → "🆙 Lv 16 → 17!" (#78) */
 #dex .pk-card.lvup { animation: pk-lvup .5s ease-out; outline-color: var(--pk-coin); }
 @keyframes pk-lvup { from { transform: scale(1.12); } to { transform: none; } }
+
+/* ⭐ 연구 스탬프 (#82, PKM-24, SCREENS_P3 S2): 7 circles, a stamped one = green with its date */
+#dex .pk-stamps { display: flex; flex-direction: column; gap: 6px; }
+#dex .pk-stamp { display: flex; align-items: center; gap: 8px; }
+#dex .pk-stamp span { width: 42px; height: 42px; border-radius: 50%; border: 2px dashed var(--pk-line); display: inline-flex; align-items: center; justify-content: center; font-size: 11px; color: var(--pk-dim); }
+#dex .pk-stamp span.on { border: 2px solid var(--pk-title); background: var(--pk-sel); color: var(--pk-fg); font-weight: 700; }
+#dex .pk-stamp b { margin-left: 6px; font-size: 13px; color: var(--pk-legend); }
+#dex-from button.on { border-color: var(--pk-legend); }

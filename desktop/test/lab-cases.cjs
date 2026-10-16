@@ -54,6 +54,15 @@ function fakeSpecies(box, id, name, evo) {
   fs.copyFileSync(path.join(P, "4.gif"), path.join(P, `${id}.gif`));
   if (evo) fs.writeFileSync(path.join(P, `${id}.evo.json`), JSON.stringify({ id, ...evo }));
 }
+// ⭐ 대발견 (#82): a day n days ago (this Mac's calendar), the three open legends without the network
+const dayAgo = (n) => { const t = new Date(); t.setDate(t.getDate() - n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
+function birds(box) {
+  for (const [id, name] of [[144, "프리저"], [145, "썬더"], [146, "파이어"]]) {
+    fakeSpecies(box, id, name, { reach: null, next: [] });
+    const f = path.join(box.data, "pokemon", `${id}.json`), j = JSON.parse(fs.readFileSync(f, "utf8"));
+    fs.writeFileSync(f, JSON.stringify({ ...j, legendary: true, capture_rate: 3 }));
+  }
+}
 // 🪙 포켓코인 (#72): today as the app counts it (this Mac's midnight), the economy files of a sandbox
 const todayLocal = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
 const econ = (box, f) => path.join(box.data, "economy", f);
@@ -327,6 +336,77 @@ module.exports = [
       { text: "env | sort > env.txt" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { probe: "done" }],
     check: ({ box }) => [ok(fs.existsSync(path.join(box.folder("proj"), "env.txt")), "env.txt가 안 생김")],
   },
+  // ── ⭐ 연구 스탬프 · 주간 대발견 E4 (#82, PKM-24) ──
+  {
+    id: "breakthrough", tags: ["smoke", "poke"], what: "대발견: 스탬프가 다 차는 완료에 전설(1세대 새) 확정 조우 + 100코인 — 금색 카드, 놓쳐도 도망 없음·×1.2, 남아 있는 동안 보통 야생 없음, 잡으면 끝 (#82)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "2", CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    setup: (box) => { birds(box); putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(1) } }); fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })); },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "big" },
+      { invoke: "wild_rig_test", args: { result: "broke" } }, { key: "b", mods: 4 }, { wait: 3500 }, { probe: "missed" },
+      ...DONE("$ws"), { wait: 1200 }, { key: "p", mods: 4 }, { wait: 800 }, { probe: "home" }, { key: "Escape" }, { wait: 300 },
+      { invoke: "wild_rig_test", args: { result: "caught" } }, { key: "b", mods: 4 }, { wait: 5000 }, { invoke: "economy_state", log: true }],
+    check: ({ probe, log, box }) => {
+      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      const w = JSON.parse(fs.readFileSync(path.join(box.data, "wild.json"), "utf8"));
+      const big = (ledgerRows(box) || []).find((x) => x.kind === "big");
+      return [
+        ok(/^breakthrough 14[4-6]$/m.test(log), `대발견 ${log.match(/^breakthrough[^\n]*/m)?.[0]}`),
+        ok(probe.big?.wildBig && /전설의 .+ 나타났다!/.test(probe.big?.wildText || ""), `금색 카드 ${probe.big?.wildBig} · ${probe.big?.wildText}`),
+        ok(probe.missed?.wildBig && /도망가지 않아요 · 다음엔 ×1\.2/.test(probe.missed?.wildText || ""), `놓친 뒤 ${probe.missed?.wildText}`),
+        ok(!/^wild appeared/m.test(log), "대발견이 남아 있는데 보통 야생이 나옴"),
+        ok(/^\d 2개 남음$|^2개 남음$/.test(probe.home?.stamps || "") || /2개 남음/.test(probe.home?.stamps || ""), `홈 스탬프 ${probe.home?.stamps} (대발견 뒤 다음 날부터 — 오늘은 0)`),
+        ok(/^wild throw caught/m.test(log) && !w.big, `잡은 뒤 wild.json big ${JSON.stringify(w.big)}`),
+        ok(big?.amount === 100 && st.today?.earned >= 100, `대발견 100코인 ${JSON.stringify(big)}`),
+      ];
+    },
+  },
+  {
+    id: "breakthrough-legend", tags: ["smoke", "poke"], what: "전설의 향: 가방에서 파이어에 걸면 다음 대발견은 파이어, 향은 하나 씀 — 가진 전설에는 못 걺 (#82)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "2" },
+    setup: (box) => {
+      birds(box);
+      putEcon(box, { "ledger.jsonl": [{ day: todayLocal(), kind: "start", n: 0, amount: 1000 }, { day: todayLocal(), kind: "buy", item: "legend", n: 1, amount: -800 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true, stampsSince: dayAgo(1) } });
+    },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "bag_use", args: { item: "legend", id: 999 }, log: true }, { invoke: "bag_use", args: { item: "legend", id: 146 }, log: true },
+      { key: "p", mods: 4 }, { wait: 800 }, { probe: "home" }, { key: "Escape" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { invoke: "shop_state", log: true }],
+    check: ({ probe, log }) => {
+      const uses = [...log.matchAll(/^lab-invoke bag_use (.*)$/gm)].map((m) => JSON.parse(m[1]).ok);
+      const st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
+      return [
+        ok(JSON.stringify(uses) === "[false,true]", `걸기 ${JSON.stringify(uses)} (열린 전설이 아닌 999는 거부)`),
+        ok(/파이어 \(전설의 향\)/.test(probe.home?.nextBig || ""), `홈 다음 대발견 ${probe.home?.nextBig}`),
+        ok(/^breakthrough 146 \(전설의 향\)$/m.test(log), `대발견 ${log.match(/^breakthrough[^\n]*/m)?.[0]}`),
+        ok(!st.bag?.legend, `가방 ${JSON.stringify(st.bag)} (향 하나 씀)`),
+      ];
+    },
+  },
+  {
+    id: "breakthrough-owned", tags: ["smoke", "poke"], what: "열린 전설(1세대 새 셋)을 다 가졌으면 대발견은 조우 대신 200코인(+100) (#82)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "2" },
+    setup: (box) => {
+      birds(box);
+      const b = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8"));
+      for (const id of [144, 145, 146]) b.mons.push({ uid: b.next++, id, shiny: false, xp: 0, lv: 50, mile: 50, how: "wild", at: 1, folder: null });
+      fs.writeFileSync(path.join(box.data, "box.json"), JSON.stringify(b));
+      putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(1) } });
+    },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1200 }, { probe: "after" }],
+    check: ({ probe, log, box }) => {
+      const rows = ledgerRows(box) || [];
+      return [
+        ok(/every open legend is with you/.test(log) && !probe.after?.wildBig, `조우 없음 ${probe.after?.wildBig}`),
+        ok(rows.find((x) => x.kind === "legend")?.amount === 200 && rows.find((x) => x.kind === "big")?.amount === 100, `원장 ${JSON.stringify(rows.filter((x) => ["big", "legend"].includes(x.kind)))}`),
+      ];
+    },
+  },
+  {
+    id: "breakthrough-restart", tags: ["smoke", "poke"], what: "잡지 않은 대발견은 앱을 다시 켜도 그대로 — 놓친 횟수(×1.44)까지 (#82)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => { birds(box); fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ big: { id: 145, shiny: false, misses: 2, seen: true } })); },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 }, { probe: "after" }],
+    check: ({ probe }) => [ok(probe.after?.wildBig && /전설의 썬더가 나타났다!.*×1\.44/.test(probe.after?.wildText || ""), `다시 켠 뒤 ${probe.after?.wildBig} · ${probe.after?.wildText}`)],
+  },
   // ── 🛒 상점 · 👜 가방 E3 (#76, PKM-22·23) ──
   {
     id: "poke-keys-hangul", tags: ["smoke", "poke"], what: "한글 입력 상태에서도 포켓몬 창 글자 키: S(ㄴ) 상점 · I(ㅑ) 가방 · M(ㅡ) 내 포켓몬 — 터미널엔 아무 글자도 안 들어감 (#77)",
@@ -359,7 +439,7 @@ module.exports = [
       const buys = (ledgerRows(box) || []).filter((x) => x.kind === "buy");
       return [
         ok(probe.shop?.pokeTab === "shop" && probe.shop?.coin === "🪙 2,000", `S → 상점 ${probe.shop?.pokeTab} 칩 ${probe.shop?.coin}`),
-        ok(JSON.stringify(probe.shop?.items) === '["슈퍼볼:40코인","하이퍼볼:100코인","마스터볼:1,500코인","이상한사탕:30코인","향:80코인"]', `진열 ${JSON.stringify(probe.shop?.items)}`),
+        ok(JSON.stringify(probe.shop?.items) === '["슈퍼볼:40코인","하이퍼볼:100코인","마스터볼:1,500코인","이상한사탕:30코인","향:80코인","전설의 향:800코인"]' , `진열 ${JSON.stringify(probe.shop?.items)}`),
         ok(probe.three?.takeBtn === "사기 · 120코인", `고른 카드 한 번 더 누르기 + "+" → 수 3이어야 ${probe.three?.takeBtn} (#81)`),
         ok(probe.ask?.takeBtn === "한 번 더 눌러 사기 · 1,500코인 (확인)", `마스터볼 첫 누름 ${probe.ask?.takeBtn}`),
         ok(/이번 주 샀음/.test(probe.bought?.takeBtn || "") && probe.bought?.coin === "🪙 380", `산 뒤 ${probe.bought?.takeBtn} · 칩 ${probe.bought?.coin} (2,000 − 120 − 1,500)`),

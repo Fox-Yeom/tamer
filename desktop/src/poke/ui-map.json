@@ -31,7 +31,9 @@
     "wild": {
       "what": "야생 포켓몬 카드 (창 안 · 바탕화면)",
       "entry": "createWild",
-      "scenes": []
+      "scenes": [
+        "wild-breakthrough"
+      ]
     },
     "agents": {
       "what": "에이전트 연결 창 (첫 실행 자동 · ⌘G → ⚙) — 포켓몬 창 위(z 26)",
@@ -359,7 +361,7 @@
       ]
     },
     "wild-card": {
-      "what": "야생 포켓몬 카드 · 볼 고르기 칩(가진 볼만, #76)",
+      "what": "야생 포켓몬 카드 · 볼 고르기 칩(가진 볼만, #76) · ⭐ 대발견 금색 카드(#82)",
       "files": [
         "src/wild.js",
         "src/wild.css"
@@ -367,7 +369,9 @@
       "selectors": [
         ".wild-",
         ".wild-balls",
-        ".wild-throw.gold"
+        ".wild-throw.gold",
+        ".wild-badge",
+        ".wild-card.legend"
       ],
       "functions": [
         "createWild",
@@ -484,6 +488,24 @@
         "home"
       ]
     },
+    "pk-stamp": {
+      "what": "연구 스탬프 7칸(찍힌 칸 = 날짜) · 남은 수 · 다음 대발견 줄 (#82, PKM-24)",
+      "files": [
+        "src/poke/poke.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".pk-stamps",
+        ".pk-stamp",
+        "--pk-legend"
+      ],
+      "functions": [
+        "homeRender"
+      ],
+      "screens": [
+        "home"
+      ]
+    },
     "side-split": {
       "what": "큰 칸과 오른쪽 칸 사이 경계 — 끌어서 너비, 두 번 눌러 40% (#58)",
       "files": [
@@ -511,7 +533,8 @@
         "src/overlay-cards.css"
       ],
       "selectors": [
-        ".ov"
+        ".ov",
+        ".wild-note.big"
       ],
       "functions": [
         "cardsHtml",

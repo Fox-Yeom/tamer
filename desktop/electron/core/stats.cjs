@@ -32,4 +32,7 @@ function summary(now = new Date()) {
 // every finish still on record (the last 120 days) — the 시작 코인 (#72)
 const total = () => Object.values(readJson(FILE, {}).days || {}).reduce((s, n) => s + (Number.isInteger(n) ? n : 0), 0);
 
-module.exports = { recordDone, summary, dayOf, total };
+// the days with at least one finish, oldest first (연구 스탬프, #82)
+const doneDays = () => Object.entries(readJson(FILE, {}).days || {}).filter(([, n]) => Number.isInteger(n) && n > 0).map(([d]) => d).sort();
+
+module.exports = { recordDone, summary, dayOf, total, doneDays };
