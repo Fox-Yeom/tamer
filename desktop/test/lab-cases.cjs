@@ -476,6 +476,52 @@ module.exports = [
     },
   },
   {
+    id: "stone-evolve", tags: ["smoke", "poke"], what: "진화의 돌: 가방에서 [쓸 포켓몬 고르기] → 쓸 수 있는 마리만(갈래 있는 이브이) → 갈래 버튼 셋 → 샤미드로 바로 진화, 돌 1개 씀·+30코인, 파트너 칸도 진화 (#93)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      fakeSpecies(box, 133, "이브이", { reach: null, next: [{ to: 134, kind: "stone" }, { to: 135, kind: "stone" }, { to: 136, kind: "stone" }] });
+      for (const [id, name] of [[134, "샤미드"], [135, "쥬피썬더"], [136, "부스터"]]) fakeSpecies(box, id, name, { reach: { kind: "stone" }, next: [] });
+      evolvePartner(box, { id: 133, lv: 12, mile: 10 });
+      const d = todayLocal();
+      putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 1000 }, { day: d, kind: "buy", item: "stone", n: 1, amount: -300 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
+    },
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 900 }, { probe: "bag" },
+      { key: "Enter" }, { wait: 1200 }, { probe: "pick" }, { click: "#dex-from [data-stone='134']" }, { wait: 2500 }, { probe: "after" },
+      { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true }],
+    check: ({ probe, log }) => {
+      const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]"), me = list.find((m) => m.folder === "here");
+      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      return [
+        ok(probe.bag?.takeBtn === "쓸 포켓몬 고르기", `가방 진화의 돌 ${probe.bag?.takeBtn}`),
+        // the list: stone-able ones only — the data's others that a stone evolves too, and the Eevee (no longer one after)
+        ok(probe.pick?.cards === list.filter((m) => m.stone).length + 1 && probe.pick.cards < list.filter((m) => !m.egg).length && JSON.stringify(probe.pick?.fromBtns) === '["→ 샤미드","→ 쥬피썬더","→ 부스터"]',
+          `쓸 마리만 ${probe.pick?.cards}/${list.length} · 갈래 ${JSON.stringify(probe.pick?.fromBtns)}`),
+        ok(/^bag use stone uid=\d+ to=134$/m.test(log) && me?.id === 134 && me.evo?.at(-1)?.to === "샤미드", `진화 ${JSON.stringify(me && { id: me.id, evo: me.evo })}`),
+        ok(st.stones === 0 && st.balance === 730, `돌 다 씀 ${st.stones} · 코인 ${st.balance} (1000−300+30)`),
+        ok(probe.after?.partner === "샤미드", `파트너 칸 ${probe.after?.partner}`),
+      ];
+    },
+  },
+  {
+    id: "shiny-charm", tags: ["smoke", "poke"], what: "빛나는부적: 5,000코인에 한 번 — 다시 사기 거부, 상점 카드 \"가짐 ✔\"·버튼 없음, 가방 켜진 효과 ✨·탭 수엔 안 셈, 이로치 1/32 (#93)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => putEcon(box, { "ledger.jsonl": JSON.stringify({ day: todayLocal(), kind: "start", n: 0, amount: 12000 }) + "\n", "state.json": { startSeen: true } }),
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, { invoke: "charm_test", log: true },
+      { invoke: "shop_buy", args: { item: "charm", n: 1 }, log: true }, { invoke: "shop_buy", args: { item: "charm", n: 1 }, log: true }, { invoke: "charm_test", log: true },
+      { key: "p", mods: 4 }, { wait: 700 }, { key: "s" }, { wait: 800 }, { probe: "shop" }, { key: "i" }, { wait: 800 }, { probe: "bag" }, { invoke: "economy_state", log: true }],
+    check: ({ probe, log }) => {
+      const charm = [...log.matchAll(/^lab-invoke charm_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const buys = [...log.matchAll(/^lab-invoke shop_buy (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      return [
+        ok(charm[0]?.charm === false && charm[0]?.odds === 1 / 64 && charm[1]?.charm === true && charm[1]?.odds === 1 / 32, `이로치 확률 ${JSON.stringify(charm)}`),
+        ok(buys[0]?.ok === true && buys[1]?.ok === false && buys[1]?.why === "once", `한 번만 ${JSON.stringify(buys.map((b) => b.ok ? "ok" : b.why))}`),
+        ok((probe.shop?.items || []).includes("빛나는부적:가짐 ✔:off"), `상점 카드 ${JSON.stringify((probe.shop?.items || []).filter((x) => /부적/.test(x)))}`),
+        ok(/✨ 빛나는부적/.test(probe.bag?.effects || "") && st.charm === true && st.bagN === 0 && !/가방 \d/.test(probe.bag?.bagTab || ""), `가방 효과 ${probe.bag?.effects} · 수 ${st.bagN} · 탭 ${probe.bag?.bagTab}`),
+      ];
+    },
+  },
+  {
     id: "incubator-first", tags: ["smoke", "poke"], what: "가방 안 부화기 섹션: 비었으면 가방의 알 [알 넣기], 넣으면 부화 칸·작업 n번 남음, 둘째 알은 차례 카드 — 고르면 [먼저 부화] 한 번에 바뀌고 진행은 알마다 그대로 (#88)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => putEcon(box, { "ledger.jsonl": [{ day: todayLocal(), kind: "start", n: 0, amount: 1000 }, { day: todayLocal(), kind: "buy", item: "egg", n: 1, amount: -500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } }),
@@ -656,14 +702,14 @@ module.exports = [
       { click: "#box-grid .pk-item[data-i='0']" }, { wait: 150 }, { key: "+" }, { wait: 200 }, { probe: "three" }, { key: "Enter" }, { wait: 1200 },
       { key: "ArrowRight" }, { key: "ArrowRight" }, { wait: 300 }, { key: "Enter" }, { wait: 300 }, { probe: "ask" }, { key: "Enter" }, { wait: 1200 }, { probe: "bought" },
       { invoke: "shop_buy", args: { item: "master", n: 1 }, log: true }, { invoke: "shop_buy", args: { item: "ultra", n: 99 }, log: true }, { invoke: "shop_buy", args: { item: "great", n: 0 }, log: true },
-      { invoke: "shop_buy", args: { item: "stone", n: 1 }, log: true }, { invoke: "shop_state", log: true }],
+      { invoke: "shop_buy", args: { item: "bogus", n: 1 }, log: true }, { invoke: "shop_state", log: true }],
     check: ({ probe, log, box }) => {
       const r = [...log.matchAll(/^lab-invoke shop_buy (.*)$/gm)].map((m) => JSON.parse(m[1]).why);
       const st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
       const buys = (ledgerRows(box) || []).filter((x) => x.kind === "buy");
       return [
         ok(probe.shop?.pokeTab === "shop" && probe.shop?.coin === "🪙 2,000", `S → 상점 ${probe.shop?.pokeTab} 칩 ${probe.shop?.coin}`),
-        ok(JSON.stringify(probe.shop?.items) === '["슈퍼볼:40코인","하이퍼볼:100코인","마스터볼:1,500코인","이상한사탕:30코인","향:80코인","전설의 향:800코인","알:500코인","희귀 알:2,000코인"]'  , `진열 ${JSON.stringify(probe.shop?.items)}`),
+        ok(JSON.stringify(probe.shop?.items) === '["슈퍼볼:40코인","하이퍼볼:100코인","마스터볼:1,500코인","이상한사탕:30코인","진화의 돌:300코인","향:80코인","전설의 향:800코인","알:500코인","희귀 알:2,000코인","빛나는부적:5,000코인:off"]', `진열 ${JSON.stringify(probe.shop?.items)} (E7 진화의 돌·빛나는부적 #93)`),
         ok(probe.three?.takeBtn === "사기 · 120코인", `고른 카드 한 번 더 누르기 + "+" → 수 3이어야 ${probe.three?.takeBtn} (#81)`),
         ok(probe.ask?.takeBtn === "한 번 더 눌러 사기 · 1,500코인 (확인)", `마스터볼 첫 누름 ${probe.ask?.takeBtn}`),
         ok(/이번 주 샀음/.test(probe.bought?.takeBtn || "") && probe.bought?.coin === "🪙 380", `산 뒤 ${probe.bought?.takeBtn} · 칩 ${probe.bought?.coin} (2,000 − 120 − 1,500)`),

@@ -5,6 +5,7 @@ const crypto = require("node:crypto");
 const path = require("node:path");
 const { CACHE, readJson, updateJson } = require("./paths.cjs");
 const partner = require("./partner.cjs");
+const economy = require("./economy.cjs"); // 빛나는부적 (#93)
 
 const FILE = path.join(CACHE, "wild.json"); // { enabled, last (epoch s), next: { id, shiny }, big: { id, shiny, misses, seen } }
 const envNum = (k, d) => (process.env[k] != null && Number.isFinite(Number(process.env[k])) ? Number(process.env[k]) : d);
@@ -42,7 +43,7 @@ function prefetch() {
   const nx = state().next;
   if (nx && partner.loadSprite(nx.id, nx.shiny)?.gif) { partner.fetchEvo(nx.id); return Promise.resolve(nx); } // its level when caught (#74)
   if (!prefetching) {
-    prefetching = partner.fetchPy(["wild"]).then((p) => {
+    prefetching = partner.fetchPy(["wild", ...(economy.charmOn() ? ["charm"] : [])]).then((p) => {
       const data = p && readJson(p, null);
       if (!data) return null;
       const next = { id: data.id, shiny: !!data.shiny };

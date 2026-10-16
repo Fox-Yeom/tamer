@@ -148,9 +148,10 @@ async function fetchOne(id, shiny, info = null) {
   return base + ".json";
 }
 
-const shinyRoll = () => Math.floor(rng() * SHINY_ODDS) === 0;
+// 빛나는부적 (#93, PKM-28 rule 6): the command says "charm" — half the odds
+const shinyRoll = (charm) => Math.floor(rng() * (charm ? SHINY_ODDS / 2 : SHINY_ODDS)) === 0;
 
-// the commands (v1 fetch.py's command line): ["random"] ["wild"] ["starter", …types] ["<id>", "shiny"?]
+// the commands (v1 fetch.py's command line): ["random"] ["wild", "charm"?] ["starter", …types] ["<id>", "shiny"?]
 // ["evolve", "<id>"] ["evo", "<id>"] (cached evolution facts) → a JSON path / the next id as text / "none" (it has no next stage) / "" (offline,
 // failed — not the same as "none": an offline evolution must not mark it final, PKM-04)
 async function run(args) {
@@ -165,7 +166,7 @@ async function run(args) {
       return await fetchOne(id, shiny, info);
     }
     if (a === "starter") { const [id, info] = await pickStarter(rest); return await fetchOne(id, shinyRoll(), info); }
-    if (a === "random" || a === "wild") { const [id, info] = await (a === "random" ? pickRandom() : pickWild()); return await fetchOne(id, shinyRoll(), info); }
+    if (a === "random" || a === "wild") { const [id, info] = await (a === "random" ? pickRandom() : pickWild()); return await fetchOne(id, shinyRoll(a === "wild" && rest[0] === "charm"), info); }
     return await fetchOne(Number(a), rest[0] === "shiny");
   } catch {
     return "";

@@ -15,6 +15,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 const { CACHE, readJson, writeJson, updateJson } = require("./paths.cjs");
 const pokeapi = require("./pokeapi.cjs");
+const economy = require("./economy.cjs"); // 빛나는부적 (#93) — economy needs nothing from here
 
 const FOLDERS = path.join(CACHE, "folders.json");
 const DEX = path.join(CACHE, "pokedex.json");
@@ -371,7 +372,8 @@ function boxList(cwd) {
       lv: v.lv, final: v.final, next: v.next, how: m.how || null, ...(m.grad ? { grad: m.grad } : {}), at: m.at || null, new: !!m.new,
       caughtIn: m.caught_in ? path.basename(m.caught_in) : null, caughtBy: m.caught_by || null,
       evo: (m.evo || []).map((e) => ({ from: dexName(e.from), to: dexName(e.to), at: e.at })),
-      folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder] };
+      folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder],
+      ...(stoneOk(m) ? { stone: true } : {}) }; // 💎 a stone can evolve it (#93)
   });
 }
 
@@ -491,7 +493,7 @@ async function eggStep(uid) {
   if (!m?.egg) return { evolved: null, miles: [] };
   const e = m.egg, info = EGGS[e.kind] || EGGS.egg;
   if (e.have >= e.need - 1 && !e.next) {
-    const shiny = Math.floor(Math.random() * info.shiny) === 0; // a rare egg: twice the shiny odds
+    const shiny = Math.floor(Math.random() * (economy.charmOn() ? info.shiny / 2 : info.shiny)) === 0; // a rare egg: twice the shiny odds · 빛나는부적 twice again (#93)
     const f = await fetchPy(["egg", e.kind === "egg2" ? "rare" : "normal", ...(shiny ? ["shiny"] : [])]);
     const data = f && readJson(f, null);
     if (data) updateBox((b) => { const x = monOf(b, uid); if (x?.egg) x.egg.next = { id: data.id, shiny: !!data.shiny }; });
@@ -540,6 +542,53 @@ async function candy(uid) {
   const x = monOf(readBox(), m.uid);
   return { ...r, miles, graduated, uid: m.uid, folder: x?.folder || null, ...lvView(x || m) };
 }
+// 💎 진화의 돌 (#93, PKM-28 rules 2–5): for an individual with a stone / item stage next, or more than one
+// next stage to choose from — any of those stages at once, whatever its condition
+function stoneOk(m) {
+  if (!m || m.egg || isFinal(m)) return false;
+  const e = evoOf(m.id);
+  return !!e && (e.next.some((o) => o.kind === "stone") || e.next.length > 1);
+}
+const stoneTarget = async (o, shiny) => {
+  let sp = loadSprite(o.to, shiny);
+  if (!sp?.gif) { await fetchPy([String(o.to), ...(shiny ? ["shiny"] : [])]); sp = loadSprite(o.to, shiny); }
+  return sp;
+};
+// its stages, with names and pictures (fetched now; offline: ready false)
+async function stoneOptions(uid) {
+  const m = monOf(readBox(), Number(uid));
+  if (!m || m.egg || isFinal(m)) return null;
+  if (!evoOf(m.id)) await fetchPy(["evo", String(m.id)]);
+  if (!stoneOk(m)) return null;
+  const options = [];
+  for (const o of evoOf(m.id).next) {
+    const sp = await stoneTarget(o, m.shiny);
+    options.push({ to: o.to, kind: o.kind, name: sp?.name || readJson(DEX, {})[o.to]?.name || `#${o.to}`, gif: sp?.gif || null, ready: !!sp?.gif });
+  }
+  return { uid: m.uid, id: m.id, options };
+}
+// the chosen stage, now; then anything that opens after it (PKM-21 rule 4). null = refused / offline
+async function stoneEvolve(uid, to) {
+  let m = monOf(readBox(), Number(uid));
+  if (!stoneOk(m) || evolving.has(m.uid)) return null;
+  const o = evoOf(m.id).next.find((x) => x.to === Number(to));
+  if (!o) return null;
+  const next = await stoneTarget(o, m.shiny);
+  if (!next?.gif) return { offline: true };
+  const first = loadSprite(m.id, m.shiny);
+  let moved = false;
+  updateBox((b) => {
+    const x = monOf(b, m.uid);
+    if (x && x.id === m.id) { (x.evo ||= []).push({ from: x.id, to: next.id, at: now(), how: "stone" }); x.id = next.id; moved = true; }
+    m = x || m;
+  });
+  if (!moved) return null;
+  recordDex(next);
+  const more = await evolveNow(m.uid, false); // opened by its level now (a Lv 40 Eevee's stage doesn't, but a moved one might)
+  const x = monOf(readBox(), m.uid);
+  if (x?.folder) mirror(x.folder, x);
+  return { evolved: more.evolved || next, from: first, uid: m.uid, folder: x?.folder || null, ...lvView(x || m) };
+}
 // any next stage open now: evolve (one at random), again while they keep opening
 async function evolveNow(uid, trade) {
   let m = monOf(readBox(), uid);
@@ -580,4 +629,4 @@ async function evolveNow(uid, trade) {
   return { evolved: to, from: first };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, stoneOk: (uid) => stoneOk(monOf(readBox(), Number(uid))), stoneOptions, stoneEvolve, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

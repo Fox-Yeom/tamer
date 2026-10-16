@@ -110,8 +110,8 @@ function summary() {
   const capLeft = Math.max(0, CAP - amount(d, "done") - amount(d, "fast"));
   const st = [...rows.values()].find((r) => r.kind === "start");
   const show = readJson(STATE, {}).startSeen === false; // written so on the first launch only — a lost state file never shows it again
-  const b = bag();
-  return { balance: balance(), bagN: Object.values(b).reduce((s, n) => s + n, 0), eggs: { egg: b.egg || 0, egg2: b.egg2 || 0 }, incenseUntil: incenseUntil(), stamps: stamps(), legend: legendSet(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
+  const b = bag(); // bagN: what can be used up — 빛나는부적 is kept, not counted (#93)
+  return { balance: balance(), bagN: Object.entries(b).reduce((s, [k, n]) => s + (k === "charm" ? 0 : n), 0), charm: (b.charm || 0) > 0, eggs: { egg: b.egg || 0, egg2: b.egg2 || 0 }, stones: b.stone || 0, incenseUntil: incenseUntil(), stamps: stamps(), legend: legendSet(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
 }
 function dismissStart() { writeJson(STATE, { ...readJson(STATE, {}), startSeen: true }); return summary(); }
 const EARN = new Set(["done", "fast", "first", "evolve", "newdex", "level", "big", "legend", "grad"]); // what "오늘 번 코인" counts
@@ -123,11 +123,15 @@ const SHOP = [
   { id: "ultra", group: "ball", name: "하이퍼볼", price: 100, effect: "잡을 확률 ×2", many: true },
   { id: "master", group: "ball", name: "마스터볼", price: 1500, effect: "반드시 잡혀요", weekly: 1 },
   { id: "candy", group: "grow", name: "이상한사탕", price: 30, effect: "레벨 +1", many: true },
+  { id: "stone", group: "grow", name: "진화의 돌", price: 300, effect: "돌 진화 · 갈래 고르기" }, // E7 (#93)
   { id: "incense", group: "explore", name: "향", price: 80, effect: "1시간 야생 ×2", many: true },
   { id: "legend", group: "explore", name: "전설의 향", price: 800, effect: "다음 대발견 전설 고르기" }, // E4 (#82)
   { id: "egg", group: "egg", name: "알", price: 500, effect: "작업 10번이면 부화" }, // E5 (#84)
   { id: "egg2", group: "egg", name: "희귀 알", price: 2000, effect: "작업 20번 · 이로치 ×2" },
+  { id: "charm", group: "special", name: "빛나는부적", price: 5000, effect: "이로치 확률 ×2 · 늘 효과", once: true }, // E7 (#93): bought once, kept
 ];
+// ✨ 빛나는부적 (#93, PKM-28 rule 6): owned = the shiny odds doubled everywhere
+const charmOn = () => (bag().charm || 0) > 0;
 const CONFIRM_AT = 1000; // a price this high asks for a second press (the screen; the main process doesn't need it)
 const INCENSE_MS = 60 * 60 * 1000;
 const MAX_N = 99;
@@ -147,7 +151,7 @@ function shopState() {
   load();
   const have = bag(), ws = weekStart();
   return { balance: balance(), confirmAt: CONFIRM_AT, bag: have, incenseUntil: incenseUntil(),
-    items: SHOP.map((i) => ({ ...i, have: have[i.id] || 0, ...(i.weekly ? { left: Math.max(0, i.weekly - boughtSince(i.id, ws)) } : {}) })) };
+    items: SHOP.map((i) => ({ ...i, have: have[i.id] || 0, ...(i.weekly ? { left: Math.max(0, i.weekly - boughtSince(i.id, ws)) } : {}), ...(i.once ? { left: have[i.id] ? 0 : 1 } : {}) })) };
 }
 // a purchase — checked here, whatever the screen showed (POL-SEC-02): the item is on sale, the count,
 // the weekly limit, the balance. No undo.
@@ -158,6 +162,7 @@ function buy(id, n = 1) {
   if (!it) return { ok: false, why: "unknown" };
   if (!Number.isInteger(n) || n < 1 || n > (it.many ? MAX_N : 1)) return { ok: false, why: "count" };
   if (it.weekly && boughtSince(id, weekStart()) + n > it.weekly) return { ok: false, why: "weekly" };
+  if (it.once && (bag()[id] || 0) > 0) return { ok: false, why: "once" }; // 빛나는부적: once
   const cost = it.price * n;
   if (cost > balance()) return { ok: false, why: "coins" };
   add("buy", n, -cost, id);
@@ -219,4 +224,4 @@ function takeLegend() {
   return id;
 }
 
-module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, burnIncense, incenseUntil, stamps, breakthrough, legendSet, setLegend, takeLegend, graduated, gift, dismissStart, CAP, PAY, _reset: () => { rows = null; } };
+module.exports = { init, onDone, onEvolve, onNewDex, onMilestone, summary, shopState, buy, use, bag, charmOn, burnIncense, incenseUntil, stamps, breakthrough, legendSet, setLegend, takeLegend, graduated, gift, dismissStart, CAP, PAY, _reset: () => { rows = null; } };

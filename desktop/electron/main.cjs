@@ -895,6 +895,8 @@ async function bigShow() {
   const v = await wild.showBig().catch(() => null);
   if (v) { logLine(`wild big ${v.id}${v.shiny ? "s" : ""}`); broadcast("wild", { ...v, balls: ballsOwned() }); overlayUpdate(); }
 }
+// ✨ 1/64, with 빛나는부적 1/32 (#93, PKM-28 rule 6)
+const shinyOdds = () => (economy.charmOn() ? 1 / 32 : 1 / 64);
 // the species you have caught (전설의 길 · 리서치 "20종") — from the Pokédex
 const caughtSet = () => new Set(partner.dex().entries.filter((e) => e.caught).map((e) => e.id));
 // ✦ a research done: its mythical (once nothing else is on screen) and a Master Ball (#86, PKM-27)
@@ -905,7 +907,7 @@ function researchCheck() {
   economy.gift("master");
   send("economy", economy.summary());
   if (r.owned) { logLine(`research ${r.id} done — already with you`); return false; }
-  wild.startBig(r.id, Math.random() < 1 / 64, "research");
+  wild.startBig(r.id, Math.random() < shinyOdds(), "research");
   logLine(`research ${r.id} done — encounter`);
   bigShow();
   return true;
@@ -922,7 +924,7 @@ function bigCheck() {
   const fresh = open.filter((id) => !owned.has(id));
   const pool = want ? [want] : fresh.length ? fresh : open;
   const id = pool[Math.floor(Math.random() * pool.length)];
-  wild.startBig(id, Math.random() < 1 / 64);
+  wild.startBig(id, Math.random() < shinyOdds());
   logLine(`breakthrough ${id}${want ? " (전설의 향)" : ""}`);
   send("economy", economy.summary());
   return bigShow();
@@ -1466,6 +1468,7 @@ const commands = {
     return { ok: !!inc, incubator: inc, ...shopNow() };
   },
   progress_state: () => progressNow(), // #88
+  stone_options: ({ uid }) => partner.stoneOptions(uid), // 💎 its stages to choose from (#93)
   // 전설의 길 · 리서치 (#86): each generation's share and legends, the research's steps
   legend_road: () => { const c = caughtSet(), owned = partner.ownedSpecies(); return { road: legends.road(c, owned), research: research.view(c.size, owned) }; },
 
@@ -1475,7 +1478,7 @@ const commands = {
     if (r.ok) send("economy", economy.summary());
     return r.ok ? { ...r, ...shopNow() } : r;
   },
-  async bag_use({ item, uid, id, ws: wsId }) {
+  async bag_use({ item, uid, id, to, ws: wsId }) {
     if (item === "egg" || item === "egg2") { // 🥚 into the incubator (#85) — behind any egg already there
       if (!economy.use(item)) return { ok: false, why: "none", ...shopNow() };
       const inc = partner.incubatorAdd(item);
@@ -1494,6 +1497,22 @@ const commands = {
       logLine(`bag use incense ${until ? "ok" : "none"}`);
       if (until) send("economy", economy.summary());
       return { ok: !!until, until, ...shopNow() };
+    }
+    if (item === "stone") { // 💎 진화의 돌 (#93, PKM-28): the chosen stage now — the stone is used once it worked
+      if (!(economy.bag().stone > 0)) return { ok: false, why: "none", ...shopNow() };
+      const r = await partner.stoneEvolve(uid, to);
+      if (!r || r.offline) { logLine(`bag use stone uid=${uid} to=${to} ${r?.offline ? "offline" : "no"}`); return { ok: false, why: r?.offline ? "offline" : "no", ...shopNow() }; }
+      economy.use("stone");
+      const coins = economy.onEvolve();
+      if (research.onEvolve(caughtSet().size)) researchCheck();
+      logLine(`bag use stone uid=${uid} to=${r.evolved.id}`);
+      const ws = r.folder && [...workspaces.values()].find((w) => w.cwd === r.folder);
+      if (ws) {
+        ws.partner = { ...r.evolved, ...partner.progress(ws.cwd) }; overlayUpdate();
+        send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved, from: r.from || null, coins, mile: null, mileCoins: 0, graduated: false, gradCoins: 0 });
+      }
+      send("economy", economy.summary()); progressBump();
+      return { ok: true, uid: r.uid, lv: r.lv, evolved: { id: r.evolved.id, name: r.evolved.name }, coins, ...shopNow() };
     }
     if (item !== "candy") return { ok: false, why: "unknown" };
     if (!partner.candyOk(uid)) return { ok: false, why: "lv" };
@@ -1584,6 +1603,7 @@ const testCommands = {
   wild_dex_test({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); },
   wild_open_test: () => overlayCommands.wild_open(),
   hatch_open_test: () => overlayCommands.hatch_open(), // #88
+  charm_test: () => ({ charm: economy.charmOn(), odds: shinyOdds() }), // ✨ (#93)
   // the pointer over the current tab's partner / gone (scenes, #68)
   // 메뉴바 (#64): the icon's text and the menu as data (a test app shows no icon); a menu item's click by its labels
   tray_test: () => ({ shown: !!tray, ...trayNow() }),
