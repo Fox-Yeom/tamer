@@ -2,6 +2,7 @@
 // as a pre-release with that version's notes from docs/CHANGELOG.md, and prints the link.
 //   npm run release              build (npm run beta) if the DMGs are missing, then publish
 //   npm run release -- --invite <github-user>   give a tester read access (private repo: needed to download)
+//   npm run release -- --no-smoke  release without a smoke run on this commit (only when the user says so — a warning is printed)
 // Testers need a GitHub account with access to the private repo; the link 404s for anyone else.
 const fs = require("node:fs");
 const path = require("node:path");
@@ -46,7 +47,10 @@ const onlyBump = (() => {
   } catch { return false; }
 })();
 const labOk = lab?.smoke && ((lab.head === git(["rev-parse", "HEAD"]) && !lab.dirty) || (lab.tree && lab.tree === commitTree) || onlyBump);
-if (!labOk) {
+// --no-smoke: the user chose to release without the smoke run (they checked it themselves) — said out loud, never silent
+const noSmoke = process.argv.includes("--no-smoke");
+if (!labOk && noSmoke) console.warn(`⚠ smoke skipped (--no-smoke, the user's choice) — the lab last passed on ${lab?.tree?.slice(0, 10) || "?"}, this commit is ${commitTree.slice(0, 10)}`);
+if (!labOk && !noSmoke) {
   console.error(`the test lab hasn't passed on this commit's content — cd desktop && npm run lab -- --tag smoke (last: ${lab ? `${lab.head.slice(0, 7)}${lab.dirty ? " with uncommitted changes" : ""}, content ${lab.tree?.slice(0, 10) || "?"} vs commit ${commitTree.slice(0, 10)}, smoke ${lab.smoke ? "pass" : "not met"}` : "none"})`);
   process.exit(1);
 }
