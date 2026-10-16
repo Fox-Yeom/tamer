@@ -113,7 +113,8 @@
         "bag",
         "bag-use-candy",
         "bag-incubator",
-        "bag-stone"
+        "bag-stone",
+        "bag-stone-done"
       ]
     }
   },

@@ -476,7 +476,7 @@ module.exports = [
     },
   },
   {
-    id: "stone-evolve", tags: ["smoke", "poke"], what: "진화의 돌: 가방에서 [쓸 포켓몬 고르기] → 쓸 수 있는 마리만(갈래 있는 이브이) → 갈래 버튼 셋 → 샤미드로 바로 진화, 돌 1개 씀·+30코인, 파트너 칸도 진화 (#93)",
+    id: "stone-evolve", tags: ["smoke", "poke"], what: "진화의 돌: 가방에서 [쓸 포켓몬 고르기] → 쓸 수 있는 마리만(갈래 있는 이브이) → 갈래 버튼 셋 → 쥬피썬더로 바로 진화, 돌 1개 씀·+30 진화 +30 새 종, 진화한 카드는 그 자리에 \"✨ 방금 진화\"·결과 미리보기·[내 포켓몬에서 보기] (#93 #94)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => {
       fakeSpecies(box, 133, "이브이", { reach: null, next: [{ to: 134, kind: "stone" }, { to: 135, kind: "stone" }, { to: 136, kind: "stone" }] });
@@ -486,8 +486,9 @@ module.exports = [
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 1000 }, { day: d, kind: "buy", item: "stone", n: 1, amount: -300 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
     },
     steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 900 }, { probe: "bag" },
-      { key: "Enter" }, { wait: 1200 }, { probe: "pick" }, { click: "#dex-from [data-stone='134']" }, { wait: 2500 }, { probe: "after" },
-      { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true }],
+      { key: "Enter" }, { wait: 1200 }, { probe: "pick" }, { click: "#dex-from [data-stone='135']" }, { wait: 2500 }, { probe: "after" },
+      { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true },
+      { click: "#dex-from [data-sd='box']" }, { wait: 900 }, { probe: "box" }],
     check: ({ probe, log }) => {
       const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]"), me = list.find((m) => m.folder === "here");
       const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
@@ -496,9 +497,16 @@ module.exports = [
         // the list: stone-able ones only — the data's others that a stone evolves too, and the Eevee (no longer one after)
         ok(probe.pick?.cards === list.filter((m) => m.stone).length + 1 && probe.pick.cards < list.filter((m) => !m.egg).length && JSON.stringify(probe.pick?.fromBtns) === '["→ 샤미드","→ 쥬피썬더","→ 부스터"]',
           `쓸 마리만 ${probe.pick?.cards}/${list.length} · 갈래 ${JSON.stringify(probe.pick?.fromBtns)}`),
-        ok(/^bag use stone uid=\d+ to=134$/m.test(log) && me?.id === 134 && me.evo?.at(-1)?.to === "샤미드", `진화 ${JSON.stringify(me && { id: me.id, evo: me.evo })}`),
-        ok(st.stones === 0 && st.balance === 730, `돌 다 씀 ${st.stones} · 코인 ${st.balance} (1000−300+30)`),
-        ok(probe.after?.partner === "샤미드", `파트너 칸 ${probe.after?.partner}`),
+        // 쥬피썬더: not in the data's Pokédex (샤미드 is) — a new species
+        ok(/^bag use stone uid=\d+ to=135$/m.test(log) && me?.id === 135 && me.evo?.at(-1)?.to === "쥬피썬더", `진화 ${JSON.stringify(me && { id: me.id, evo: me.evo })}`),
+        ok(st.stones === 0 && st.balance === 760, `돌 다 씀 ${st.stones} · 코인 ${st.balance} (1000−300+30 진화+30 새 종, #94)`),
+        ok(probe.after?.partner === "쥬피썬더", `파트너 칸 ${probe.after?.partner}`),
+        // #94: stays in place — the same card, now 샤미드, marked and selected, the result with its coins and what next
+        ok(probe.after?.justCard === "쥬피썬더" && probe.after?.selCard === "쥬피썬더" && probe.after?.cards === probe.pick?.cards,
+          `그 자리 ${JSON.stringify({ just: probe.after?.justCard, sel: probe.after?.selCard, cards: [probe.pick?.cards, probe.after?.cards] })}`),
+        ok(/^🎉 이브이가 쥬피썬더로 진화했어요!\+30코인 진화 · \+30코인 새 종/.test(probe.after?.preview || "") && JSON.stringify(probe.after?.fromBtns) === '["내 포켓몬에서 보기"]',
+          `결과 ${probe.after?.preview} · ${JSON.stringify(probe.after?.fromBtns)}`),
+        ok(probe.box?.poke === "box" && probe.box?.selCard === "쥬피썬더", `내 포켓몬에서 보기 → ${probe.box?.poke} ${probe.box?.selCard}`),
       ];
     },
   },
@@ -800,9 +808,12 @@ module.exports = [
       evolvePartner(box, { id: 67, lv: 28, mile: 20, traded: true });
     },
     steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, ...DONE("$ws"), { wait: 1500 }, ...DONE("$ws"), { wait: 1000 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
-    check: ({ log }) => {
+    check: ({ log, box }) => {
       const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+      const rows = ledgerRows(box) || [];
       return [
+        // 괴력몬 isn't in the data's Pokédex: the evolution pays +30 and a new species +30 more (#94)
+        ok(rows.some((x) => x.kind === "evolve" && x.amount === 30) && rows.some((x) => x.kind === "newdex" && x.amount === 30), `원장 진화·새 종 ${JSON.stringify(rows.filter((x) => ["evolve", "newdex"].includes(x.kind)))}`),
         ok(m?.id === 68 && m.evo?.length === 1 && m.lv === 31 && m.final, `파트너 ${JSON.stringify(m && { id: m.id, lv: m.lv, evo: m.evo?.length, final: m.final })} (괴력몬, Lv 28 + 2 + 1, 최종)`),
         ok(/^exp ws=.* evolved=68 /m.test(log), "진화 기록 없음"),
       ];

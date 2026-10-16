@@ -63,6 +63,8 @@ function recordDex(sprite, caught = true) {
   });
 }
 const recordSeen = (sprite) => recordDex(sprite, false);
+// a species not caught before (the Pokédex's "새 종" — #94: evolutions too)
+const newInDex = (id) => { const e = readJson(DEX, {})[id]; return !e || e.caught === false; };
 
 // caught one: count stays (it was counted when seen). true = the first of its species ever caught
 // (seen before, never caught) — 🪙 +₽30 (#72)
@@ -583,11 +585,12 @@ async function stoneEvolve(uid, to) {
     m = x || m;
   });
   if (!moved) return null;
+  const fresh = newInDex(next.id); // #94
   recordDex(next);
   const more = await evolveNow(m.uid, false); // opened by its level now (a Lv 40 Eevee's stage doesn't, but a moved one might)
   const x = monOf(readBox(), m.uid);
   if (x?.folder) mirror(x.folder, x);
-  return { evolved: more.evolved || next, from: first, uid: m.uid, folder: x?.folder || null, ...lvView(x || m) };
+  return { evolved: more.evolved || next, from: first, uid: m.uid, folder: x?.folder || null, evoNew: (fresh ? 1 : 0) + (more.evoNew || 0), ...lvView(x || m) };
 }
 // any next stage open now: evolve (one at random), again while they keep opening
 async function evolveNow(uid, trade) {
@@ -625,8 +628,9 @@ async function evolveNow(uid, trade) {
   } finally { evolving.delete(m.uid); }
   if (m.folder) mirror(m.folder, m);
   if (!to) return { evolved: null };
+  const evoNew = newInDex(to.id) ? 1 : 0; // a species new to the Pokédex: +30 more (#94)
   recordDex(to);
-  return { evolved: to, from: first };
+  return { evolved: to, from: first, evoNew };
 }
 
 module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, stoneOk: (uid) => stoneOk(monOf(readBox(), Number(uid))), stoneOptions, stoneEvolve, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

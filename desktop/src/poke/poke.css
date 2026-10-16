@@ -102,7 +102,7 @@
 #dex .pk-empty button { margin-left: 10px; border: 0; border-radius: 8px; padding: 4px 12px; font: inherit; font-weight: 700; cursor: pointer; background: var(--pk-title); color: var(--pk-ink); }
 
 /* the preview */
-#dex .dex-preview { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px; text-align: center; }
+#dex .dex-preview { position: relative; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; padding: 12px; text-align: center; } /* relative: the evolution flash (#94) */
 #dex-img { image-rendering: pixelated; }
 #dex-img.seen { filter: brightness(0) opacity(.6); }
 #dex-name { font-weight: 700; }
@@ -252,3 +252,17 @@
 /* 🎒 내 포켓몬: 알 are in the bag's incubator (#91) — one line pointing there */
 #dex .pk-box-eggs { display: flex; align-items: center; gap: 8px; }
 #dex .pk-box-eggs button { border: 1px solid var(--pk-edge); border-radius: 8px; padding: 2px 9px; background: var(--pk-chip); color: var(--pk-fg); font: inherit; font-size: 12px; cursor: pointer; }
+
+/* 💎 진화의 돌을 쓴 뒤 (#94, PKM-28 rule 3-1): the card stays with "✨ 방금 진화", the preview plays the evolution */
+#dex .pk-card.pk-just { outline: 2px solid var(--pk-coin); box-shadow: 0 0 14px rgba(242, 193, 78, .35); animation: pk-just 1.2s ease-out; }
+#dex .pk-justb { position: absolute; top: 4px; left: 6px; z-index: 1; padding: 0 5px; border-radius: 6px; font-size: 10px; font-weight: 800; color: var(--pk-coin); background: var(--pk-bg); border: 1px solid var(--pk-coin-line); }
+@keyframes pk-just { 0% { transform: scale(1.1); box-shadow: 0 0 28px rgba(255, 255, 255, .8); } 100% { transform: none; } }
+#dex #dex-img.pk-evo-out { animation: pk-evo-out 1.1s ease-in forwards; }
+#dex #dex-img.pk-evo-in { animation: pk-evo-in .9s ease-out; }
+@keyframes pk-evo-out { 0% { filter: none; } 30%, 50%, 70% { filter: brightness(0) invert(1); transform: scale(1.06); } 40%, 60% { filter: none; transform: none; } 100% { filter: brightness(0) invert(1); transform: scale(1.12); } }
+@keyframes pk-evo-in { 0% { filter: brightness(0) invert(1); transform: scale(1.12); } 100% { filter: none; transform: none; } }
+#dex .dex-preview.pk-evo-flash::after { content: ""; position: absolute; inset: 0; pointer-events: none; border-radius: var(--pk-radius);
+  background: radial-gradient(circle at 50% 35%, rgba(255, 255, 255, .55), transparent 60%); animation: pk-evo-flash 2s ease-out forwards; }
+@keyframes pk-evo-flash { 0%, 45% { opacity: 0; } 55% { opacity: 1; } 100% { opacity: 0; } }
+#dex .pk-evo-msg { font-size: 14px; color: var(--pk-title); }
+#dex .pk-evo-coins { color: var(--pk-coin); font-weight: 700; }

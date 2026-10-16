@@ -533,16 +533,17 @@ function onCoreEvent(msg) {
     }).catch((e) => logLine(`incubator error ${e}`));
     // a finished task: EXP for the folder's partner, maybe an evolution
     const t0 = Date.now();
-    partner.onDone(ws.cwd).then(({ evolved, from, miles = [], hatched, newdex, graduated }) => {
+    partner.onDone(ws.cwd).then(({ evolved, from, miles = [], hatched, newdex, graduated, evoNew }) => {
       logLine(`exp ws=${ws.id} ${JSON.stringify(partner.progress(ws.cwd))} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"}${hatched ? ` hatched=${hatched.id}${hatched.shiny ? "s" : ""}` : ""}${graduated ? " graduated" : ""} ${Date.now() - t0}ms`);
-      const coins = evolved ? economy.onEvolve() : hatched && newdex ? economy.onNewDex() : 0; // 🪙 +30 (#72) · a new species out of an egg (#84)
+      const newCoins = evolved && evoNew ? economy.onNewDex() : 0; // 🪙 a species new to the Pokédex by evolving: +30 more (#94)
+      const coins = (evolved ? economy.onEvolve() : hatched && newdex ? economy.onNewDex() : 0) + newCoins; // 🪙 +30 (#72) · a new species out of an egg (#84)
       if (evolved && research.onEvolve(caughtSet().size)) researchCheck(); // ✦ "진화 3번" (#86)
       const mileCoins = miles.reduce((s) => s + economy.onMilestone(), 0); // every 10 levels ₽20 (#74)
       const gradCoins = graduated ? economy.graduated() : 0; // 🎓 300 + an egg (#84)
       if (evolved || hatched) { ws.partner = { ...(evolved || hatched), ...partner.progress(ws.cwd) }; overlayUpdate(); }
       if (evolved || mileCoins || gradCoins || coins) send("economy", economy.summary());
       if (evolved) progressBump(); // ✦ "진화 3번"
-      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins, mile: miles.at(-1) || null, mileCoins,
+      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins, newCoins, mile: miles.at(-1) || null, mileCoins,
         hatched: hatched || null, graduated: !!graduated, gradCoins });
     }).catch((e) => logLine(`exp error ${e}`));
   }
@@ -1503,22 +1504,24 @@ const commands = {
       const r = await partner.stoneEvolve(uid, to);
       if (!r || r.offline) { logLine(`bag use stone uid=${uid} to=${to} ${r?.offline ? "offline" : "no"}`); return { ok: false, why: r?.offline ? "offline" : "no", ...shopNow() }; }
       economy.use("stone");
-      const coins = economy.onEvolve();
+      let newCoins = 0; for (let i = 0; i < (r.evoNew || 0); i++) newCoins += economy.onNewDex(); // a species new to the Pokédex: +30 more each (#94)
+      const coins = economy.onEvolve() + newCoins;
       if (research.onEvolve(caughtSet().size)) researchCheck();
       logLine(`bag use stone uid=${uid} to=${r.evolved.id}`);
       const ws = r.folder && [...workspaces.values()].find((w) => w.cwd === r.folder);
       if (ws) {
         ws.partner = { ...r.evolved, ...partner.progress(ws.cwd) }; overlayUpdate();
-        send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved, from: r.from || null, coins, mile: null, mileCoins: 0, graduated: false, gradCoins: 0 });
+        send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved, from: r.from || null, coins, newCoins, mile: null, mileCoins: 0, graduated: false, gradCoins: 0 });
       }
       send("economy", economy.summary()); progressBump();
-      return { ok: true, uid: r.uid, lv: r.lv, evolved: { id: r.evolved.id, name: r.evolved.name }, coins, ...shopNow() };
+      return { ok: true, uid: r.uid, lv: r.lv, evolved: { id: r.evolved.id, name: r.evolved.name, gif: r.evolved.gif || null }, from: r.from ? { id: r.from.id, name: r.from.name, gif: r.from.gif || null } : null, coins, newCoins, ...shopNow() };
     }
     if (item !== "candy") return { ok: false, why: "unknown" };
     if (!partner.candyOk(uid)) return { ok: false, why: "lv" };
     if (!economy.use("candy")) return { ok: false, why: "none" };
     const r = await partner.candy(uid);
-    const coins = r?.evolved ? economy.onEvolve() : 0;
+    const newCoins = r?.evolved && r.evoNew ? economy.onNewDex() : 0; // #94
+    const coins = (r?.evolved ? economy.onEvolve() : 0) + newCoins;
     if (r?.evolved && research.onEvolve(caughtSet().size)) researchCheck(); // ✦ (#86)
     const gradCoins = r?.graduated ? economy.graduated() : 0; // 🎓 a candy to Lv 100 (#84)
     const mileCoins = (r?.miles || []).reduce((s) => s + economy.onMilestone(), 0);
@@ -1527,10 +1530,10 @@ const commands = {
     const ws = r?.folder && [...workspaces.values()].find((w) => w.cwd === r.folder);
     if (ws) {
       if (r.evolved) { ws.partner = { ...r.evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); }
-      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved || null, from: r.from || null, coins, mile: r.miles.at(-1) || null, mileCoins, graduated: !!r.graduated, gradCoins });
+      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved || null, from: r.from || null, coins, newCoins, mile: r.miles.at(-1) || null, mileCoins, graduated: !!r.graduated, gradCoins });
     }
     send("economy", economy.summary());
-    return { ok: true, uid: r?.uid, lv: r?.lv, evolved: r?.evolved ? { id: r.evolved.id, name: r.evolved.name } : null, coins, mileCoins, ...shopNow() };
+    return { ok: true, uid: r?.uid, lv: r?.lv, evolved: r?.evolved ? { id: r.evolved.id, name: r.evolved.name } : null, coins, newCoins, mileCoins, ...shopNow() };
   },
   // the tab on screen (the overlay shows its partner first)
   // the UI swapped the agent / shell panes (which one is in the big slot)
