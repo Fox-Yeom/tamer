@@ -3555,6 +3555,10 @@ async function uiScenes(set) {
       // the 설정 창's 미리보기 with 최소 모드 always (#63 #67): the partner and the sample tabs' balls
       await invoke("settings_set", { patch: { overlay: { minimal: "always" } } }); await wait(300);
       await openSettings(); await wait(300); await shot("settings-minimal"); closeSettings();
+      // the cards' background at 0 % (#92): the notice keeps a 75 % background, the partner stays see-through
+      await invoke("settings_set", { patch: { overlay: { alpha: 0 } } }); await wait(300);
+      await openSettings(); await wait(300); await shot("settings-clear"); closeSettings();
+      await invoke("settings_set", { patch: { overlay: { alpha: 82 } } });
       await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
       // 라이트 테마 (APP-20, #60): the main window, the 설정 창, the Pokémon window, the overlay
       await invoke("settings_set", { patch: { theme: "light" } }); await wait(700);

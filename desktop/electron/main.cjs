@@ -1618,7 +1618,7 @@ const testCommands = {
       minis: document.querySelectorAll(".mini").length, meta: !!document.querySelector(".card .meta"), counts: !!document.querySelector(".counts"),
       bubbles: [...document.querySelectorAll(".bubble")].map((b) => b.textContent.trim()), shadow: card ? getComputedStyle(card).boxShadow : null,
       bg: card ? getComputedStyle(card).backgroundColor : null, note: note ? note.textContent.replace(/\\s+/g, " ").trim() : null,
-      noteShadow: note ? getComputedStyle(note).boxShadow : null,
+      noteShadow: note ? getComputedStyle(note).boxShadow : null, noteBg: note ? getComputedStyle(note).backgroundColor : null, // #92
       prog: document.querySelector(".ov-prog")?.textContent || null, progMini: document.querySelector(".ov-prog-mini")?.textContent || null, // #88 #90
       progTip: document.querySelector(".ov-prog-mini")?.dataset.tip || null,
       hatch: document.querySelector(".wild-note.hatch")?.textContent.replace(/\\s+/g, " ").trim() || null };

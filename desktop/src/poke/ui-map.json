@@ -48,7 +48,8 @@
       "scenes": [
         "settings-window",
         "settings-minimal",
-        "light-settings"
+        "light-settings",
+        "settings-clear"
       ]
     },
     "start": {

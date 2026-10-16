@@ -1347,17 +1347,22 @@ sleep 40
       { invoke: "settings_set", args: { patch: { overlay: { minimal: "always" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
       { invoke: "overlay_tip_test", log: true },
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 1500 },
-      { invoke: "overlay_dom_test", log: true }, { invoke: "wild_open_test" }, { wait: 500 }, { probe: "opened" },
+      { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 0 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true }, // #92
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82 } } } },
+      { invoke: "wild_open_test" }, { wait: 500 }, { probe: "opened" },
       { invoke: "settings_set", args: { patch: { overlay: { minimal: "bogus" } } } }, { invoke: "settings_get", log: true },
       { invoke: "overlay_show_test", args: { on: false } }],
     check: ({ probe, log, box }) => {
       const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
-      const [first, clear, never, flat, always, wild] = dom;
+      const [first, clear, never, flat, always, wild, zero] = dom;
+      const alphaOf = (c) => { const m = /rgba?\(([^)]*)\)/.exec(c || ""); const p = m ? m[1].split(",").map(Number) : []; return p.length === 4 ? p[3] : p.length === 3 ? 1 : null; };
       const got = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
       let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
       const none = (sh) => !sh || sh === "none" || /rgba\(0, 0, 0, 0\)/.test(sh);
       return [
-        ok(dom.length === 6, `오버레이 확인 ${dom.length}번 (6이어야)`),
+        ok(dom.length === 7, `오버레이 확인 ${dom.length}번 (7이어야)`),
+        ok(zero?.note && alphaOf(zero.noteBg) >= 0.74 && alphaOf(zero.bg) === 0, `카드 배경 0%여도 알림 바탕은 75% (#92) — 알림 ${zero?.noteBg} · 카드 ${zero?.bg}`),
         ok(first && !first.minimal && first.meta && first.minis === 1 && !none(first.shadow), `처음(82%) 보통 카드여야 ${JSON.stringify(first)}`),
         ok(clear && clear.minimal && !clear.meta && !clear.counts && clear.balls.length === 1 && clear.minis === 0 && none(clear.shadow), `20%면 최소 모드(글자 없음·몬스터볼 1·그림자 없음)여야 ${JSON.stringify(clear)}`),
         ok(never && !never.minimal && never.meta, `안 씀이면 20%여도 보통 카드여야 ${JSON.stringify(never)}`),
