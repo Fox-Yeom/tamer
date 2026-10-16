@@ -1088,6 +1088,7 @@ function coinFloat(tab, n) {
 function showProgress(tab, p) {
   if (p.pinned != null) tab.pinned = p.pinned;
   $(".poke-exp", tab.view).textContent = lvLine(p);
+  incenseShow();
 }
 // every 10 levels: "Lv 30! 🪙 +₽20" over the partner for 2 s (#74, PKM-21 rule 7) — not in UI scenes
 function mileBubble(tab, lv, coins) {
@@ -1758,7 +1759,16 @@ let coins = null, coinsShown = null;
 const won = (n) => Number(n || 0).toLocaleString("en-US");
 const coinTxt = (n) => `${won(n)}코인`; // the coin amount in words — the 🪙 picture is only on the chip (#75)
 // the pk-coin chip, left of ✕ on every tab — opens 🛒 상점 (#76)
-const coinChip = () => (coins ? `<button class="pk-coin" data-view="shop" title="포켓코인 — 작업을 끝낼 때마다 쌓여요 · 누르면 상점">🪙 ${won(coins.balance)}</button>` : "");
+const coinChip = () => (coins ? incenseChip() + `<button class="pk-coin" data-view="shop" title="포켓코인 — 작업을 끝낼 때마다 쌓여요 · 누르면 상점">🪙 ${won(coins.balance)}</button>` : "");
+// 🪔 향 burning: a chip beside the coins and a line under each tab's partner, minutes left (#79)
+const incenseLeft = () => (coins?.incenseUntil > Date.now() ? Math.ceil((coins.incenseUntil - Date.now()) / 60000) : 0);
+const incenseChip = () => (incenseLeft() ? `<button class="pk-incense" data-view="bag" title="향이 켜져 있어요 — 야생 포켓몬이 두 배로 자주 나와요">🪔 ${incenseLeft()}분</button>` : "");
+function incenseShow() {
+  const n = incenseLeft();
+  for (const el of document.querySelectorAll(".pane-avatar .poke-incense")) { el.hidden = !n; el.textContent = n ? `🪔 향 ${n}분 · 야생 ×2` : ""; }
+}
+setInterval(() => { incenseShow(); if (dexOpen() && dexState && coins?.incenseUntil) dexTitle(); }, 30000);
+invoke("economy_state").then((c) => { if (c) { coins = c; incenseShow(); } }).catch(() => {});
 function dexTitle() {
   const d = dexState;
   const owned = d.entries.reduce((n, e) => n + (e.owned || 0), 0);
@@ -2007,10 +2017,27 @@ async function candyGive(m) {
   if (!m?.uid || (m.lv ?? 0) >= 100) return;
   const r = await invoke("bag_use", { item: "candy", uid: m.uid }).catch(() => null);
   if (!r?.ok) { toast(r?.why === "lv" ? "Lv 100이에요" : "이상한사탕이 없어요"); return shopRender(); }
-  toast(`🍬 Lv ${r.lv}!${r.evolved ? ` ${esc(r.evolved.name)}(으)로 진화했어요` : ""}`);
+  // stay where you were and show the level going up (#78): the bag's candy, or the same Pokémon in the pick list
   const d = dexState;
-  if (d) { d.box = null; d.pick = false; d.ii = d.list?.findIndex((x) => x.id === "candy") ?? 0; }
-  return shopRender();
+  if (!d) return;
+  d.lvup = { uid: r.uid, from: (m.lv ?? r.lv - 1), to: r.lv, evolved: r.evolved?.name || null, at: Date.now() };
+  d.box = null;
+  if (!d.pick) d.ii = Math.max(0, d.list?.findIndex((x) => x.id === "candy") ?? 0);
+  await shopRender();
+  if (d.pick) { const i = d.list.findIndex((x) => x.uid === r.uid); if (i >= 0) boxSelect(i); }
+  lvupShow();
+}
+// "🆙 Lv 16 → 17!" in the preview for a moment after a candy (#78) — the card flashes too
+function lvupShow() {
+  const d = dexState, u = d?.lvup;
+  if (!u || Date.now() - u.at > 2500) return;
+  const line = document.createElement("div");
+  line.className = "pk-lvup";
+  line.textContent = `🆙 Lv ${u.from} → ${u.to}!${u.evolved ? ` ${u.evolved}(으)로 진화!` : ""}`;
+  $("#dex-meta").prepend(line);
+  const card = d.pick ? $(`#box-grid .pk-card[data-i="${d.bi}"]`) : null;
+  card?.classList.add("lvup");
+  setTimeout(() => { line.remove(); card?.classList.remove("lvup"); }, 2200);
 }
 // choosing who gets the candy: 내 포켓몬's cards in the list's place (Lv 100 can't)
 async function pickRender() {
@@ -2309,10 +2336,16 @@ const dexOpen = () => !$("#dex").hidden;
 // grid columns right now (for ↑↓)
 const dexCols = () => getComputedStyle($("#dex-grid .cells")).gridTemplateColumns.split(" ").length || 10;
 
+// a letter key by its place on the keyboard, whatever the input source: with 한글 on, S comes as
+// "ㄴ" (or "Process" while the IME has it) — the window's letter keys (S · I · M · q · hjkl) still work (#77)
+function keyOf(e) {
+  if (/^Key[A-Z]$/.test(e.code || "") && !/^[\x20-\x7e]$/.test(e.key)) { const c = e.code.slice(3); return e.shiftKey ? c : c.toLowerCase(); }
+  return e.key;
+}
 function dexKey(e) {
   const d = dexState;
   if (!d) return false;
-  const k = e.key, cols = dexCols();
+  const k = keyOf(e), cols = dexCols();
   if ((k === "Escape" || k === "q") && d.pick) { d.pick = false; shopRender(); } // choosing who gets the candy: back to the bag
   else if (k === "Escape" || k === "q") dexEsc();
   else if (k === "m" || k === "M") dexView(d.view === "box" ? "dex" : "box");
@@ -2757,6 +2790,7 @@ listen("partner-progress", (e) => {
 listen("economy", (e) => {
   const { ws, gained, ...c } = e.payload;
   coins = c;
+  incenseShow();
   if (ws && gained) { const t = byId.get(ws); if (t) coinFloat(t, gained); }
   if (dexOpen() && dexState) { dexTitle(); if (dexState.view === "home") homeRender(); }
 });
@@ -3086,6 +3120,8 @@ function labState() {
     takeBtn: dexOpen() && !$("#dex-take").hidden ? `${$("#dex-take").textContent}${$("#dex-take").disabled ? " (꺼짐)" : ""}${$("#dex-take").classList.contains("confirm") ? " (확인)" : ""}` : null, // #76
     items: dexOpen() ? [...document.querySelectorAll("#box-grid .pk-item")].map((c) => `${c.querySelector("b")?.textContent}:${c.querySelector(".pk-price")?.textContent}${c.classList.contains("off") ? ":off" : ""}`) : null,
     effects: dexOpen() ? $("#box-grid .pk-effects")?.textContent || null : null,
+    incense: dexOpen() ? $("#dex-title .pk-incense")?.textContent || null : null, // #79
+    pokeIncense: active && !$(".poke-incense", active.view)?.hidden ? $(".poke-incense", active.view)?.textContent || null : null,
     wildBalls: [...document.querySelectorAll("#wild .wild-balls .bc")].map((b) => `${b.textContent}${b.classList.contains("on") ? "*" : ""}`),
     wildBtn: $("#wild .wild-throw")?.textContent || null,
     pokeFits: dexOpen() ? (() => { const r = $("#dex .pk-window")?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight; })() : null,

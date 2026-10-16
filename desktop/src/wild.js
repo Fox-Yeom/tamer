@@ -55,10 +55,16 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
   const nm = (e, a, b) => name(e) + josa(e.name, a, b).slice(String(e.name ?? "").length);
 
   function hide() {
-    clearTimeout(hideTimer); clearInterval(tick);
+    clearTimeout(hideTimer); clearInterval(tick); hideAt = 0;
     card.hidden = true; enc = null; busy = false; adopt.hidden = true; dexBtn.hidden = true;
   }
-  function hideLater(ms) { clearTimeout(hideTimer); hideTimer = setTimeout(hide, ms); }
+  // the card goes after ms — also when the window comes back after that (a window behind other apps may
+  // have its timers held back, and the caught card was still there on return, #80)
+  let hideAt = 0;
+  function hideLater(ms) { clearTimeout(hideTimer); hideAt = Date.now() + ms; hideTimer = setTimeout(hide, ms); }
+  const late = () => { if (hideAt && !card.hidden && Date.now() >= hideAt) hide(); };
+  window.addEventListener("focus", late);
+  document.addEventListener("visibilitychange", late);
 
   function countdown() {
     clearInterval(tick);
@@ -68,7 +74,7 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
   }
 
   async function show(e) {
-    clearTimeout(hideTimer);
+    clearTimeout(hideTimer); hideAt = 0;
     enc = e; busy = false;
     if (e.balls) balls = e.balls;
     card.hidden = false;

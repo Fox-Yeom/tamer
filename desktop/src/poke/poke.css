@@ -183,3 +183,8 @@
 #dex .pk-back, #dex .pk-band-go { border: 1px solid var(--pk-edge); border-radius: 8px; padding: 2px 9px; background: var(--pk-chip); color: var(--pk-fg); font: inherit; font-size: 12px; cursor: pointer; }
 #dex .pk-err { margin: 4px 0 0; font-size: 12px; color: #e5484d; }
 #dex .pk-card.off { opacity: .45; }
+#dex .pk-incense { margin-left: auto; border: 1px solid var(--pk-edge); border-radius: 8px; padding: 2px 9px; font: inherit; font-size: 12px; font-weight: 700; color: var(--pk-fg); background: var(--pk-chip); cursor: pointer; white-space: nowrap; } /* 🪔 향 (#79) */
+#dex .pk-incense + .pk-coin { margin-left: 6px; }
+#dex .pk-lvup { font-weight: 800; color: var(--pk-coin); animation: pk-lvup .5s ease-out; } /* 🍬 → "🆙 Lv 16 → 17!" (#78) */
+#dex .pk-card.lvup { animation: pk-lvup .5s ease-out; outline-color: var(--pk-coin); }
+@keyframes pk-lvup { from { transform: scale(1.12); } to { transform: none; } }

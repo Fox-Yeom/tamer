@@ -109,7 +109,7 @@ function summary() {
   const capLeft = Math.max(0, CAP - amount(d, "done") - amount(d, "fast"));
   const st = [...rows.values()].find((r) => r.kind === "start");
   const show = readJson(STATE, {}).startSeen === false; // written so on the first launch only — a lost state file never shows it again
-  return { balance: balance(), bagN: Object.values(bag()).reduce((s, n) => s + n, 0), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
+  return { balance: balance(), bagN: Object.values(bag()).reduce((s, n) => s + n, 0), incenseUntil: incenseUntil(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
 }
 function dismissStart() { writeJson(STATE, { ...readJson(STATE, {}), startSeen: true }); return summary(); }
 const EARN = new Set(["done", "fast", "first", "evolve", "newdex", "level"]); // what "오늘 번 코인" counts

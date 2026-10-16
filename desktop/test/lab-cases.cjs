@@ -329,6 +329,20 @@ module.exports = [
   },
   // ── 🛒 상점 · 👜 가방 E3 (#76, PKM-22·23) ──
   {
+    id: "poke-keys-hangul", tags: ["smoke", "poke"], what: "한글 입력 상태에서도 포켓몬 창 글자 키: S(ㄴ) 상점 · I(ㅑ) 가방 · M(ㅡ) 내 포켓몬 — 터미널엔 아무 글자도 안 들어감 (#77)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" }, { wait: 300 },
+      { key: "p", mods: 4 }, { wait: 700 }, { key: "ㄴ", code: "KeyS" }, { wait: 600 }, { probe: "s" }, { key: "ㅑ", code: "KeyI" }, { wait: 600 }, { probe: "i" },
+      { key: "ㅡ", code: "KeyM" }, { wait: 600 }, { probe: "m" }, { key: "Escape" }, { wait: 400 },
+      { text: "echo LABKEYS" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { grep: "LABKEYS" }],
+    check: ({ probe, log }) => [
+      ok(probe.s?.pokeTab === "shop", `ㄴ(S) → ${probe.s?.pokeTab}`),
+      ok(probe.i?.pokeTab === "bag", `ㅑ(I) → ${probe.i?.pokeTab}`),
+      ok(probe.m?.pokeTab === "box", `ㅡ(M) → ${probe.m?.pokeTab}`),
+      ok(/lab-grep LABKEYS rows=\[\d[^\n]*text="[^"]*\$ echo LABKEYS/.test(log) && !/[ㄴㅑㅡ]/.test(log.match(/lab-grep LABKEYS[^\n]*/)?.[0] || ""), `터미널 줄 ${log.match(/lab-grep LABKEYS[^\n]*/)?.[0]}`),
+    ],
+  },
+  {
     id: "shop-buy", tags: ["smoke", "poke"], what: "상점: S로 열기, 슈퍼볼 3개(− + 수), 마스터볼은 두 번 눌러 사기·주 1개, 메인이 잔액·제한·수를 다시 검사 — 원장엔 산 것 하루 합계 (#76)",
     data: "owner", mode: "direct", folders: ["proj"],
     setup: (box) => putEcon(box, { "ledger.jsonl": JSON.stringify({ day: todayLocal(), kind: "start", n: 1000, amount: 2000 }) + "\n", "state.json": { startSeen: true } }),
@@ -363,9 +377,9 @@ module.exports = [
       evolvePartner(box);
     },
     steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 900 }, { probe: "bag" },
-      { key: "Enter" }, { wait: 1500 }, { probe: "given" },
-      { click: "#dex-from [data-a='pick']" }, { wait: 900 }, { probe: "pick" }, { key: "Enter" }, { wait: 1500 }, { probe: "picked" },
-      { key: "ArrowRight" }, { wait: 200 }, { key: "Enter" }, { wait: 900 }, { probe: "incense" },
+      { key: "Enter" }, { wait: 600 }, { probe: "given" },
+      { click: "#dex-from [data-a='pick']" }, { wait: 900 }, { probe: "pick" }, { key: "Enter" }, { wait: 600 }, { probe: "picked" }, { key: "Escape" }, { wait: 500 },
+      { key: "ArrowRight" }, { wait: 200 }, { key: "Enter" }, { wait: 900 }, { probe: "incense" }, { key: "Escape" }, { wait: 500 }, { probe: "pane" },
       { invoke: "shop_state", log: true }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
     check: ({ probe, log, box }) => {
       const st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
@@ -374,7 +388,9 @@ module.exports = [
       const mins = (st.incenseUntil - Date.now()) / 60000;
       return [
         ok(probe.bag?.pokeTab === "bag" && JSON.stringify(probe.bag?.items) === '["이상한사탕:×3","향:×1"]' && probe.bag?.takeBtn === "이 탭 파트너에게 (Lv 15 → 16)", `가방 ${JSON.stringify(probe.bag?.items)} · ${probe.bag?.takeBtn}`),
-        ok(probe.given?.takeBtn === "이 탭 파트너에게 (Lv 16 → 17)", `사탕 뒤 ${probe.given?.takeBtn}`),
+        ok(probe.given?.takeBtn === "이 탭 파트너에게 (Lv 16 → 17)" && /^🆙 Lv 15 → 16!/.test(probe.given?.preview || ""), `사탕 뒤 가방 그대로 ${probe.given?.takeBtn} · ${probe.given?.preview} (#78)`),
+        ok(probe.picked?.pokeTab === "bag" && probe.picked?.takeBtn === "사탕 주기 (Lv 17 → 18)" && /^🆙 Lv 16 → 17!/.test(probe.picked?.preview || ""), `고른 포켓몬에게 준 뒤 그 자리 ${probe.picked?.takeBtn} · ${probe.picked?.preview} (#78)`),
+        ok(/^🪔 (59|60)분$/.test(probe.incense?.incense || "") && /^🪔 향 (59|60)분 · 야생 ×2$/.test(probe.pane?.pokeIncense || ""), `향 칩 ${probe.incense?.incense} · 파트너 칸 ${probe.pane?.pokeIncense} (#79)`),
         ok(/^사탕 주기 \(Lv 16 → 17\)$/.test(probe.pick?.takeBtn || ""), `고르기 ${probe.pick?.takeBtn}`),
         ok(me?.lv === 17 && me?.id === 4, `파트너 ${JSON.stringify(me && { id: me.id, lv: me.lv })} (오프라인이라 Lv 16에서 진화는 다음에)`),
         ok(st.bag?.candy === 1 && !st.bag?.incense && mins > 58 && mins <= 60, `가방 ${JSON.stringify(st.bag)} · 향 ${mins.toFixed(1)}분`),

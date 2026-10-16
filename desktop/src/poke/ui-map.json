@@ -162,7 +162,7 @@
       ]
     },
     "pk-coin": {
-      "what": "🪙 포켓코인 칩(제목 줄 ✕ 왼쪽, 누르면 홈 — E3부터 상점)과 메인 창 파트너 옆 \"+5₽\" 떠오름(pk-float) (#72, PKM-18)",
+      "what": "🪙 포켓코인 칩(제목 줄 ✕ 왼쪽, 누르면 홈 — E3부터 상점)과 메인 창 파트너 옆 \"+5₽\" 떠오름(pk-float) (#72, PKM-18) · 🪔 향 칩·파트너 칸 줄(#79)",
       "files": [
         "src/poke/poke.css",
         "src/theme.css",
@@ -171,12 +171,16 @@
       "selectors": [
         ".pk-coin",
         ".pk-float",
-        "--pk-coin"
+        "--pk-coin",
+        ".pk-incense",
+        ".poke-incense"
       ],
       "functions": [
         "coinChip",
         "dexTitle",
-        "coinFloat"
+        "coinFloat",
+        "incenseChip",
+        "incenseShow"
       ],
       "screens": [
         "choose",
@@ -218,7 +222,9 @@
         ".pk-back",
         ".pk-err",
         ".pk-band-go",
-        "#dex.shopview"
+        "#dex.shopview",
+        ".pk-lvup",
+        ".pk-card.lvup"
       ],
       "functions": [
         "shopRender",
@@ -228,7 +234,8 @@
         "itemAct",
         "candyGive",
         "pickRender",
-        "candyButton"
+        "candyButton",
+        "lvupShow"
       ],
       "screens": [
         "shop",
