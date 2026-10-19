@@ -389,6 +389,24 @@ module.exports = [
     },
   },
   {
+    id: "usage-shared", tags: ["smoke", "agent"], what: "같은 Claude를 두 탭에서: 각 탭 상태줄이 자기 마지막 응답 값을 계속 보내도(a 20%·b 35%) 두 탭 모두 같은 창의 더 높은 값 5h 35%·7d 15%, 기억값도 흔들리지 않음 (STA-09 규칙 5, #96)",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
+    env: { CVIM_DESKTOP_AUTOSTART: "1", CVIM_DESKTOP_AGENT_CMD: (box) => path.join(box.dir, "fakebin", "claude-tabs") },
+    // a stand-in Claude whose status line says what "its last reply" saw: tab a an older 20 % of the same windows
+    files: { "fakebin/claude-tabs": "#!/bin/sh\ncase \"$(basename \"$PWD\")\" in a) p=20; w=12;; *) p=35; w=15;; esac\nfor i in $(seq 40); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":%s,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":%s,\"resets_at\":%s}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $p $(( (now / 3600 + 2) * 3600 )) $w $(( (now / 86400 + 3) * 86400 )) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n" },
+    steps: [{ until: "tabs.1" }, { wait: 1500 }, { call: "closeDex" }, { wait: 5000 },
+      { key: "1", mods: 4 }, { wait: 2500 }, { probe: "a" }, { key: "2", mods: 4 }, { wait: 2500 }, { probe: "b" }, { key: "1", mods: 4 }, { wait: 2500 }, { probe: "a2" }],
+    check: ({ probe }) => {
+      const both = (p) => /5h\D*35%/.test(p?.usage || "") && /7d\D*15%/.test(p?.usage || "");
+      return [
+        ok(probe.a?.active === "a" && probe.b?.active === "b", `탭 ${probe.a?.active} ${probe.b?.active}`),
+        ok(both(probe.a) && both(probe.a2), `탭 a 상단 바 ${probe.a?.usage} / ${probe.a2?.usage} — b가 알린 35%·15%여야`),
+        ok(both(probe.b), `탭 b 상단 바 ${probe.b?.usage}`),
+        ok([probe.a, probe.b, probe.a2].every((p) => p?.usageLast === "35/15"), `기억값 ${[probe.a, probe.b, probe.a2].map((p) => p?.usageLast)}`),
+      ];
+    },
+  },
+  {
     id: "research-mew", tags: ["smoke", "poke", "data"], what: "환상 리서치(뮤) 1단계: 서로 다른 폴더 3곳에서 작업을 끝내면 다음 단계 — 폴더는 해시로만, 단계가 끝나면 지움 · 홈에 단계별 진행 (#86)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b", "c"],
     steps: [{ until: "tabs.2" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
@@ -1415,11 +1433,39 @@ sleep 40
     },
   },
   {
-    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 Tamer로, 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
+    id: "side-fold", tags: ["smoke", "app"], what: "오른쪽 칸 접기: ⌘\\ → 칸이 사라지고 큰 칸이 창 전체, settings.json side=false, 접힌 동안 Tamer가 앞이어도 오버레이 · ⌘⌥3이면 펴고 셸로 · 버튼으로 다시 접고 펴기 · 보일 때 '늘'이면 펴져 있어도 오버레이 (TAB-19 #97, STA-15 #98)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 300 }, { probe: "open" },
+      { invoke: "overlay_want_test", args: { focused: true }, log: true },
+      { key: "\\", code: "Backslash", mods: 4 }, { wait: 600 }, { probe: "folded" },
+      { invoke: "overlay_want_test", args: { focused: true }, log: true }, { invoke: "settings_get", log: true },
+      { key: "3", mods: 5 }, { wait: 600 }, { probe: "shell" },
+      { click: "#side-toggle" }, { wait: 600 }, { probe: "btnFold" }, { click: "#side-toggle" }, { wait: 600 }, { probe: "btnOpen" },
+      { invoke: "settings_set", args: { patch: { overlay: { when: "always" } } } }, { wait: 300 },
+      { invoke: "overlay_want_test", args: { focused: true }, log: true }, { invoke: "settings_set", args: { patch: { overlay: { when: "bogus" } } } }, { invoke: "settings_get", log: true }],
+    check: ({ probe, log, box }) => {
+      const want = [...log.matchAll(/^lab-invoke overlay_want_test (.*)$/gm)].map((m) => m[1]);
+      const gets = [...log.matchAll(/^lab-invoke settings_get (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
+      const full = (p) => p?.width && p.paneW >= p.width - 80;
+      return [
+        ok(probe.open?.sideW > 200 && probe.open?.sideBtn === "▸" && want[0] === "false", `처음: 오른쪽 칸 ${probe.open?.sideW}px · 버튼 ${probe.open?.sideBtn} · 앞일 때 오버레이 ${want[0]}`),
+        ok(probe.folded?.sideW === 0 && probe.folded?.sideBtn === "◂" && full(probe.folded), `⌘\\ 접힘: 오른쪽 ${probe.folded?.sideW}px · 큰 칸 ${probe.folded?.paneW}/${probe.folded?.width} · 버튼 ${probe.folded?.sideBtn}`),
+        ok(want[1] === "true" && gets[0]?.side === false, `접힌 동안 Tamer가 앞이어도 오버레이 ${want[1]} · side=${gets[0]?.side}`),
+        ok(probe.shell?.sideW > 200 && probe.shell?.focusPane === "shell", `⌘⌥3: 펴고 셸로 — 오른쪽 ${probe.shell?.sideW}px · 포커스 ${probe.shell?.focusPane}`),
+        ok(probe.btnFold?.sideW === 0 && probe.btnOpen?.sideW > 200, `버튼: 접기 ${probe.btnFold?.sideW}px → 펴기 ${probe.btnOpen?.sideW}px`),
+        ok(want[2] === "true", `보일 때 '늘'이면 펴져 있어도 오버레이 ${want[2]} (#98)`),
+        ok(gets[1]?.overlay?.when === "away" && saved?.side === true, `모르는 값은 기본(away) ${gets[1]?.overlay?.when} · 저장 side=${saved?.side}`),
+      ];
+    },
+  },
+  {
+    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 기본 배경 0%라 처음부터 최소 모드(#100), 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 Tamer로, 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: true, next: { id: 16, shiny: false } })),
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
-      { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_get", log: true }, { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
       { invoke: "settings_set", args: { patch: { overlay: { alpha: 20 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
       { invoke: "settings_set", args: { patch: { overlay: { minimal: "never" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
       { invoke: "settings_set", args: { patch: { overlay: { alpha: 82, shadow: false } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
@@ -1434,13 +1480,15 @@ sleep 40
       { invoke: "overlay_show_test", args: { on: false } }],
     check: ({ probe, log, box }) => {
       const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
-      const [first, clear, never, flat, always, wild, zero] = dom;
+      const [deflt, first, clear, never, flat, always, wild, zero] = dom;
       const alphaOf = (c) => { const m = /rgba?\(([^)]*)\)/.exec(c || ""); const p = m ? m[1].split(",").map(Number) : []; return p.length === 4 ? p[3] : p.length === 3 ? 1 : null; };
-      const got = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
+      const gets = [...log.matchAll(/^lab-invoke settings_get (.*)$/gm)].map((m) => JSON.parse(m[1])), got = gets.at(-1) || {};
       let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
       const none = (sh) => !sh || sh === "none" || /rgba\(0, 0, 0, 0\)/.test(sh);
       return [
-        ok(dom.length === 7, `오버레이 확인 ${dom.length}번 (7이어야)`),
+        ok(dom.length === 8, `오버레이 확인 ${dom.length}번 (8이어야)`),
+        // #100: no settings.json yet → card background 0 % → the Pokémon only (minimal mode), no shadow
+        ok(gets[0]?.overlay?.alpha === 0 && deflt?.minimal && !deflt.meta && none(deflt.shadow), `기본 배경 0%·최소 모드여야 — ${gets[0]?.overlay?.alpha}% ${JSON.stringify(deflt)}`),
         ok(zero?.note && alphaOf(zero.noteBg) >= 0.74 && alphaOf(zero.bg) === 0, `카드 배경 0%여도 알림 바탕은 75% (#92) — 알림 ${zero?.noteBg} · 카드 ${zero?.bg}`),
         ok(first && !first.minimal && first.meta && first.minis === 1 && !none(first.shadow), `처음(82%) 보통 카드여야 ${JSON.stringify(first)}`),
         ok(clear && clear.minimal && !clear.meta && !clear.counts && clear.balls.length === 1 && clear.minis === 0 && none(clear.shadow), `20%면 최소 모드(글자 없음·몬스터볼 1·그림자 없음)여야 ${JSON.stringify(clear)}`),

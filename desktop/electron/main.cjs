@@ -850,10 +850,12 @@ const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
 // 설정 창 (APP-19, #59): only known keys, each checked — anything else falls back to the default,
 // which is how the app behaved before (everything on)
 const SETTINGS = path.join(CACHE, "ui", "settings.json");
-const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 82, shadow: true, minimal: "auto" }, tabGlow: true, theme: "system",
+// card background: 0 % by default (#100) — only the Pokémon on the desktop (minimal mode, auto ≤ 30 %); a settings.json that has a value keeps it
+const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away" }, tabGlow: true, theme: "system", side: true,
   menubar: { on: true, text: "waiting" } }; // 메뉴바 (STA-19, #64)
 const MENUBAR_TEXT = ["waiting", "limit", "none"];
-const MINIMAL = ["auto", "always", "never"]; // 최소 모드 (#63): by the background (≤ 30 %), always, never
+const MINIMAL = ["auto", "always", "never"];
+const WHEN = ["away", "always"]; // 보일 때 (#98): while another app is in front (as before) / always, Tamer in front too // 최소 모드 (#63): by the background (≤ 30 %), always, never
 const THEMES = ["system", "dark", "light"]; // 테마 (APP-20, #60)
 function readSettings(raw = readJsonSafe(SETTINGS)) {
   const o = raw?.overlay || {}, d = SETTINGS_DEFAULT.overlay, b = (v, def) => (typeof v === "boolean" ? v : def);
@@ -861,8 +863,9 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
   return {
     overlay: { on: b(o.on, d.on), partner: b(o.partner, d.partner), alerts: b(o.alerts, d.alerts), wild: b(o.wild, d.wild), progress: b(o.progress, d.progress), // #88
       alpha: Number.isFinite(a) ? Math.round(Math.min(100, Math.max(0, a))) : d.alpha,
-      shadow: b(o.shadow, d.shadow), minimal: MINIMAL.includes(o.minimal) ? o.minimal : d.minimal }, // #65 #63
+      shadow: b(o.shadow, d.shadow), minimal: MINIMAL.includes(o.minimal) ? o.minimal : d.minimal, when: WHEN.includes(o.when) ? o.when : d.when }, // #65 #63 #98
     tabGlow: b(raw?.tabGlow, SETTINGS_DEFAULT.tabGlow),
+    side: b(raw?.side, SETTINGS_DEFAULT.side), // the right column shown (#97) — folded, the overlay shows with Tamer in front too
     menubar: { on: b(raw?.menubar?.on, SETTINGS_DEFAULT.menubar.on), text: MENUBAR_TEXT.includes(raw?.menubar?.text) ? raw.menubar.text : SETTINGS_DEFAULT.menubar.text },
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
   };
@@ -1074,15 +1077,20 @@ function createOverlay() {
   overlay.loadFile(path.join(DIST, "overlay.html"));
 }
 
-// shown while another app is in front (and there's something to show)
+// shown while another app is in front — or always (보일 때 #98), or while the right column with the partner
+// is folded away (#97) — and there's something to show
+// focused: is a Tamer window in front · quiet: a test window (never focused — its overlay shows only when a
+// test asks: it sat on the user's screen)
+function overlayWants({ focused = !!BrowserWindow.getFocusedWindow(), quiet = QUIET_TEST } = {}) {
+  const o = settings.overlay, away = (!focused || o.when === "always" || !settings.side) && !quiet;
+  // the 설정 창 (#59): off, or nothing chosen to show (a wild card counts only while one is out)
+  const something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progShown()); // #88 #90: the progress line alone
+  return !!((away || overlayForced) && workspaces.size && o.on && something);
+}
 function overlaySync() {
   if (!overlay || overlay.isDestroyed()) return;
   if (draining) { overlay.hide(); return; } // quitting (#54): the hidden window's blur mustn't bring it back
-  // a test window never has focus: its overlay shows only when a test asks (it sat on the user's screen)
-  const away = !BrowserWindow.getFocusedWindow() && !QUIET_TEST;
-  // the 설정 창 (#59): off, or nothing chosen to show (a wild card counts only while one is out)
-  const o = settings.overlay, something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progShown()); // #88 #90: the progress line alone
-  if ((away || overlayForced) && workspaces.size && o.on && something) {
+  if (overlayWants()) {
     overlayUpdate();
     if (!overlay.isVisible()) overlay.showInactive();
   } else if (overlay.isVisible()) overlay.hide();
@@ -1105,7 +1113,7 @@ const overlayCommands = {
   overlay_state: () => overlayPayload(),
   overlay_click({ ws }) { focusMain(String(ws)); },
   // the wild notice (#66): Tamer in front (keyboard included) — its own wild card shows there, to catch
-  wild_open() { focusMain(); logLine("wild open from overlay"); },
+  wild_open() { if (!settings.side) setSettings({ side: true }); focusMain(); logLine("wild open from overlay"); }, // the wild card is in the right column (#97)
   // the hatch notice (#88): Tamer, on 🎒 내 포켓몬 where the hatchling is
   hatch_open() { focusMain(); send("open-dex", { view: "box" }); logLine("hatch open from overlay"); },
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
@@ -1752,6 +1760,7 @@ const testCommands = {
   },
   overlay_bounds_test: () => overlay.getBounds(),
   overlay_visible_test: () => !!overlay && !overlay.isDestroyed() && overlay.isVisible(),
+  overlay_want_test: ({ focused }) => overlayWants({ focused: !!focused, quiet: false }), // would it show with Tamer in front / not (#97 #98)
   overlay_payload_test: () => overlayPayload(),
   diag_test: () => diagnostics(),
   // the app menu's first submenu labels, and whether the notices ship with the app
@@ -1916,6 +1925,7 @@ function appMenu() {
       // 설정 창 (APP-19) — ⌘, as in every Mac app; the overlay on/off right here too (#59)
       { label: "설정…", accelerator: "Cmd+,", click: () => send("open-settings", {}) },
       { label: "바탕화면 오버레이", type: "checkbox", checked: settings.overlay.on, click: (m) => setSettings({ overlay: { on: m.checked } }) },
+      { label: "오른쪽 칸 보이기 (⌘\\)", type: "checkbox", checked: settings.side, click: (m) => setSettings({ side: m.checked }) }, // #97 — the key is the window's (⌘\)
       { type: "separator" }, ...helpItems, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] },
     { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
     { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "togglefullscreen" }] },

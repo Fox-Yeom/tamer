@@ -986,9 +986,14 @@ function rememberUsage(key, u) {
   if (!key || !u) return;
   const l = lastUsage(key), windows = { ...(l.windows || {}) };
   if (u.model_id && u.ctx_window) windows[u.model_id] = u.ctx_window;
-  const next = { model: u.model || l.model, five_hour: u.five_hour || l.five_hour, seven_day: u.seven_day || l.seven_day, windows };
+  const next = { model: u.model || l.model, five_hour: newerWin(l.five_hour, u.five_hour), seven_day: newerWin(l.seven_day, u.seven_day), windows };
   try { localStorage.setItem(lastKey(key), JSON.stringify(next)); } catch {}
   tellUsage(key, next);
+  // another tab learned newer limits: the tab in view shows them now, not at its own next report (#96)
+  if (JSON.stringify([l.five_hour, l.seven_day]) !== JSON.stringify([next.five_hour, next.seven_day]) && active?.state) {
+    const st = active.state;
+    if ((st.shellKey || st.agent?.key || active.agent?.key) === key) renderBar(active);
+  }
 }
 // 메뉴바 (STA-19, #64): the menu bar shows the same remembered limits — the main process keeps them in memory
 function tellUsage(key, l = lastUsage(key)) {
@@ -996,6 +1001,16 @@ function tellUsage(key, l = lastUsage(key)) {
 }
 for (const k of ["claude", "codex"]) tellUsage(k);
 const live = (w) => w && (w.resets_at == null || w.resets_at * 1000 > Date.now());
+// 5h · 7d are the account's (STA-09 rule 5, #96): each tab's status line keeps sending what its own last reply
+// said, so of two reports of a window the newer wins — a later reset is a newer window; the same window
+// (resets within 2 min): the higher use (it only grows within a window); no reset time: the one just in (b)
+function newerWin(a, b) {
+  if (!live(a)) return live(b) ? b : null;
+  if (!live(b)) return a;
+  if (a.resets_at == null || b.resets_at == null) return b;
+  if (Math.abs(a.resets_at - b.resets_at) >= 120) return b.resets_at > a.resets_at ? b : a;
+  return b.pct >= a.pct ? b : a;
+}
 function withLast(st, tab) {
   const key = st.shellKey || st.agent?.key || tab.agent?.key;
   if (!key || st.state === "shell") return st.usage || {};
@@ -1009,7 +1024,10 @@ function withLast(st, tab) {
     if (w) { u.ctx = (u.ctx_tokens / w) * 100; u.ctxEst = true; }
   }
   if (!u.model && l.model) { u.model = l.model; stale.push("model"); }
-  for (const k of ["five_hour", "seven_day"]) if (!u[k] && live(l[k])) { u[k] = l[k]; stale.push(k); }
+  for (const k of ["five_hour", "seven_day"]) {
+    if (!u[k] && live(l[k])) { u[k] = l[k]; stale.push(k); } // not reported by this tab yet: the last value, dimmed
+    else if (u[k]) u[k] = newerWin(l[k], u[k]); // another tab may know newer (#96)
+  }
   u.stale = stale;
   return u;
 }
@@ -1371,6 +1389,7 @@ function applySettings(s) {
   settingsNow = s;
   applyTheme();
   document.body.classList.toggle("no-tab-glow", !s.tabGlow);
+  sideShow(s.side !== false);
   for (const el of document.querySelectorAll("#settings [data-set]")) {
     const v = getPath(s, el.dataset.set);
     if (el.type === "checkbox") el.checked = !!v; else el.value = v;
@@ -1429,6 +1448,20 @@ listen("open-settings", () => openSettings());
 listen("settings", (e) => applySettings(e.payload));
 invoke("settings_get").then(applySettings).catch(() => {});
 
+// ── the right column folded or shown (#97): ⌘\, the top bar's last button, 설정 · menu — kept in settings.json
+// (the main process shows the overlay while it's folded)
+function sideShow(on) {
+  document.body.classList.toggle("side-closed", !on);
+  const b = $("#side-toggle");
+  b.textContent = on ? "▸" : "◂";
+  b.title = on ? "오른쪽 칸 접기 (⌘\\) — 접으면 파트너는 바탕화면 오버레이로" : "오른쪽 칸 펴기 (⌘\\)";
+}
+function sideToggle(on = settingsNow ? settingsNow.side === false : false) {
+  sideShow(on); // at once — ⌘⌥2·3 focus in it right after
+  invoke("settings_set", { patch: { side: on } }).then(applySettings).catch(() => {});
+}
+const sideUnfold = () => { if (document.body.classList.contains("side-closed")) sideToggle(true); };
+$("#side-toggle").addEventListener("click", () => sideToggle());
 // ── the right column's width (#58): drag the border, double-click for 40% again; one width for every
 // tab, kept in this Mac's page storage (a per-viewer convenience — the app works without it)
 const SIDE_KEY = "tamer.side", SIDE_DEFAULT = 40;
@@ -2808,8 +2841,8 @@ window.addEventListener("keydown", (e) => {
     if (p) return hit(() => openTermSearch(p));
   }
   if (e.altKey && e.code === "Digit1") return hit(() => focusBig(active)); // the agent (the shell while there's none)
-  if (e.altKey && e.code === "Digit2") return hit(() => $(".changes li[data-i]", active?.view)?.focus());
-  if (e.altKey && e.code === "Digit3") return hit(() => active?.panes.shell.term.focus());
+  if (e.altKey && e.code === "Digit2") return hit(() => { sideUnfold(); $(".changes li[data-i]", active?.view)?.focus(); }); // folded (#97): unfold first
+  if (e.altKey && e.code === "Digit3") return hit(() => { sideUnfold(); active?.panes.shell.term.focus(); });
   if (e.altKey && e.code === "Enter") return hit(() => { if (active) { active.autoSwapped = false; swapPanes(active, !active.swapped); } });
   if (e.code === "KeyP" && !e.shiftKey && !e.altKey) return hit(() => (dexOpen() ? dexView("home") : openDex(null, "home"))); // 🏠 홈 (#44)
   if (e.code === "KeyG" || (e.code === "KeyA" && e.shiftKey)) return hit(() => switchAgent());
@@ -2826,6 +2859,7 @@ window.addEventListener("keydown", (e) => {
   if (e.code === "Minus") return hit(() => setFont(fontSize - 1));
   if (e.code === "Digit0") return hit(() => setFont(FONT_DEFAULT));
   if (e.code === "KeyB") return hit(() => { if (!wild.throwBall()) toast("🌿 지금은 야생 포켓몬이 없어요"); });
+  if (e.code === "Backslash") return hit(() => sideToggle()); // 오른쪽 칸 (#97)
   if (e.code === "KeyW") return hit(() => closeTab());
   const m = !e.ctrlKey && e.code.match(/^Digit([1-9])$/);
   if (m) return hit(() => selectTab(m[1] === "9" ? tabs[tabs.length - 1] : tabs[Number(m[1]) - 1]));
@@ -3364,6 +3398,7 @@ function labState() {
     })(),
     width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth,
     usage: $("#usage")?.textContent || "",
+    usageLast: (() => { const l = lastUsage("claude"); return l.five_hour ? `${l.five_hour.pct}/${l.seven_day?.pct}` : null; })(), // #96
     usageRaw: (() => { const u = active && shownOf(active)?.usage; return u ? Object.keys(u).filter((k) => u[k] != null).join(",") : null; })(),
     sid: active?.sid ?? null,
     astate: active?.state?.state || null,
@@ -3377,6 +3412,9 @@ function labState() {
     drawn: active ? Object.fromEntries(["LABFAINT", "LABDIM"].map((w) => { const el = [...$(".xterm-rows", bigPane(active)?.term.element || document)?.querySelectorAll("span") || []].find((x) => x.textContent === w); return [w, el ? getComputedStyle(el).color : null]; })) : null,
     side: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side")) || null, // #58 the right column's % (null = default)
     sideW: active ? Math.round($(".side", active.view)?.getBoundingClientRect().width || 0) : null,
+    sideBtn: $("#side-toggle")?.textContent || null, width: innerWidth, // #97
+    focusPane: document.activeElement?.closest?.(".pane-shell") ? "shell" : document.activeElement?.closest?.(".pane-agent") ? "agent" : null,
+    paneW: active ? Math.round($(".pane-agent", active.view)?.getBoundingClientRect().width || 0) : null,
     tabWorking: active ? !!$(`#tabs .tab[data-ws="${active.id}"]`)?.classList.contains("working") : null, // #61
     recent: startOpen() ? [...document.querySelectorAll("#recent li:not(.dim) span:nth-child(2)")].map((x) => x.textContent) : null,
     startSel: startOpen() ? startSel : null,
@@ -3591,6 +3629,8 @@ async function uiScenes(set) {
       // the top bar and the hint line at four window widths (#38): an agent waiting, with usage
       fakeUsage(tab);
       for (const w of [1400, 1100, 900, 720]) { await invoke("win_resize_test", { w, h: 600 }); await shot(`bar-${w}`); }
+      // the right column folded (#97): the big pane takes the width, the button turns to ◂
+      await invoke("win_resize_test", { w: 1100, h: 600 }); sideToggle(false); await wait(400); await shot("side-folded"); sideToggle(true); await wait(300);
       // find in the terminal (#40): the search line on the big pane, a query typed
       await invoke("win_resize_test", { w: 1400, h: 900 });
       openTermSearch(bigPane(tab)); $("#tsearch-q").value = "proj"; termFind(1, true); await shot("term-search"); closeTermSearch();
@@ -3610,6 +3650,7 @@ async function uiScenes(set) {
       await shot("start-screen"); hideStart();
       // 설정 창 (APP-19, #59): the defaults
       await openSettings(); await shot("settings-window"); closeSettings();
+      await invoke("settings_set", { patch: { overlay: { alpha: 82 } } }); // the scenes after: the full cards, as before the 0 % default (#100)
       // a working tab (#61): the gradient border (still in scenes — body.ui-test stops animations)
       { const kept = tab.state; tab.state = { ...tab.state, state: "coding", detail: "src/app.ts", turn_at: null, event_at: null, state_at: null }; renderTab(tab); renderBar(tab);
         await shot("tab-working"); tab.state = kept; renderTab(tab); renderBar(tab); }

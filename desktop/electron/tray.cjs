@@ -61,6 +61,8 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null,
   if (!alphas.includes(o.alpha)) alphas.push(o.alpha);
   items.push(
     { label: "바탕화면 오버레이", type: "checkbox", checked: o.on, act: { set: { overlay: { on: !o.on } } } },
+    { label: "오버레이 보일 때", enabled: o.on, submenu: [["away", "다른 앱을 쓸 때만"], ["always", "늘 (Tamer가 앞에 있어도)"]] // #98
+      .map(([v, l]) => ({ label: l, type: "radio", checked: o.when === v, act: { set: { overlay: { when: v } } } })) },
     { label: "오버레이 보일 것", enabled: o.on, submenu: [
       { label: "파트너", type: "checkbox", checked: o.partner, act: { set: { overlay: { partner: !o.partner } } } },
       { label: "알림", type: "checkbox", checked: o.alerts, act: { set: { overlay: { alerts: !o.alerts } } } },
@@ -70,7 +72,7 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null,
     { label: "최소 모드", enabled: o.on, submenu: [["auto", "배경 30% 이하일 때"], ["always", "항상"], ["never", "안 씀"]]
       .map(([v, l]) => ({ label: l, type: "radio", checked: o.minimal === v, act: { set: { overlay: { minimal: v } } } })) },
     { label: "카드 배경", enabled: o.on, submenu: alphas.sort((a, b) => b - a)
-      .map((a) => ({ label: `${a}%${a === 82 ? " (기본)" : ""}`, type: "radio", checked: o.alpha === a, act: { set: { overlay: { alpha: a } } } })) },
+      .map((a) => ({ label: `${a}%${a === 0 ? " (기본)" : ""}`, type: "radio", checked: o.alpha === a, act: { set: { overlay: { alpha: a } } } })) },
     { label: "그림자", type: "checkbox", enabled: o.on, checked: o.shadow, act: { set: { overlay: { shadow: !o.shadow } } } },
     { type: "separator" },
     { label: "테마", submenu: [["system", "시스템 따라가기"], ["dark", "다크"], ["light", "라이트"]]

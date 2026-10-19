@@ -15,10 +15,11 @@
       <span id="summary" title="모든 탭: 입력 필요 · 작업 중 · 완료 · 실패"></span>
       <span id="doing" class="dim"></span>
       <span id="usage"></span>
+      <button id="side-toggle" title="오른쪽 칸 접기 (⌘\)">▸</button>
     </header>
     <nav id="tabs"><button id="new-tab" title="새 탭 (⌘T)">＋</button></nav>
     <div id="views"></div>
-    <footer id="hint" class="dim" title="⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘F 찾기 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭">⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘F 찾기 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭</footer>
+    <footer id="hint" class="dim" title="⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘F 찾기 · ⌘\ 오른쪽 칸 접기 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭">⌘T 새 탭 · ⌘⇧T 새 셸 · ⌃⌘1~9 셸 · ⌘1~9 탭 · ⌘W 닫기 · ⌘O 폴더 열기 · ⌘G 에이전트 · ⌘D 도감 · ⌘B 몬스터볼 · ⌘⌥1·2·3 에이전트·변경 사항·셸 · ⌘⌥↵ 큰 칸 바꾸기 · ⌘E 프롬프트 작성 · ⌘F 찾기 · ⌘= ⌘- 글자 · 드래그 = 복사 · 폴더를 끌어다 놓으면 새 탭</footer>
 
     <!-- start screen: recent folders (shared with the Neovim CVIM) -->
     <section id="start" hidden>
@@ -79,11 +80,12 @@
       <div class="dlg">
         <header><span>설정</span><button id="settings-close" title="닫기 (Esc)">✕</button></header>
         <div class="dlg-body">
-          <h4>바탕화면 오버레이 <span class="dim">— 다른 앱을 쓰는 동안 화면 구석의 카드</span></h4>
+          <h4>바탕화면 오버레이 <span class="dim">— 화면 구석의 카드</span></h4>
           <div class="set-ov">
           <div class="set-ov-controls">
           <label class="set-row"><input type="checkbox" data-set="overlay.on" /> 오버레이 켜기</label>
           <div class="set-group">
+            <label class="set-row">보일 때 <select data-set="overlay.when"><option value="away">다른 앱을 쓸 때만</option><option value="always">늘 (Tamer가 앞에 있어도)</option></select> <span class="dim">오른쪽 칸을 접으면 늘</span></label>
             <label class="set-row"><input type="checkbox" data-set="overlay.partner" /> 파트너 <span class="dim">지금 탭 카드</span></label>
             <label class="set-row"><input type="checkbox" data-set="overlay.alerts" /> 알림 <span class="dim">입력 필요·완료 말풍선, 나를 기다리는 다른 탭, 아이콘 줄</span></label>
             <label class="set-row"><input type="checkbox" data-set="overlay.wild" /> 야생 포켓몬 <span class="dim">끄면 Tamer 창에서만</span></label>
@@ -97,6 +99,7 @@
           <label class="set-row"><select data-set="theme"><option value="system">시스템 따라가기</option><option value="dark">다크</option><option value="light">라이트</option></select></label>
           <h4>탭</h4>
           <label class="set-row"><input type="checkbox" data-set="tabGlow" /> 일하는 탭 테두리 효과 <span class="dim">에이전트가 일하는 동안 색이 돌며 감쌈</span></label>
+          <label class="set-row"><input type="checkbox" data-set="side" /> 오른쪽 칸 보이기 <span class="dim">파트너·변경 사항·셸 — ⌘\ 또는 상단 바 오른쪽 끝 버튼, 접으면 오버레이가 늘 보여요</span></label>
           </div>
           <div class="set-side">
           <figure class="set-preview" aria-label="미리보기"><figcaption class="dim">미리보기</figcaption><div class="set-preview-desk"><div class="ov"><div class="ov-wild"></div><div class="ov-cards"></div></div></div><div class="set-preview-off dim" hidden>오버레이가 뜨지 않아요</div></figure>

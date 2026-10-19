@@ -277,6 +277,12 @@ body.no-tab-glow #tabs .tab.working::before { display: none; } /* 설정: 탭 �
 .rail { order: -1; display: flex; flex-direction: column; gap: 4px; padding: 6px 4px; background: var(--sunken); border-right: 1px solid var(--line); overflow-y: auto; }
 .rail[hidden] { display: none; }
 .grid.multi { grid-template-columns: 46px 1fr var(--side, 40%); }
+/* the right column folded (#97): the agent takes the width; the overlay shows the partner meanwhile */
+body.side-closed .grid { grid-template-columns: 1fr; }
+body.side-closed .grid.multi { grid-template-columns: 46px 1fr; }
+body.side-closed .side { display: none; }
+#side-toggle { background: none; border: 1px solid transparent; border-radius: 5px; color: var(--dim); padding: 0 5px; line-height: 18px; cursor: pointer; }
+#side-toggle:hover { border-color: var(--line); color: var(--fg); }
 .sess { position: relative; display: flex; flex-direction: column; align-items: center; gap: 1px; width: 38px; padding: 5px 0 4px; border: 1px solid transparent; border-radius: 8px;
   background: transparent; color: var(--dim); font: inherit; font-size: 11px; cursor: pointer; }
 .sess .ic { font-size: 14px; }

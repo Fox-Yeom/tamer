@@ -67,6 +67,7 @@
         "bar-1100",
         "bar-900",
         "bar-720",
+        "side-folded",
         "term-search",
         "tab-working",
         "bar-failed",
@@ -591,6 +592,13 @@
       "screens": [
         "home"
       ]
+    },
+    "side-fold": {
+      "what": "오른쪽 칸 접기·펴기 — 상단 바 끝 ▸/◂ 버튼, ⌘\\, 설정 '오른쪽 칸 보이기' (TAB-19, #97)",
+      "files": ["index.html", "src/style.css", "src/main.js"],
+      "selectors": ["#side-toggle", "body.side-closed"],
+      "functions": ["sideShow", "sideToggle", "sideUnfold"],
+      "screens": ["main", "settings"]
     },
     "side-split": {
       "what": "큰 칸과 오른쪽 칸 사이 경계 — 끌어서 너비, 두 번 눌러 40% (#58)",
