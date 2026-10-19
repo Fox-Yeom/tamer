@@ -598,7 +598,8 @@ module.exports = [
       evolvePartner(box);
       putEcon(box, { "state.json": { startSeen: true, stampsSince: todayLocal() } }); // today (the data has finishes today): 1/2 from the start, no breakthrough
     },
-    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { invoke: "incubator_add_test", args: { kind: "egg", have: 8 } }, { wait: 600 }, { probe: "a" },
+    // the full cards (82 %): the line on the partner's card — the card background is 0 % (minimal) by default since #100
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { invoke: "settings_set", args: { patch: { overlay: { alpha: 82 } } } }, { invoke: "incubator_add_test", args: { kind: "egg", have: 8 } }, { wait: 600 }, { probe: "a" },
       { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
       ...DONE("$ws"), { wait: 1500 }, { probe: "b" }, { invoke: "overlay_dom_test", log: true }, { invoke: "tray_test", log: true },
       { invoke: "settings_set", args: { patch: { overlay: { minimal: "always" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
