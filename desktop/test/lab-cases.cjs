@@ -1461,6 +1461,20 @@ sleep 40
     },
   },
   {
+    id: "side-fold-launch", tags: ["smoke", "app"], what: "오른쪽 칸을 접어 둔 채 켜면: 처음부터 접혀 있고(◂), 첫 탭이 열리자마자 Tamer가 앞이어도 오버레이가 뜸 — 포커스가 바뀔 때까지 기다리지 않음 (TAB-19 규칙 2, #97 0.8.0-beta.1에서 발견)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => { fs.mkdirSync(path.join(box.data, "ui"), { recursive: true }); fs.writeFileSync(path.join(box.data, "ui", "settings.json"), JSON.stringify({ side: false })); },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { probe: "start" }],
+    check: ({ probe, log }) => {
+      const ws = log.search(/^workspace id=/m), front = [...log.matchAll(/^overlay front=(\w+)$/gm)];
+      const after = front.filter((m) => m.index > ws).map((m) => m[1]);
+      return [
+        ok(probe.start?.sideW === 0 && probe.start?.sideBtn === "◂", `처음부터 접힘 — 오른쪽 ${probe.start?.sideW}px · 버튼 ${probe.start?.sideBtn}`),
+        ok(ws >= 0 && after.at(-1) === "true", `첫 탭이 열린 뒤 Tamer가 앞이어도 오버레이가 떠야 — ${JSON.stringify(front.map((m) => m[1]))}`),
+      ];
+    },
+  },
+  {
     id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 기본 배경 0%라 처음부터 최소 모드(#100), 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 Tamer로, 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: true, next: { id: 16, shiny: false } })),

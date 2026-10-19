@@ -217,6 +217,9 @@ function openWorkspace(cwd) {
     .catch((e) => { logLine(`partner error ${e}`); return null; });
   noteRecent(cwd);
   saveSession();
+  // the first tab: the window had focus before it — with the right column folded (or 보일 때 늘) the overlay
+  // shows now, not at the next focus change (#97: it didn't at launch)
+  overlaySync();
   return { ...wsInfo(ws), existing: false };
 }
 
@@ -237,6 +240,7 @@ function closeWorkspace(id) {
   if (activeWs === id) activeWs = null;
   saveSession();
   overlayUpdate();
+  overlaySync(); // the last tab gone: no overlay (#97)
   core.request("close", { ws: id }).catch(() => {});
   logLine(`workspace closed id=${id}`);
 }
@@ -1075,6 +1079,7 @@ function createOverlay() {
   overlay.webContents.on("will-navigate", (e) => e.preventDefault());
   overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   overlay.loadFile(path.join(DIST, "overlay.html"));
+  overlaySync(); // a session restored before it existed (#97)
 }
 
 // shown while another app is in front — or always (보일 때 #98), or while the right column with the partner
@@ -1087,9 +1092,11 @@ function overlayWants({ focused = !!BrowserWindow.getFocusedWindow(), quiet = QU
   const something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progShown()); // #88 #90: the progress line alone
   return !!((away || overlayForced) && workspaces.size && o.on && something);
 }
+let overlayFront = null; // tests: would it show with Tamer in front — logged when it changes (#97)
 function overlaySync() {
   if (!overlay || overlay.isDestroyed()) return;
   if (draining) { overlay.hide(); return; } // quitting (#54): the hidden window's blur mustn't bring it back
+  if (QUIET_TEST) { const f = overlayWants({ focused: true, quiet: false }); if (f !== overlayFront) logLine(`overlay front=${overlayFront = f}`); }
   if (overlayWants()) {
     overlayUpdate();
     if (!overlay.isVisible()) overlay.showInactive();
