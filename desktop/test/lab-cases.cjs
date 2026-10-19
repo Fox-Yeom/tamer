@@ -1408,15 +1408,17 @@ sleep 40
     ],
   },
   {
-    id: "settings-overlay", tags: ["smoke", "app"], what: "설정 창: 오버레이 켜기·보일 것·빠른 선택·투명도, 탭 효과 — 바로 적용되고 settings.json에 남음, Esc 닫기 (APP-19, #59)",
+    id: "settings-overlay", tags: ["smoke", "app"], what: "설정 창: 처음엔 일반, 왼쪽 사이드바로 오버레이·일반 범주 바꾸기(#101) · 오버레이 켜기·보일 것·빠른 선택·투명도, 탭 효과 — 바로 적용되고 settings.json에 남음, Esc 닫기 (APP-19, #59)",
     data: "owner", mode: "direct", folders: ["proj"],
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 },
       { invoke: "overlay_show_test", args: { on: true } }, { wait: 600 }, { invoke: "overlay_visible_test", log: true },
       { call: "openSettings" }, { wait: 400 }, { probe: "open" },
+      { click: "#settings .set-nav [data-page='overlay']" }, { wait: 300 }, { probe: "ovPage" },
       { click: "#settings [data-set='overlay.alerts']" }, { wait: 400 }, { invoke: "overlay_payload_test", log: true },
       { click: "#settings [data-preset='off']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
       { click: "#settings [data-preset='wild']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
       { click: "#settings [data-preset='all']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
+      { click: "#settings .set-nav [data-page='general']" }, { wait: 300 },
       { click: "#settings [data-set='tabGlow']" }, { wait: 300 }, { probe: "glow" },
       { key: "Escape" }, { wait: 300 }, { probe: "closed" }, { invoke: "overlay_show_test", args: { on: false } }],
     check: ({ probe, log, box }) => {
@@ -1425,6 +1427,7 @@ sleep 40
       let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
       return [
         ok(probe.open?.settings === true && probe.open?.top !== "main", `설정 창 열림 ${probe.open?.settings}`),
+        ok(probe.open?.setPage === "general" && probe.ovPage?.setPage === "overlay" && probe.glow?.setPage === "general", `범주: 처음 ${probe.open?.setPage} → ${probe.ovPage?.setPage} → ${probe.glow?.setPage} (#101)`),
         ok(pay.show?.alerts === false && pay.show?.partner === true, `알림 끈 뒤 오버레이 ${JSON.stringify(pay.show)}`),
         ok(JSON.stringify(vis) === '["true","false","false","true"]', `오버레이 보임 처음·끄기·야생만(야생 없음)·전부 ${JSON.stringify(vis)} (true,false,false,true여야)`),
         ok(probe.glow?.noTabGlow === true, "탭 효과를 꺼도 화면에 반영 안 됨"),

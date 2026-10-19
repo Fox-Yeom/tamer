@@ -1397,7 +1397,7 @@ function applySettings(s) {
   for (const el of document.querySelectorAll("#settings [data-val]")) el.textContent = `${getPath(s, el.dataset.val)}%`;
   $("#settings .set-group").classList.toggle("off", !s.overlay.on);
   $("#settings .set-mb").classList.toggle("off", !s.menubar.on);
-  if (settingsOpen()) renderPreview(s.overlay);
+  if (settingsOpen() && setPage === "overlay") renderPreview(s.overlay);
 }
 // 미리보기 (#67): the overlay as these settings would draw it — this tab's partner, a tab that needs
 // you, three sample tabs and a wild notice, with the overlay's own drawing code (src/overlay-view.js)
@@ -1431,7 +1431,15 @@ async function setSetting(key, value) {
   const [a, b] = key.split(".");
   applySettings(await invoke("settings_set", { patch: b ? { [a]: { [b]: value } } : { [a]: value } }));
 }
-async function openSettings() { const s = await invoke("settings_get"); $("#settings").hidden = false; applySettings(s); $("#settings").focus(); }
+// one of the sidebar's kinds at a time (#101) — the last one again while the app runs (일반 after a launch)
+let setPage = "general";
+function settingsPage(page) {
+  setPage = page;
+  for (const b of document.querySelectorAll("#settings .set-nav button")) b.classList.toggle("on", b.dataset.page === page);
+  for (const el of document.querySelectorAll("#settings .set-page")) el.hidden = el.dataset.page !== page;
+  if (page === "overlay" && settingsNow) renderPreview(settingsNow.overlay); // the 미리보기 lives on this page only
+}
+async function openSettings(page = setPage) { const s = await invoke("settings_get"); $("#settings").hidden = false; settingsPage(page); applySettings(s); $("#settings").focus(); }
 function closeSettings() { $("#settings").hidden = true; focusBig(active); }
 $("#settings").addEventListener("change", (e) => {
   const k = e.target.dataset?.set, t = e.target.type;
@@ -1439,6 +1447,8 @@ $("#settings").addEventListener("change", (e) => {
 });
 $("#settings").addEventListener("input", (e) => { const k = e.target.dataset?.set; if (k && e.target.type === "range") $(`#settings [data-val="${k}"]`).textContent = `${e.target.value}%`; });
 $("#settings").addEventListener("click", async (e) => {
+  const pg = e.target.closest(".set-nav button")?.dataset.page;
+  if (pg) return settingsPage(pg);
   const p = e.target.dataset?.preset;
   if (p) applySettings(await invoke("settings_set", { patch: { overlay: PRESETS[p] } }));
 });
@@ -3413,6 +3423,7 @@ function labState() {
     side: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side")) || null, // #58 the right column's % (null = default)
     sideW: active ? Math.round($(".side", active.view)?.getBoundingClientRect().width || 0) : null,
     sideBtn: $("#side-toggle")?.textContent || null, width: innerWidth, // #97
+    setPage: settingsOpen() ? $("#settings .set-page:not([hidden])")?.dataset.page || null : null, // #101
     focusPane: document.activeElement?.closest?.(".pane-shell") ? "shell" : document.activeElement?.closest?.(".pane-agent") ? "agent" : null,
     paneW: active ? Math.round($(".pane-agent", active.view)?.getBoundingClientRect().width || 0) : null,
     tabWorking: active ? !!$(`#tabs .tab[data-ws="${active.id}"]`)?.classList.contains("working") : null, // #61
@@ -3476,7 +3487,7 @@ function fakeUsage(tab) {
     usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
   renderBar(tab); renderTab(tab); // the tab too: else the 15 s redraw (STA-20) decides when it changes
 }
-const LAB_CALLS = { openSettings: () => openSettings(), home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
+const LAB_CALLS = { openSettings: () => openSettings(), settingsOverlay: () => settingsPage("overlay"), settingsGeneral: () => settingsPage("general"), home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
@@ -3649,7 +3660,9 @@ async function uiScenes(set) {
       startSel = 1; markStart();
       await shot("start-screen"); hideStart();
       // 설정 창 (APP-19, #59): the defaults
-      await openSettings(); await shot("settings-window"); closeSettings();
+      await openSettings("overlay"); await shot("settings-window"); closeSettings(); // #101: the overlay page (and its 미리보기)
+      await openSettings("general"); await shot("settings-general"); closeSettings();
+      await openSettings("menubar"); await shot("settings-menubar"); closeSettings();
       await invoke("settings_set", { patch: { overlay: { alpha: 82 } } }); // the scenes after: the full cards, as before the 0 % default (#100)
       // a working tab (#61): the gradient border (still in scenes — body.ui-test stops animations)
       { const kept = tab.state; tab.state = { ...tab.state, state: "coding", detail: "src/app.ts", turn_at: null, event_at: null, state_at: null }; renderTab(tab); renderBar(tab);
@@ -3700,10 +3713,10 @@ async function uiScenes(set) {
       await invoke("overlay_show_test", { on: false });
       // the 설정 창's 미리보기 with 최소 모드 always (#63 #67): the partner and the sample tabs' balls
       await invoke("settings_set", { patch: { overlay: { minimal: "always" } } }); await wait(300);
-      await openSettings(); await wait(300); await shot("settings-minimal"); closeSettings();
+      await openSettings("overlay"); await wait(300); await shot("settings-minimal"); closeSettings();
       // the cards' background at 0 % (#92): the notice keeps a 75 % background, the partner stays see-through
       await invoke("settings_set", { patch: { overlay: { alpha: 0 } } }); await wait(300);
-      await openSettings(); await wait(300); await shot("settings-clear"); closeSettings();
+      await openSettings("overlay"); await wait(300); await shot("settings-clear"); closeSettings();
       await invoke("settings_set", { patch: { overlay: { alpha: 82 } } });
       await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
       // 라이트 테마 (APP-20, #60): the main window, the 설정 창, the Pokémon window, the overlay
@@ -3711,7 +3724,7 @@ async function uiScenes(set) {
       await invoke("win_resize_test", { w: 1400, h: 600 });
       fakeUsage(tab); await shot("light-main");
       await invoke("win_resize_test", { w: 1100, h: 700 });
-      await openSettings(); await shot("light-settings"); closeSettings();
+      await openSettings("overlay"); await shot("light-settings"); closeSettings();
       await openDex(); await shot("light-dex"); closeDex();
       await invoke("overlay_show_test", { on: true }); await wait(800);
       await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "coding", times, hold: true }); await wait(500);
