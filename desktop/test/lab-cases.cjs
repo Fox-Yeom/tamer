@@ -432,6 +432,21 @@ module.exports = [
     },
   },
   {
+    id: "readme-tour", tags: ["readme"], what: "README 둘러보기 그림(포켓몬 없는 화면 — POL-ASSET): 오른쪽 칸을 접고 ⌘G 선택 창 · 셸 둘의 레일을 펼친 모습(대화 제목) · 설정 일반. 그림만 찍음, 시험 아님 — TAMER_LAB_WORK=/tmp/tamer-demo npm run lab -- --only readme-tour → runs/readme-tour/shots를 assets/tour-*.png로",
+    data: "owner", offline: true, mode: "direct", folders: ["my-app"],
+    env: { CVIM_DESKTOP_AUTOSTART: "1", CVIM_DESKTOP_AGENT_CMD: (box) => path.join(box.dir, "fakebin", "claude-tour") },
+    // a stand-in Claude per shell: its conversation's title line and a status line (model · ctx · 5h · 7d)
+    files: { "fakebin/claude-tour": "#!/bin/sh\ncase \"$CVIM_TAB_ID\" in *~s2) n=2; t2='테스트 정리';; *) n=1; t2='로그인 오류 고치기';; esac\nt=\"$PWD/../conv-$n.jsonl\"\nprintf '{\"type\":\"ai-title\",\"aiTitle\":\"%s\",\"sessionId\":\"s%s\"}\\n' \"$t2\" $n > \"$t\"\nfor i in $(seq 90); do\n  now=$(date +%s)\n  printf '{\"transcript_path\":\"%s\",\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":12}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' \"$t\" $((now+3600)) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n" },
+    steps: [{ until: "tabs.0" }, { invoke: "settings_set", args: { patch: { theme: "dark" } } }, { resize: [1100, 640] }, { wait: 1500 }, { call: "closeDex" }, { key: "\\", code: "Backslash", mods: 4 }, { wait: 2500 },
+      { key: "g", mods: 4 }, { wait: 700 }, { shot: "tour-picker" }, { key: "Escape" }, { wait: 400 },
+      { key: "t", mods: 12 }, { wait: 3000 }, { call: "railOver" }, { wait: 700 }, { probe: "open" }, { shot: "tour-shells" }, { call: "railOut" }, { wait: 500 },
+      { call: "openSettings" }, { call: "settingsGeneral" }, { wait: 700 }, { shot: "tour-settings" }],
+    check: ({ probe, box }) => [
+      ok(probe.open?.railOpen === true && probe.open?.rail?.[0] === "로그인 오류 고치기" && probe.open?.rail?.[1] === "테스트 정리", `레일 ${JSON.stringify(probe.open?.rail)} 펼침 ${probe.open?.railOpen}`),
+      ...["tour-picker", "tour-shells", "tour-settings"].map((n) => ok(fs.existsSync(path.join(box.dir, "shots", `${n}.png`)), `${n}.png 없음`)),
+    ],
+  },
+  {
     id: "research-mew", tags: ["smoke", "poke", "data"], what: "환상 리서치(뮤) 1단계: 서로 다른 폴더 3곳에서 작업을 끝내면 다음 단계 — 폴더는 해시로만, 단계가 끝나면 지움 · 홈에 단계별 진행 (#86)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b", "c"],
     steps: [{ until: "tabs.2" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
