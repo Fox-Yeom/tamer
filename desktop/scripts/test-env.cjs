@@ -30,15 +30,22 @@ function contentTree() {
 }
 const BUILT_TREE = () => { try { return fs.readFileSync(path.join(WORK, "build-tree.txt"), "utf8").trim() || null; } catch { return null; } };
 
+// npm run electron:pack into another folder (out → `out`): the app at <out>/Tamer-darwin-arm64/Tamer.app
+function packTo(out) {
+  const app = path.join(out, "Tamer-darwin-arm64/Tamer.app");
+  const pack = require(path.join(ROOT, "package.json")).scripts["electron:pack"]
+    .replace("--out=out", `--out=${out}`)
+    .replace("node scripts/prune-locales.cjs out/Tamer-darwin-arm64/Tamer.app", `node scripts/prune-locales.cjs "${app}"`)
+    .replace("node scripts/fuses.cjs", `node scripts/fuses.cjs "${app}"`)
+    .replace(/node scripts\/sign\.cjs \S+/, `node scripts/sign.cjs "${app}"`);
+  execSync(pack, { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, PATH: `${ROOT}/node_modules/.bin:${process.env.PATH}` } });
+  return app;
+}
+
 function buildTestApp() {
   const tree = contentTree(); // before the build: an edit made while it builds isn't in it
-  const pack = require(path.join(ROOT, "package.json")).scripts["electron:pack"]
-    .replace("--out=out", `--out=${path.join(WORK, "build")}`)
-    .replace("node scripts/prune-locales.cjs out/Tamer-darwin-arm64/Tamer.app", `node scripts/prune-locales.cjs "${APP}"`)
-    .replace("node scripts/fuses.cjs", `node scripts/fuses.cjs "${APP}"`)
-    .replace(/node scripts\/sign\.cjs \S+/, `node scripts/sign.cjs "${APP}"`);
   fs.rmSync(path.join(WORK, "build-tree.txt"), { force: true });
-  execSync(pack, { cwd: ROOT, stdio: ["ignore", "ignore", "inherit"], env: { ...process.env, PATH: `${ROOT}/node_modules/.bin:${process.env.PATH}` } });
+  packTo(path.join(WORK, "build"));
   if (tree) fs.writeFileSync(path.join(WORK, "build-tree.txt"), tree + "\n");
   return APP;
 }
@@ -202,4 +209,4 @@ function launch({ env, mode = "direct", folders = [], lateMs = 300, until = "lab
   });
 }
 
-module.exports = { ROOT, DEV, WORK, APP, BIN, buildTestApp, contentTree, BUILT_TREE, ensureSprites, sandbox, seed, slowShell, realSnapshot, realChanged, userTamerRunning, launch, SEED_IDS };
+module.exports = { ROOT, DEV, WORK, APP, BIN, buildTestApp, packTo, contentTree, BUILT_TREE, ensureSprites, sandbox, seed, slowShell, realSnapshot, realChanged, userTamerRunning, launch, SEED_IDS };

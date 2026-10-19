@@ -6,7 +6,7 @@
 Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열고, 지금 무엇을 하는지·입력이 필요한지·끝났는지를 한눈에.</p>
 
 <p align="center">
-<img alt="beta" src="https://img.shields.io/badge/release-0.8.0--beta-orange">
+<a href="../../releases/latest"><img alt="release" src="https://img.shields.io/github/v/release/Fox-Yeom/tamer?include_prereleases&label=release&color=orange"></a>
 <img alt="macOS" src="https://img.shields.io/badge/macOS-13%2B-black">
 <img alt="chips" src="https://img.shields.io/badge/Apple%20Silicon%20%C2%B7%20Intel-supported-blue">
 </p>

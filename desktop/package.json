@@ -17,6 +17,7 @@
     "beta": "node scripts/build-beta.cjs",
     "release": "node scripts/release.cjs",
     "bump": "node scripts/bump.cjs",
+    "preview": "node scripts/preview.cjs",
     "ui:shots": "node scripts/ui-shots.cjs",
     "ui:impact": "node scripts/ui-impact.cjs",
     "firstrun": "node scripts/first-run.cjs",

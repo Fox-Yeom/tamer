@@ -1,5 +1,8 @@
-// Beta release on GitHub (public repo Fox-Yeom/tamer since 2026-10-19): uploads the DMGs of the current
-// version as a pre-release with that version's notes from docs/CHANGELOG.md, and prints the link.
+// Release on GitHub (public repo Fox-Yeom/tamer): uploads the DMGs of the current version as the
+// Latest release with that version's notes from docs/CHANGELOG.md, and prints the link.
+// Since 2026-10-19 (docs/VERSIONING.md): work lands on develop first, the user tries it with
+// npm run preview, and only what they confirmed is released — from main, fast-forwarded to develop.
+// Versions are 0.MINOR.PATCH (no -beta.N).
 //   npm run release              build (npm run beta) if the DMGs are missing, then publish
 //   npm run release -- --no-smoke  release without a smoke run on this commit (only when the user says so — a warning is printed)
 // Anyone can download it, no GitHub account needed — the notes are public too.
@@ -16,34 +19,25 @@ const gh = (args, opts = {}) => execFileSync("gh", args, { encoding: "utf8", cwd
 
 // the release tag goes on main as GitHub has it: local main must be pushed first
 const git = (args) => execFileSync("git", args, { encoding: "utf8", cwd: ROOT }).trim();
-git(["fetch", "-q", "origin", "main"]);
+if (!/^\d+\.\d+\.\d+$/.test(version)) { console.error(`${version}: not a release number (0.MINOR.PATCH) — npm run bump on develop first`); process.exit(1); }
+// released from main, which is develop as the user tried it (fast-forwarded), as GitHub has both
+if (git(["rev-parse", "--abbrev-ref", "HEAD"]) !== "main") { console.error("release from main: git checkout main && git merge --ff-only develop && git push"); process.exit(1); }
+git(["fetch", "-q", "origin", "main", "develop"]);
 if (git(["rev-parse", "HEAD"]) !== git(["rev-parse", "origin/main"])) {
   console.error("local main differs from origin/main — push first (git push), then npm run release");
   process.exit(1);
 }
+if (git(["rev-parse", "HEAD"]) !== git(["rev-parse", "origin/develop"])) {
+  console.error("main isn't develop: release what was tried on develop — git merge --ff-only develop (both pushed)");
+  process.exit(1);
+}
 
-// the test lab passed on exactly this commit (docs/TESTING.md): every smoke case, real data untouched
-const lab = (() => { try { return JSON.parse(fs.readFileSync(path.join(require("node:os").homedir(), ".cache/tamer-dev/lab-last.json"), "utf8")); } catch { return null; } })();
-// — or on exactly this commit's desktop/ content before it was committed (the run records the tree it built)
-const commitTree = git(["rev-parse", "HEAD:desktop"]);
-// npm run bump after the run changes only package.json's "version" line: that difference is allowed
-const onlyBump = (() => {
-  if (!lab?.tree || lab.tree === commitTree) return false;
-  try {
-    if (git(["diff", "--name-only", lab.tree, commitTree]) !== "package.json") return false;
-    // ":(top)": the trees are desktop/'s own, so the path is from their root — not from this folder
-    const lines = git(["diff", "-U0", lab.tree, commitTree, "--", ":(top)package.json"]).split("\n").filter((l) => /^[+-](?![+-])/.test(l));
-    return lines.length === 2 && lines.every((l) => /^[+-]\s*"version": "[^"]+",?$/.test(l));
-  } catch { return false; }
-})();
-const labOk = lab?.smoke && ((lab.head === git(["rev-parse", "HEAD"]) && !lab.dirty) || (lab.tree && lab.tree === commitTree) || onlyBump);
+// the test lab passed on exactly this commit (scripts/smoke-gate.cjs; the bump's version line is allowed)
+const { ok: labOk, why: labWhy, lab, commitTree } = require("./smoke-gate.cjs").smokePassed(git, { bump: true });
 // --no-smoke: the user chose to release without the smoke run (they checked it themselves) — said out loud, never silent
 const noSmoke = process.argv.includes("--no-smoke");
 if (!labOk && noSmoke) console.warn(`⚠ smoke skipped (--no-smoke, the user's choice) — the lab last passed on ${lab?.tree?.slice(0, 10) || "?"}, this commit is ${commitTree.slice(0, 10)}`);
-if (!labOk && !noSmoke) {
-  console.error(`the test lab hasn't passed on this commit's content — cd desktop && npm run lab -- --tag smoke (last: ${lab ? `${lab.head.slice(0, 7)}${lab.dirty ? " with uncommitted changes" : ""}, content ${lab.tree?.slice(0, 10) || "?"} vs commit ${commitTree.slice(0, 10)}, smoke ${lab.smoke ? "pass" : "not met"}` : "none"})`);
-  process.exit(1);
-}
+if (!labOk && !noSmoke) { console.error(labWhy); process.exit(1); }
 
 // the spec (docs/spec, rule 15): references intact, and every card this release's code changes hit
 // directly names one of its issues (or the version) in **이력** — a fix that changed a feature without
@@ -99,7 +93,7 @@ const notes = `## 받기
 
 ## 설치
 1. DMG를 열고 Tamer를 Applications로 끌어 놓기
-2. 처음 한 번: 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기" (또는 \`xattr -dr com.apple.quarantine /Applications/Tamer.app\`) — Apple 공증 전 베타라서
+2. 처음 한 번: 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기" (또는 \`xattr -dr com.apple.quarantine /Applications/Tamer.app\`) — Apple 공증을 받지 않은 앱이라서
 3. 사용법은 저장소 README, 문제 보고는 [Issues](https://github.com/${REPO}/issues)(공개 — 개인 정보는 빼고) 또는 앱 메뉴 "피드백 보내기…"
 
 ## 이번 버전
@@ -111,25 +105,25 @@ fs.writeFileSync(notesFile, notes);
 if (exists) {
   gh(["release", "edit", TAG, "-R", REPO, "--notes-file", notesFile]); // --notes-only: never the DMGs
 } else {
-  gh(["release", "create", TAG, ...dmgs, "-R", REPO, "--prerelease", "--title", `Tamer ${version}`, "--notes-file", notesFile, "--target", "main"]);
+  gh(["release", "create", TAG, ...dmgs, "-R", REPO, "--latest", "--title", `Tamer ${version}`, "--notes-file", notesFile, "--target", "main"]);
 }
 const url = gh(["release", "view", TAG, "-R", REPO, "--json", "url", "-q", ".url"]).trim();
 console.log(`\n${exists ? "updated" : "published"}: ${url}`);
 
-// after a new release (docs/VERSIONING.md — was done by hand each time): every issue its notes name
-// gets "v<version>에 반영" and the label `수정됨-확인 대기` (closing waits for the user), and this Mac's
-// docs say the version where they said "다음 버전" (test scenarios' headings, spec cards)
+// after a new release (docs/VERSIONING.md): every open issue its notes name gets "v<version>에 포함"
+// (npm run preview already labelled it `수정됨-확인 대기` when it reached develop; closing is by hand,
+// with the user's confirmation), and this Mac's docs say the version where they said "다음 버전"
+// (test scenarios' headings, spec cards)
 if (!exists) {
   const issues = [...new Set([...changes.matchAll(/#(\d+)/g)].map((m) => m[1]))];
   for (const n of issues) {
     try {
       if (gh(["issue", "view", n, "-R", REPO, "--json", "state", "-q", ".state"]).trim() !== "OPEN") { console.log(`issue #${n}: closed — left as is`); continue; }
-      gh(["issue", "comment", n, "-R", REPO, "--body", `v${version}에 반영`]);
-      gh(["issue", "edit", n, "-R", REPO, "--add-label", "수정됨-확인 대기"]);
-      console.log(`issue #${n}: v${version}에 반영 · 수정됨-확인 대기`);
+      gh(["issue", "comment", n, "-R", REPO, "--body", `v${version} 릴리즈에 포함`]);
+      console.log(`issue #${n}: v${version} 릴리즈에 포함`);
     } catch (e) { console.error(`issue #${n}: not updated (${String(e.message).split("\n")[0]}) — do it by hand`); }
   }
-  const short = version.replace(/^\d+\.\d+\.\d+-/, ""); // beta.35
+  const short = version.replace(/^\d+\.\d+\.\d+-/, ""); // 0.8.0 (beta.35 before 2026-10-19)
   const docs = path.join(ROOT, "..", "docs");
   const stamp = (file, edit) => { try { const s = fs.readFileSync(file, "utf8"), t = edit(s); if (t !== s) { fs.writeFileSync(file, t); console.log(`stamped ${path.relative(path.join(ROOT, ".."), file)}`); } } catch {} };
   stamp(path.join(docs, "TEST_SCENARIOS.md"), (s) => s.replace(/^(## .*)\(다음 버전\)$/gm, `$1(${version})`));
