@@ -70,20 +70,11 @@ d = ImageDraw.Draw(img)
 
 
 def from_logo():
-    from PIL import ImageEnhance, ImageFilter
+    from logo_clean import clean
     # the source is transparent around the shapes (its glow is only colour left in transparent
-    # pixels): keep its alpha and lay it on the white icon
-    src = Image.open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "logo-source.png")).convert("RGBA")
-    # the terminal window has a half-transparent smudge right of the prompt (source x 722-898,
-    # y 650-1120, nothing else drawn there but the window): its see-through or darker pixels get the
-    # window's own colour so the white doesn't show through
-    win = src.getpixel((700, 760))
-    px = src.load()
-    for y in range(650, 1121):
-        for x in range(722, 899):
-            r, g, b, a = px[x, y]
-            if b < 150 and (a < 250 or b < win[2] - 2):
-                px[x, y] = win
+    # pixels): keep its alpha and lay it on the white icon — its terminal window cleaned first (the
+    # smudge right of the prompt let the white show through)
+    src = clean()
     sym = src.crop(src.getchannel("A").point(lambda a: 255 if a > 8 else 0).getbbox())  # the symbol + wordmark
     sym = sym.crop((0, 0, sym.width, int(sym.height * 0.70)))  # the symbol above the "tamer" wordmark
     sym = sym.crop(sym.getchannel("A").point(lambda a: 255 if a > 8 else 0).getbbox())
