@@ -289,6 +289,14 @@ function makePane(tab, kind, opts = {}) {
     invoke("copy_text", { text: s }).then(() => toast(`복사됨 (${s.length}자)`));
     lastPick = { text: s, from: id, tab }; // M2: can be handed to another session from the rail
   });
+  // the title an agent gives its terminal (#99, TAB-20 rule 1): Claude Code names the conversation there
+  // at once (its log's title line comes later) — memory only, shown as the shell's name
+  term.onTitleChange((t) => {
+    const v = termTitle(t);
+    if (v === p.agentTitle) return;
+    p.agentTitle = v;
+    if (tab === active) requestAnimationFrame(() => renderRail(tab));
+  });
   term.textarea.addEventListener("focus", () => focusMark(tab, section));
   watchIme(id, term.textarea);
   // while composing Hangul, the terminal cursor stays at the start of the composing syllable;
@@ -803,9 +811,19 @@ async function closeSession(tab, sid) {
 // a shell's name (#99, TAB-20): the one the user gave it, else the title its agent gave the
 // conversation (while 설정 "세션 제목" is on), else none (the rail shows 셸 N)
 function sessTitle(tab, x) {
+  if (x.name) return x.name;
+  if (settingsNow?.titles === false) return null;
   // its own agent's state; an agent typed in that shell shows through the tab's state while it's in front
   const so = x.id === tab.sid && x.hostAgent ? tab.state : x.state;
-  return x.name || (settingsNow?.titles !== false ? so?.title : null) || null;
+  // then the title its agent gave the terminal — not a plain shell's (a prompt's folder)
+  return so?.title || (x.host && !x.hostAgent ? null : x.pane?.agentTitle) || null;
+}
+// a terminal title worth showing: the spinner / ✳ in front dropped; an agent's bare name, a shell's, a
+// path or user@host isn't a conversation's title
+function termTitle(t) {
+  const v = String(t || "").replace(/^[^\p{L}\p{N}]+/u, "").replace(/\s+/g, " ").trim().slice(0, 80);
+  if (!v || /^(claude( code)?|codex|gemini( cli)?|opencode|aider|-?(zsh|bash|fish|sh))$/i.test(v) || /^[~/]|[\w.-]+@[\w.-]+:/.test(v)) return null;
+  return v;
 }
 function renderRail(tab) {
   const rail = $(".rail", tab.view);
@@ -877,7 +895,16 @@ function saveRail() {}
 // the rail opens over the agent's screen while the pointer rests on it (#99, TAB-13 rule 4): 0.3 s in,
 // 0.2 s out — over it, so the terminals keep their size (the agents don't redraw); not while dragging
 let railT = null;
-const railOpen = (rail, on) => { clearTimeout(railT); railT = setTimeout(() => { if (on || !rail.querySelector(".nm-edit")) rail.classList.toggle("open", on); }, on ? 300 : 200); };
+// closing: it shrinks back with the rows as they were (.closing), then the narrow rail again
+const railOpen = (rail, on) => {
+  clearTimeout(railT);
+  railT = setTimeout(() => {
+    if (on) { rail.classList.remove("closing"); rail.classList.add("open"); return; }
+    if (rail.querySelector(".nm-edit") || !rail.classList.contains("open")) return;
+    rail.classList.replace("open", "closing");
+    railT = setTimeout(() => rail.classList.remove("closing"), 160);
+  }, on ? 300 : 200);
+};
 $("#views").addEventListener("mouseover", (e) => {
   const rail = e.target.closest?.(".rail");
   if (!rail || rail.contains(e.relatedTarget) || e.buttons) return;

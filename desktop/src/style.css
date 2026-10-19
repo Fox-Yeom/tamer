@@ -287,7 +287,7 @@ body.no-tab-glow #tabs .tab.working::before { display: none; } /* 설정: 탭 �
 .agent-title { display: flex; align-items: center; gap: 6px; }
 .sess-add { border: 0; background: transparent; color: var(--dim); font: inherit; font-size: 11px; cursor: pointer; padding: 0 4px; border-radius: 4px; }
 .sess-add:hover { color: var(--fg); background: var(--raised-hi); }
-.rail { order: -1; position: relative; width: 46px; display: flex; flex-direction: column; gap: 4px; padding: 6px 4px; background: var(--sunken); border-right: 1px solid var(--line); overflow-y: auto; transition: width .12s ease-out; }
+.rail { order: -1; position: relative; width: 46px; display: flex; flex-direction: column; gap: 4px; padding: 6px 4px; background: var(--sunken); border-right: 1px solid var(--line); overflow-y: auto; transition: width .15s ease-out; }
 .rail[hidden] { display: none; }
 .grid.multi { grid-template-columns: 46px 1fr var(--side, 40%); }
 /* the right column folded (#97): the agent takes the width; the overlay shows the partner meanwhile */
@@ -309,16 +309,18 @@ body.side-closed .side { display: none; }
 .sess-new { width: 38px; height: 28px; border: 1px dashed var(--border); border-radius: 8px; background: transparent; color: var(--dim); cursor: pointer; }
 .sess-new:hover { color: var(--fg); border-color: var(--accent); }
 /* the rail opened by resting the pointer on it (#99, TAB-13 rule 4): wider than its 46px column, over
-   the agent's screen (the column keeps its width — the terminals aren't resized) */
+   the agent's screen (the column keeps its width — the terminals aren't resized); it grows and, when the
+   pointer leaves, shrinks back with its rows as they were (.closing) */
 .sess .nm { display: none; }
-.rail.open { width: 220px; z-index: 30; box-shadow: 6px 0 18px rgba(0,0,0,.35); }
-.rail.open .sess { flex-direction: row; justify-content: flex-start; gap: 8px; width: 100%; padding: 6px 8px; text-align: left; }
-.rail.open .sess .n { display: none; }
-.rail.open .sess .nm { display: flex; flex-direction: column; min-width: 0; }
-.rail.open .sess .nm b { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rail.open .sess .nm small { font-size: 10px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rail.open .sess .dot { right: 8px; top: 8px; }
-.rail.open .sess-new { width: 100%; }
+.rail.open { width: 220px; z-index: 30; box-shadow: 6px 0 18px rgba(0,0,0,.35); overflow-x: hidden; }
+.rail.closing { z-index: 30; overflow-x: hidden; }
+.rail:is(.open, .closing) .sess { box-sizing: border-box; flex-direction: row; justify-content: flex-start; gap: 8px; width: 212px; padding: 6px 8px; text-align: left; }
+.rail:is(.open, .closing) .sess .n { display: none; }
+.rail:is(.open, .closing) .sess .nm { display: flex; flex-direction: column; min-width: 0; }
+.rail:is(.open, .closing) .sess .nm b { font-size: 12px; font-weight: 600; color: var(--fg); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail:is(.open, .closing) .sess .nm small { font-size: 10px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rail:is(.open, .closing) .sess .dot { right: 8px; top: 8px; }
+.rail:is(.open, .closing) .sess-new { box-sizing: border-box; width: 212px; }
 .rail .nm-edit { position: absolute; left: 34px; right: 6px; height: 26px; margin-top: 6px; padding: 0 6px; border: 1px solid var(--accent); border-radius: 6px;
   background: var(--raised); color: var(--fg); font: inherit; font-size: 12px; z-index: 1; }
 .title .sess-title { margin-left: 4px; font-weight: 400; color: var(--dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

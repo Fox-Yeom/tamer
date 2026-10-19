@@ -407,11 +407,11 @@ module.exports = [
     },
   },
   {
-    id: "session-titles", tags: ["smoke", "agent"], what: "셸 이름·세션 제목: ⌘G Claude가 기록에 남긴 자동 제목이 칸 제목줄에, 셸이 둘이면 레일에 마우스를 올려 펼친 목록에 · 펼쳐도 터미널 폭은 그대로 · 더블클릭으로 이름 바꾸기(저장) · 설정 '세션 제목'을 끄면 에이전트 제목은 사라지고 직접 붙인 이름은 남음 · 대화 줄은 해석 안 함 (TAB-13 규칙 4, TAB-20, #99)",
+    id: "session-titles", tags: ["smoke", "agent"], what: "셸 이름·세션 제목: ⌘G Claude가 기록에 남긴 자동 제목이 칸 제목줄에, 기록에 아직 없으면 터미널 제목(✳·스피너 떼고, 'Claude Code'는 무시), 셸이 둘이면 레일에 마우스를 올려 펼친 목록에 · 펼쳐도 터미널 폭은 그대로 · 더블클릭으로 이름 바꾸기(저장) · 설정 '세션 제목'을 끄면 에이전트 제목은 사라지고 직접 붙인 이름은 남음 · 대화 줄은 해석 안 함 (TAB-13 규칙 4, TAB-20, #99)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     env: { CVIM_DESKTOP_AUTOSTART: "1", CVIM_DESKTOP_AGENT_CMD: (box) => path.join(box.dir, "fakebin", "claude-titled") },
     // a stand-in Claude: a conversation log with one private line and its own title, named by its status line
-    files: { "fakebin/claude-titled": "#!/bin/sh\n# each shell its own conversation: the second shell's (…~s2) is another one\ncase \"$CVIM_TAB_ID\" in *~s2) n=2; title='테스트 정리';; *) n=1; title='로그인 오류 고치기';; esac\nt=\"$PWD/../conv-$n.jsonl\"\nprintf '{\"type\":\"user\",\"message\":{\"content\":\"PRIVATE-PROMPT\"}}\\n{\"type\":\"ai-title\",\"aiTitle\":\"%s\",\"sessionId\":\"s1\"}\\n' \"$title\" > \"$t\"\nfor i in $(seq 60); do\n  printf '{\"transcript_path\":\"%s\",\"model\":{\"display_name\":\"Opus 5.5\"}}' \"$t\" | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n" },
+    files: { "fakebin/claude-titled": "#!/bin/sh\n# each shell its own conversation: the second shell's (…~s2) is another one\n# shell 1: its log has a title line · shell 2: like Claude Code at the start — a terminal title only (the bare name first)\ncase \"$CVIM_TAB_ID\" in *~s2) n=2;; *) n=1;; esac\nt=\"$PWD/../conv-$n.jsonl\"\nprintf '{\"type\":\"user\",\"message\":{\"content\":\"PRIVATE-PROMPT\"}}\\n' > \"$t\"\nif [ $n = 1 ]; then printf '{\"type\":\"ai-title\",\"aiTitle\":\"로그인 오류 고치기\",\"sessionId\":\"s1\"}\\n' >> \"$t\"; else printf '\\033]0;✳ Claude Code\\007'; sleep 1; printf '\\033]0;⠂ 테스트 정리\\007'; fi\nfor i in $(seq 60); do\n  printf '{\"transcript_path\":\"%s\",\"model\":{\"display_name\":\"Opus 5.5\"}}' \"$t\" | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n" },
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 2500 }, { probe: "one" },
       { key: "t", mods: 12 }, { wait: 2500 }, { probe: "two" },
       { call: "railOver" }, { wait: 600 }, { probe: "open" },
@@ -422,7 +422,7 @@ module.exports = [
       let sess = null; try { sess = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "desktop_session.json"), "utf8")); } catch {}
       return [
         ok(/로그인 오류 고치기/.test(probe.one?.agentTitle || ""), `셸 하나: 칸 제목줄 ${probe.one?.agentTitle}`),
-        ok(probe.two?.rail?.[0] === "로그인 오류 고치기" && probe.two?.rail?.[1] === "테스트 정리" && probe.two?.railOpen === false, `셸 둘(각자 제목): 레일 ${JSON.stringify(probe.two?.rail)} · 접힘 ${probe.two?.railOpen === false}`),
+        ok(probe.two?.rail?.[0] === "로그인 오류 고치기" && probe.two?.rail?.[1] === "테스트 정리" && probe.two?.railOpen === false, `셸 둘(기록 제목 · 터미널 제목): 레일 ${JSON.stringify(probe.two?.rail)} · 접힘 ${probe.two?.railOpen === false}`),
         ok(probe.open?.railOpen === true && probe.open?.paneW === probe.two?.paneW, `마우스를 올리면 펼침 ${probe.open?.railOpen} · 에이전트 칸 폭 그대로 ${probe.two?.paneW} → ${probe.open?.paneW}`),
         ok(probe.named?.rail?.[1] === "api work" && sess?.names && Object.values(sess.names)[0]?.[1] === "api work", `이름 바꾸기 ${JSON.stringify(probe.named?.rail)} · 저장 ${JSON.stringify(sess?.names)}`),
         ok(probe.off?.rail?.[0] === "셸 1" && probe.off?.rail?.[1] === "api work", `세션 제목 끔: ${JSON.stringify(probe.off?.rail)} (에이전트 제목 없음, 직접 붙인 이름은 남음)`),
