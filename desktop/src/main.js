@@ -800,19 +800,34 @@ async function closeSession(tab, sid) {
 }
 
 // the rail: one button per session (agent icon, number, state dot), ✕ (not the first), ＋
+// a shell's name (#99, TAB-20): the one the user gave it, else the title its agent gave the
+// conversation (while 설정 "세션 제목" is on), else none (the rail shows 셸 N)
+function sessTitle(tab, x) {
+  // its own agent's state; an agent typed in that shell shows through the tab's state while it's in front
+  const so = x.id === tab.sid && x.hostAgent ? tab.state : x.state;
+  return x.name || (settingsNow?.titles !== false ? so?.title : null) || null;
+}
 function renderRail(tab) {
   const rail = $(".rail", tab.view);
   const multi = tab.sessions?.length > 1;
   rail.hidden = !multi;
   tab.view.classList.toggle("multi", !!multi);
-  if (!multi) { $(".agent-name", tab.view).innerHTML = titleHTML(paneTitle(tab, tab.agent), tab.hostAgent && curSession(tab)?.hostWhere); return; }
+  if (!multi) {
+    const t = tab.sessions?.[0] && sessTitle(tab, tab.sessions[0]);
+    $(".agent-name", tab.view).innerHTML = titleHTML(paneTitle(tab, tab.agent), tab.hostAgent && curSession(tab)?.hostWhere) + (t ? ` <span class="sess-title">· ${esc(t)}</span>` : "");
+    return;
+  }
+  if (rail.querySelector(".nm-edit")) return; // a name being typed: not redrawn under it
   rail.innerHTML = tab.sessions.map((x) => {
     const so = x.id === tab.sid ? tab.state : x.state, st = so?.state, tm = timing(so, { stallMs: info.stallMs });
     const dot = st === "waiting" || st === "error" ? "bad" : tm.stall ? "stall" : WORKING.includes(st) ? "work" : st === "done" ? "ok" : "idle";
     const no = sessNo(tab, x);
     const when = tm.stall ? ` · ⏳ 변화 없음 ${tm.stall}` : tm.run ? ` · ${tm.run}` : tm.wait ? ` · ${tm.wait}째` : tm.took ? ` · ${tm.took} 걸림` : "";
-    return `<button class="sess${x.id === tab.sid ? " cur" : ""}" data-sid="${esc(x.id)}" title="셸 ${no} (⌃⌘${no}) — ${esc(x.host && !x.hostAgent ? "셸" : x.agent?.label || "")} · ${esc(DOING[st] || "대기")}${esc(when)}">`
+    const who = x.host && !x.hostAgent ? "셸" : x.agent?.label || "", t = sessTitle(tab, x);
+    return `<button class="sess${x.id === tab.sid ? " cur" : ""}" data-sid="${esc(x.id)}" title="셸 ${no} (⌃⌘${no})${t ? ` · ${esc(t)}` : ""} — ${esc(who)} · ${esc(DOING[st] || "대기")}${esc(when)}">`
       + `<span class="ic">${esc(x.host && !x.hostAgent ? "🐚" : x.agent?.icon || "▸")}</span><span class="n">${no}</span><i class="dot ${dot}"></i>`
+      // shown when the rail opens (#99): the name, then who · what · how long
+      + `<span class="nm"><b>${esc(t || `셸 ${no}`)}</b><small>${esc(`${who} · ${DOING[st] || "대기"}${when}`)}</small></span>`
       + `${x.id === tab.id ? "" : '<span class="x" title="셸 닫기">✕</span>'}</button>`;
   }).join("") + '<button class="sess-new" title="새 셸 (⌘⇧T)">＋</button>';
 }
@@ -851,6 +866,7 @@ $("#views").addEventListener("contextmenu", (e) => {
   }
   items.push(["✍", "작성 창으로 이 셸에 쓰기", () => { switchSession(tab, sess.id); composerToggle(tab); }]);
   items.push(["↪", "이 셸로 이동", () => switchSession(tab, sess.id)]);
+  items.push(["✏️", "이름 바꾸기", () => renameSession(tab, sess)]); // #99
   if (sess.id !== tab.id) items.push(["✕", "셸 닫기", () => closeSession(tab, sess.id)]);
   showMenu(items, e.clientX, e.clientY);
 }, true);
@@ -858,11 +874,60 @@ $("#views").addEventListener("contextmenu", (e) => {
 // sessions survive a restore (their agents start fresh): main saves them; nothing to do here
 function saveRail() {}
 
+// the rail opens over the agent's screen while the pointer rests on it (#99, TAB-13 rule 4): 0.3 s in,
+// 0.2 s out — over it, so the terminals keep their size (the agents don't redraw); not while dragging
+let railT = null;
+const railOpen = (rail, on) => { clearTimeout(railT); railT = setTimeout(() => { if (on || !rail.querySelector(".nm-edit")) rail.classList.toggle("open", on); }, on ? 300 : 200); };
+$("#views").addEventListener("mouseover", (e) => {
+  const rail = e.target.closest?.(".rail");
+  if (!rail || rail.contains(e.relatedTarget) || e.buttons) return;
+  railOpen(rail, true);
+});
+$("#views").addEventListener("mouseout", (e) => {
+  const rail = e.target.closest?.(".rail");
+  if (!rail || rail.contains(e.relatedTarget)) return;
+  railOpen(rail, false);
+});
+// 이름 바꾸기 (#99, TAB-20): typed over the shell's row in the open rail — Enter keeps it, Esc leaves it,
+// empty = the agent's title again
+function renameSession(tab, sess) {
+  const rail = $(".rail", tab.view), b = $(`.rail .sess[data-sid="${CSS.escape(sess.id)}"]`, tab.view);
+  if (!rail || !b || rail.querySelector(".nm-edit")) return;
+  clearTimeout(railT);
+  rail.classList.add("open");
+  const input = document.createElement("input");
+  input.className = "nm-edit";
+  input.maxLength = 40;
+  input.value = sess.name || "";
+  input.placeholder = sessTitle(tab, { ...sess, name: null }) || `셸 ${sessNo(tab, sess)}`;
+  input.style.top = `${b.offsetTop}px`;
+  rail.append(input);
+  input.focus();
+  let done = false;
+  const finish = async (keep) => {
+    if (done) return;
+    done = true;
+    input.remove();
+    if (keep) sess.name = (await invoke("session_name", { session: sess.id, name: input.value }).catch(() => sess.name)) || undefined;
+    renderRail(tab);
+    if (!rail.matches(":hover")) railOpen(rail, false);
+  };
+  input.addEventListener("keydown", (e) => {
+    e.stopPropagation();
+    if (e.key === "Enter" && !e.isComposing) { e.preventDefault(); finish(true); }
+    else if (e.key === "Escape") { e.preventDefault(); finish(false); }
+  });
+  input.addEventListener("blur", () => finish(true));
+}
+
+
 $("#views").addEventListener("click", (e) => {
   if (e.target.closest(".sess-add, .sess-new")) return newSession(active);
   const b = e.target.closest(".rail .sess");
   if (!b) return;
   if (e.target.closest(".x")) return closeSession(active, b.dataset.sid);
+  // a double-click in the open rail: rename (#99) — by the click count, as the first click redraws the rail
+  if (e.detail >= 2 && b.closest(".rail.open")) { const sess = active.sessions.find((x) => x.id === b.dataset.sid); if (sess) return renameSession(active, sess); }
   switchSession(active, b.dataset.sid);
 });
 
@@ -1390,6 +1455,7 @@ function applySettings(s) {
   applyTheme();
   document.body.classList.toggle("no-tab-glow", !s.tabGlow);
   sideShow(s.side !== false);
+  if (typeof renderRail === "function") for (const t of tabs) renderRail(t); // 세션 제목 on / off (#99)
   for (const el of document.querySelectorAll("#settings [data-set]")) {
     const v = getPath(s, el.dataset.set);
     if (el.type === "checkbox") el.checked = !!v; else el.value = v;
@@ -3423,6 +3489,9 @@ function labState() {
     side: parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--side")) || null, // #58 the right column's % (null = default)
     sideW: active ? Math.round($(".side", active.view)?.getBoundingClientRect().width || 0) : null,
     sideBtn: $("#side-toggle")?.textContent || null, width: innerWidth, // #97
+    rail: active ? [...$(".rail", active.view).querySelectorAll(".sess .nm b")].map((b) => b.textContent) : null, // #99
+    railOpen: active ? $(".rail", active.view).classList.contains("open") : null,
+    agentTitle: active ? $(".agent-name", active.view)?.textContent || null : null,
     setPage: settingsOpen() ? $("#settings .set-page:not([hidden])")?.dataset.page || null : null, // #101
     focusPane: document.activeElement?.closest?.(".pane-shell") ? "shell" : document.activeElement?.closest?.(".pane-agent") ? "agent" : null,
     paneW: active ? Math.round($(".pane-agent", active.view)?.getBoundingClientRect().width || 0) : null,
@@ -3487,7 +3556,7 @@ function fakeUsage(tab) {
     usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
   renderBar(tab); renderTab(tab); // the tab too: else the 15 s redraw (STA-20) decides when it changes
 }
-const LAB_CALLS = { openSettings: () => openSettings(), settingsOverlay: () => settingsPage("overlay"), settingsGeneral: () => settingsPage("general"), home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
+const LAB_CALLS = { railOver: () => $(".rail", active?.view)?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })), railOut: () => $(".rail", active?.view)?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })), openSettings: () => openSettings(), settingsOverlay: () => settingsPage("overlay"), settingsGeneral: () => settingsPage("general"), home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
@@ -3752,6 +3821,11 @@ async function uiScenes(set) {
       await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
       await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" });
       await invoke("overlay_show_test", { on: false });
+      // the shell rail opened by the pointer (#99): one agent's own title, one shell named by hand — last, as a
+      // second shell changes what the tab shows
+      await invoke("win_resize_test", { w: 1100, h: 600 });
+      { await newSession(tab); await wait(800); const [s1, s2] = tab.sessions; s1.state = { ...(s1.state || {}), title: "로그인 오류 고치기" }; s2.name = "api 작업";
+        renderRail(tab); $(".rail", tab.view).classList.add("open"); await wait(300); await shot("rail-open"); }
     }
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("done");
@@ -4405,6 +4479,9 @@ async function main() {
     const tab = await openFolder(dir, { resume: !!info.restored?.tabs.includes(dir) && !info.restored.shell?.includes(dir) });
     // more sessions in that folder last time (M1): started fresh
     for (const key of info.restored?.sessions?.[dir] || []) await newSession(tab, key); // null: was a shell
+    // the names given to them (#99): by their place in the folder
+    const names = info.restored?.names?.[dir];
+    if (tab && names) { tab.sessions.forEach((x, i) => { if (names[i]) { x.name = names[i]; invoke("session_name", { session: x.id, name: names[i] }); } }); renderRail(tab); }
     if (tab?.sessions?.length > 1) switchSession(tab, tab.id, { quiet: true });
   }
   if (info.front) { const t = tabs.find((x) => x.cwd === info.front); if (t && t !== active) selectTab(t); } // a dropped folder wins over last time's front tab

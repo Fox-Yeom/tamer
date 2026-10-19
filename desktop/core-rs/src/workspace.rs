@@ -4,9 +4,11 @@ use crate::claude::{self, ClaudeLog};
 use crate::codex::{self, Codex};
 use crate::state::{self, Event, Kind, State, Usage};
 use crate::tail;
+use crate::title::{self, ClaudeTitle, CodexTitle};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 pub struct Workspace {
@@ -36,7 +38,13 @@ pub struct Workspace {
     /// hooks: an event has arrived since the agent started (none for a while = fall back to output)
     any_event: bool,
     started: Instant,
+    /// the conversation's title the agent wrote (#99, TAB-20) — memory only, read while TITLES is on
+    claude_title: Option<ClaudeTitle>,
+    codex_title: Option<CodexTitle>,
 }
+
+/// 설정 "세션 제목" (#99): off = agents' titles are neither read nor shown. Off until the app says
+pub static TITLES: AtomicBool = AtomicBool::new(false);
 
 /// Output for this long, then quiet: an agent without events finished something (EXP, no wild).
 pub const GUESS_DONE_AFTER: Duration = Duration::from_secs(15);
@@ -69,7 +77,7 @@ impl Workspace {
             id: id.into(), kind, cwd: cwd.into(), tabs: tabs.into(), st: State::default(),
             offset: 0, status: None, status_mtime: None, usage: None, codex: None, claude: None,
             hits: VecDeque::new(), output_seen: false, last_output: None, esc_at: None, last_sent: String::new(),
-            busy_since: None, any_event: false, started: Instant::now(), log_id: None,
+            busy_since: None, any_event: false, started: Instant::now(), log_id: None, claude_title: None, codex_title: None,
         };
         ws.restart(kind);
         ws
@@ -99,6 +107,7 @@ impl Workspace {
         self.started = Instant::now();
         self.codex = (kind == Kind::CodexLog).then(|| Codex::new(&self.cwd));
         self.claude = (kind == Kind::ClaudeLog).then(|| ClaudeLog::new(&self.cwd));
+        self.drop_titles();
         self.last_sent.clear();
     }
 
@@ -135,12 +144,52 @@ impl Workspace {
         let log: Vec<&Event> = self.st.log.iter().rev().take(12).rev().collect();
         json!({
             "state": self.st.state, "tool": self.st.tool, "detail": self.st.detail,
-            "usage": self.usage(), "log": log,
+            "usage": self.usage(), "log": log, "title": self.title(),
             // unattended runs (STA-20): wall-clock ms; watch = a stall can be suspected (the source
             // reports events — not an agent followed by its output)
             "turn_at": self.st.turn_ms, "state_at": self.st.state_ms, "event_at": self.st.event_ms, "took": self.st.took_ms,
             "watch": !matches!(self.kind, Kind::Activity) && !(matches!(self.kind, Kind::Hooks) && !self.any_event && Instant::now().saturating_duration_since(self.started) >= HOOKS_GRACE),
         })
+    }
+
+    pub fn drop_titles(&mut self) {
+        self.claude_title = None;
+        self.codex_title = None;
+    }
+
+    /// The agent's title for this conversation (#99), while 세션 제목 is on.
+    pub fn title(&self) -> Option<String> {
+        if !TITLES.load(Ordering::Relaxed) {
+            return None;
+        }
+        self.claude_title.as_ref().and_then(ClaudeTitle::title).or_else(|| self.codex_title.as_ref().and_then(CodexTitle::title))
+    }
+
+    /// Follows the file that holds this conversation's title: ⌘G Claude's transcript (its status
+    /// line says which), a shell Claude's transcript, a Codex session's id in Codex's index.
+    fn poll_title(&mut self) -> bool {
+        if !TITLES.load(Ordering::Relaxed) {
+            return false;
+        }
+        let transcript = match self.kind {
+            Kind::Hooks => self.status.as_ref().and_then(|s| s["transcript_path"].as_str()).map(PathBuf::from),
+            Kind::ClaudeLog => self.claude.as_ref().and_then(|c| c.file.clone()),
+            _ => None,
+        };
+        if let Some(p) = transcript {
+            if self.claude_title.as_ref().is_none_or(|t| t.path != p) {
+                self.claude_title = Some(ClaudeTitle::new(&p));
+            }
+        }
+        let id = self.codex.as_ref().and_then(|c| c.file.as_deref()).and_then(title::codex_id);
+        if let Some(id) = id {
+            if self.codex_title.as_ref().is_none_or(|t| t.id != id) {
+                self.codex_title = Some(CodexTitle::new(&codex::home(), &id));
+            }
+        }
+        let a = self.claude_title.as_mut().is_some_and(ClaudeTitle::poll);
+        let b = self.codex_title.as_mut().is_some_and(CodexTitle::poll);
+        a || b
     }
 
     fn apply(&mut self, ev: Event, now: Instant, out: &mut Polled) {
@@ -253,6 +302,7 @@ impl Workspace {
             }
             Kind::Activity => self.by_output(now, &mut out),
         }
+        out.changed |= self.poll_title();
         let prev = self.st.state;
         if self.st.tick(now) {
             out.transitions.push((prev, self.st.state));
@@ -313,6 +363,25 @@ mod tests {
         let (tr, guessed) = run_output(&mut ws, &mut claimed, Instant::now() + HOOKS_GRACE + Duration::from_secs(1), 20);
         assert_eq!(tr, vec![("idle", "thinking"), ("thinking", "done")]);
         assert!(guessed);
+    }
+
+    #[test]
+    fn title_hooks_follows_the_status_lines_transcript_only_while_on() {
+        let tabs = tempfile::tempdir().unwrap();
+        let tr = tabs.path().join("conv.jsonl");
+        std::fs::write(&tr, "{\"type\":\"user\",\"message\":{\"content\":\"hi\"}}\n{\"type\":\"ai-title\",\"aiTitle\":\"Fix login\"}\n").unwrap();
+        let mut ws = Workspace::new("t9", Kind::Hooks, Path::new("/tmp"), tabs.path());
+        let mut claimed = HashMap::new();
+        std::fs::write(tabs.path().join("t9.status.json"), format!("{{\"transcript_path\":{:?}}}", tr.to_str().unwrap())).unwrap();
+        TITLES.store(true, Ordering::Relaxed);
+        ws.poll(&mut claimed, Instant::now());
+        assert_eq!(ws.payload()["title"], "Fix login");
+        // 세션 제목 off: nothing shown (and the main loop drops what was read)
+        TITLES.store(false, Ordering::Relaxed);
+        ws.drop_titles();
+        ws.poll(&mut claimed, Instant::now());
+        assert!(ws.payload()["title"].is_null());
+        TITLES.store(true, Ordering::Relaxed);
     }
 
     #[test]

@@ -18,7 +18,7 @@
 
 use cvim_core::policy;
 use cvim_core::state::Kind;
-use cvim_core::workspace::Workspace;
+use cvim_core::workspace::{self, Workspace};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
@@ -60,6 +60,17 @@ impl Core {
                 for k in ["CODEX_HOME", "CLAUDE_CONFIG_DIR"] {
                     if let Some(v) = p[k].as_str().filter(|v| !v.is_empty()) {
                         std::env::set_var(k, v);
+                    }
+                }
+                Ok(Value::Null)
+            }
+            // 설정 "세션 제목" (#99): off = no agent's title is read or shown any more
+            "titles" => {
+                let on = p["on"].as_bool().unwrap_or(false);
+                workspace::TITLES.store(on, std::sync::atomic::Ordering::Relaxed);
+                if !on {
+                    for ws in self.workspaces.values_mut() {
+                        ws.drop_titles();
                     }
                 }
                 Ok(Value::Null)

@@ -7,4 +7,5 @@ pub mod codex;
 pub mod policy;
 pub mod state;
 pub mod tail;
+pub mod title;
 pub mod workspace;

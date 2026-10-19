@@ -579,8 +579,13 @@ function saveSession() {
   const extra = Object.fromEntries([...workspaces.values()].filter((w) => w.sessions?.length > 1).map((w) => [w.cwd, w.sessions.slice(1).map((x) => (x.running ? x.agent : null))]));
   // folders whose agent wasn't running: reopened as a shell (S2 shell first)
   const shell = [...workspaces.values()].filter((w) => !w.running).map((w) => w.cwd);
-  writeSession({ tabs, active, sessions: extra, shell });
+  // names the user gave the shells (#99, TAB-20 rule 3), by their place in the folder
+  const names = Object.fromEntries([...workspaces.values()].filter((w) => w.sessions?.some((x) => x.name)).map((w) => [w.cwd, w.sessions.map((x) => x.name || null)]));
+  writeSession({ tabs, active, sessions: extra, shell, ...(Object.keys(names).length ? { names } : {}) });
 }
+// a shell's name, as typed (#99): one line, 40 characters at most; empty = none (the agent's title again)
+const sessionName = (v) => String(v ?? "").replace(/\s+/g, " ").trim().slice(0, 40);
+function titlesToCore() { core?.request("titles", { on: settings.titles }).catch((e) => logLine(`core titles error ${e}`)); }
 
 // a folder handed to the app (Dock icon drop, Finder "Open With", Dock recent item)
 function requestOpen(dir) {
@@ -855,7 +860,7 @@ const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
 // which is how the app behaved before (everything on)
 const SETTINGS = path.join(CACHE, "ui", "settings.json");
 // card background: 0 % by default (#100) — only the Pokémon on the desktop (minimal mode, auto ≤ 30 %); a settings.json that has a value keeps it
-const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away" }, tabGlow: true, theme: "system", side: true,
+const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away" }, tabGlow: true, theme: "system", side: true, titles: true,
   menubar: { on: true, text: "waiting" } }; // 메뉴바 (STA-19, #64)
 const MENUBAR_TEXT = ["waiting", "limit", "none"];
 const MINIMAL = ["auto", "always", "never"];
@@ -870,6 +875,7 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
       shadow: b(o.shadow, d.shadow), minimal: MINIMAL.includes(o.minimal) ? o.minimal : d.minimal, when: WHEN.includes(o.when) ? o.when : d.when }, // #65 #63 #98
     tabGlow: b(raw?.tabGlow, SETTINGS_DEFAULT.tabGlow),
     side: b(raw?.side, SETTINGS_DEFAULT.side), // the right column shown (#97) — folded, the overlay shows with Tamer in front too
+    titles: b(raw?.titles, SETTINGS_DEFAULT.titles), // 세션 제목 (#99): agents' conversation titles read and shown
     menubar: { on: b(raw?.menubar?.on, SETTINGS_DEFAULT.menubar.on), text: MENUBAR_TEXT.includes(raw?.menubar?.text) ? raw.menubar.text : SETTINGS_DEFAULT.menubar.text },
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
   };
@@ -885,6 +891,7 @@ function setSettings(patch) {
   broadcast("settings", settings);
   overlaySync();
   overlayUpdate();
+  if (patch && "titles" in patch) titlesToCore();
   appMenu();
   trayUpdate();
   return settings;
@@ -1189,7 +1196,7 @@ const commands = {
       home: (TEST && process.env.CVIM_DESKTOP_TEST_HOME) || HOME, shell: agents.userShell(), recent: recentDirs(), open,
       // in front: the folder handed in (dropped on the app to launch it), else last time's front tab
       front: handed.at(-1) || (restored.length ? sess.active : null),
-      restored: restored.length ? { tabs: restored, active: sess.active, sessions: sess.sessions || {}, shell: sess.shell || [] } : null,
+      restored: restored.length ? { tabs: restored, active: sess.active, sessions: sess.sessions || {}, shell: sess.shell || [], names: sess.names || {} } : null,
       // a new folder opens as a shell; the agent starts with ⌘G (or typed in the shell). Tests and
       // CVIM_DESKTOP_AUTOSTART=1: the agent starts right away like before
       autostart: !!process.env.CVIM_DESKTOP_AUTOSTART,
@@ -1279,6 +1286,7 @@ const commands = {
   // M1 sessions: one more agent in this folder / close one (not the first: it closes with the tab)
   session_new({ ws, agent }) { return newSession(wsOf(ws), agent ? String(agent) : null); },
   session_close({ ws, session }) { const w = wsOf(ws); closeSession(w, sessOf(w, session)); },
+  session_name({ session, name }) { const x = sessions.get(session); if (!x) return null; x.name = sessionName(name) || undefined; saveSession(); return x.name || null; }, // #99
   // files / folders dropped on a pane: their paths typed into the pane (shell-escaped like iTerm;
   // Claude turns image paths into attachments). Folders dropped on the tab bar / start screen
   // open as tabs instead (UI → workspace_open).
@@ -1868,6 +1876,7 @@ app.whenReady().then(() => {
   // the core starts at once (tabs and shells don't wait for the shell environment, #35); the
   // agents' log folders follow when the environment has been read
   core = new RustCore({ onEvent: onCoreEvent, log: logLine });
+  titlesToCore(); // 세션 제목 (#99): the core reads no title until told it's on
   const envT0 = since();
   ready = agents.prepareEnv().then((env) => {
     const homes = Object.fromEntries(["CODEX_HOME", "CLAUDE_CONFIG_DIR"].filter((k) => env[k] && !process.env[k]).map((k) => [k, env[k]]));

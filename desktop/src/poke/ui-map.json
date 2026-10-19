@@ -70,6 +70,7 @@
         "bar-900",
         "bar-720",
         "side-folded",
+        "rail-open",
         "term-search",
         "tab-working",
         "bar-failed",
@@ -594,6 +595,13 @@
       "screens": [
         "home"
       ]
+    },
+    "session-rail": {
+      "what": "셸 레일 — 셸이 둘 이상이면 왼쪽 좁은 줄(아이콘·번호·점), 마우스를 올리면 에이전트 화면 위로 펼쳐 이름·상태, 이름 바꾸기 입력 (TAB-13, TAB-20, #99)",
+      "files": ["index.html", "src/style.css", "src/main.js"],
+      "selectors": [".rail", ".sess", ".sess-new", ".rail.open", ".nm-edit", ".sess-title"],
+      "functions": ["renderRail", "sessTitle", "railOpen", "renameSession"],
+      "screens": ["main"]
     },
     "settings-nav": {
       "what": "설정 창 왼쪽 사이드바와 줄 형식 — 범주 버튼, 짧은 라벨 왼쪽·컨트롤 오른쪽, 스위치, 모양 더 보기 (APP-19 규칙 8·9, #101)",
