@@ -1536,7 +1536,7 @@ sleep 40
       { invoke: "tray_click_test", args: { path: ["최소 모드", "항상"] }, log: true },
       { invoke: "tray_click_test", args: { path: ["메뉴바 아이콘 숨기기"] }, log: true }, { wait: 300 },
       { invoke: "settings_get", log: true },
-      { call: "openSettings" }, { wait: 400 }, { click: "#settings [data-set='menubar.on']" }, { wait: 400 }, { key: "Escape" },
+      { call: "openSettings" }, { wait: 400 }, { click: "#settings .set-nav [data-page='menubar']" }, { wait: 300 }, { click: "#settings [data-set='menubar.on']" }, { wait: 400 }, { key: "Escape" }, // #101: on the 메뉴바 page
       { invoke: "settings_set", args: { patch: { menubar: { text: "bogus" } } } }, { invoke: "tray_test", log: true }],
     check: ({ log, box }) => {
       const t = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
