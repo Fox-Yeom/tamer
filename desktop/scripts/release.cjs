@@ -1,9 +1,8 @@
-// Beta release on GitHub (private repo Fox-Yeom/tamer): uploads the DMGs of the current version
-// as a pre-release with that version's notes from docs/CHANGELOG.md, and prints the link.
+// Beta release on GitHub (public repo Fox-Yeom/tamer since 2026-10-19): uploads the DMGs of the current
+// version as a pre-release with that version's notes from docs/CHANGELOG.md, and prints the link.
 //   npm run release              build (npm run beta) if the DMGs are missing, then publish
-//   npm run release -- --invite <github-user>   give a tester read access (private repo: needed to download)
 //   npm run release -- --no-smoke  release without a smoke run on this commit (only when the user says so — a warning is printed)
-// Testers need a GitHub account with access to the private repo; the link 404s for anyone else.
+// Anyone can download it, no GitHub account needed — the notes are public too.
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFileSync } = require("node:child_process");
@@ -14,15 +13,6 @@ const { version } = require(path.join(ROOT, "package.json"));
 const TAG = `v${version}`;
 const OUT = path.join(ROOT, "out", "beta");
 const gh = (args, opts = {}) => execFileSync("gh", args, { encoding: "utf8", cwd: ROOT, ...opts });
-
-const invite = process.argv.indexOf("--invite");
-if (invite > 0) {
-  const user = process.argv[invite + 1];
-  if (!user || !/^[A-Za-z0-9-]+$/.test(user)) throw new Error("usage: npm run release -- --invite <github-user>");
-  gh(["api", "-X", "PUT", `repos/${REPO}/collaborators/${user}`, "-f", "permission=pull"]);
-  console.log(`invited ${user} (read). They accept the invitation mail, then the release link works.`);
-  process.exit(0);
-}
 
 // the release tag goes on main as GitHub has it: local main must be pushed first
 const git = (args) => execFileSync("git", args, { encoding: "utf8", cwd: ROOT }).trim();
@@ -110,7 +100,7 @@ const notes = `## 받기
 ## 설치
 1. DMG를 열고 Tamer를 Applications로 끌어 놓기
 2. 처음 한 번: 시스템 설정 → 개인정보 보호 및 보안 → "그래도 열기" (또는 \`xattr -dr com.apple.quarantine /Applications/Tamer.app\`) — Apple 공증 전 베타라서
-3. 사용법·문제 보고는 저장소 README
+3. 사용법은 저장소 README, 문제 보고는 [Issues](https://github.com/${REPO}/issues)(공개 — 개인 정보는 빼고) 또는 앱 메뉴 "피드백 보내기…"
 
 ## 이번 버전
 ${changes}

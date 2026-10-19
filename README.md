@@ -11,7 +11,7 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 <img alt="chips" src="https://img.shields.io/badge/Apple%20Silicon%20%C2%B7%20Intel-supported-blue">
 </p>
 
-> **비공개 베타입니다.** 받은 분만 써 주세요. 문제나 아이디어는 [피드백](#피드백--문제-보고)으로 보내 주시면 됩니다.
+> **베타입니다.** 누구나 받아 써 볼 수 있어요. 문제나 아이디어는 [피드백](#피드백--문제-보고)으로 보내 주시면 됩니다.
 > 이 문서는 **기능 안내**입니다. 버전마다 바뀐 점은 [Releases](../../releases) 노트에 있어요.
 
 ---
@@ -87,9 +87,8 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 ## 설치
 **필요한 것**: macOS 13 이상 · 위 에이전트 중 하나 이상 · 인터넷(포켓몬 이미지를 처음 한 번 받음) · 셸은 무엇이든(zsh·bash·fish·tcsh …, 내 기본 셸이 그대로 열림)
 
-1. 받은 링크의 **Releases**에서 내 맥에 맞는 DMG를 받습니다.
+1. 이 저장소의 [**Releases**](../../releases)에서 내 맥에 맞는 DMG를 받습니다(로그인 없이).
    - Apple Silicon(M1~): `Tamer-<버전>-arm64.dmg` · Intel: `Tamer-<버전>-x64.dmg` (메뉴 → 이 Mac에 관하여 → "칩"으로 확인)
-   - 비공개 저장소라 **초대받은 GitHub 계정으로 로그인**해야 받을 수 있어요.
 2. DMG를 열고 **Tamer**를 **Applications**로 끌어 놓은 뒤, **Applications에서** 엽니다(DMG 창에서 바로 열면 압축된 이미지에서 읽느라 매번 느려요).
 3. **처음 한 번만**: Apple 공증 전 베타라 macOS가 한 번 막습니다. 둘 중 하나로 여세요.
    - **시스템 설정 → 개인정보 보호 및 보안** 맨 아래 "Tamer이(가) 차단되었습니다" 옆 **그래도 열기**
@@ -125,8 +124,9 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 - Claude는 Tamer가 띄울 때(또는 직접 켠 "셸에서 친 Claude도 연결"이 있을 때 Tamer 셸 안에서만) 상태 표시용 설정이 붙고, `~/.claude/settings.json`은 건드리지 않습니다. 연결을 켜면 셸 설정 파일에 표시된 블록 하나가 들어가고(사본은 `~/.cache/tamer/backup/shell-rc`), 해제하면 그 블록만 빠집니다.
 
 ## 피드백 · 문제 보고
-- 메뉴 **Tamer → 피드백 보내기…** → 메일(**yeomjae5766@gmail.com**) 초안이 열립니다.
-- 문제가 있었다면 메뉴 **Tamer → 진단 정보 복사** 후 메일에 붙여 주세요. 버전 · macOS · 에이전트 연결 상태 · 최근 앱 기록이 들어가고, 대화 내용 · 명령어 · 파일 이름은 없으며 폴더 이름은 "폴더1"처럼 가려집니다.
+- **GitHub Issues**: 이 저장소의 [Issues](../../issues)에 바로 써 주세요(GitHub 계정 필요). 이슈는 **누구나 볼 수 있으니** 이름 · 메일 · 회사 · 프로젝트 이름 같은 개인 정보는 넣지 마세요.
+- **메일**: GitHub 계정이 없거나 공개하기 싫은 내용이면 메뉴 **Tamer → 피드백 보내기…** → 메일(**yeomjae5766@gmail.com**) 초안이 열립니다. 받은 메일은 개인 정보를 뺀 뒤 Issues에 옮겨 적어요.
+- 문제가 있었다면 메뉴 **Tamer → 진단 정보 복사** 후 이슈나 메일에 붙여 주세요. 버전 · macOS · 에이전트 연결 상태 · 최근 앱 기록이 들어가고, 대화 내용 · 명령어 · 파일 이름은 없으며 폴더 이름은 "폴더1"처럼 가려집니다.
 - 적어 주시면 좋은 것: 무엇을 했고 → 무엇을 기대했고 → 무엇이 보였는지, 스크린샷(Tamer 창만)
 
 ## 알려진 문제
@@ -143,5 +143,6 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 4. (Gemini 확장을 연결했다면) `gemini extensions uninstall cvim`
 
 ## 라이선스 · 고지
+- Tamer의 소스는 공개돼 있지만 **오픈소스 라이선스는 없습니다**(© Fox-Yeom, 모든 권리 보유). 보고 · 받아 쓰기는 자유롭게, 코드를 가져다 쓰거나 고쳐 다시 배포하는 것은 허락되지 않아요.
 - 메뉴 **Tamer → 오픈소스 고지**: Tamer에 들어 있는 오픈소스와 라이선스
 - Pokémon은 **비공식 팬 기능**입니다. 포켓몬 이름·이미지의 권리는 Nintendo / Creatures / GAME FREAK / The Pokémon Company에 있으며, 이미지는 앱에 들어 있지 않고 실행 중 받아 이 맥의 캐시에만 둡니다.
