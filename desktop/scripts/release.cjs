@@ -1,4 +1,4 @@
-// Beta release on GitHub (private repo Y-jae-heon/tamer): uploads the DMGs of the current version
+// Beta release on GitHub (private repo Fox-Yeom/tamer): uploads the DMGs of the current version
 // as a pre-release with that version's notes from docs/CHANGELOG.md, and prints the link.
 //   npm run release              build (npm run beta) if the DMGs are missing, then publish
 //   npm run release -- --invite <github-user>   give a tester read access (private repo: needed to download)
@@ -9,7 +9,7 @@ const path = require("node:path");
 const { execFileSync } = require("node:child_process");
 
 const ROOT = path.resolve(__dirname, "..");
-const REPO = "Y-jae-heon/tamer";
+const REPO = "Fox-Yeom/tamer";
 const { version } = require(path.join(ROOT, "package.json"));
 const TAG = `v${version}`;
 const OUT = path.join(ROOT, "out", "beta");
