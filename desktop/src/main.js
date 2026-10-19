@@ -2200,15 +2200,17 @@ async function pickRender() {
   d.box ||= await invoke("box_list", { ws: active?.id }).catch(() => []);
   if (dexState !== d || !d.pick) return;
   const stone = d.pick === "stone"; // 💎 only those a stone can evolve (#93)
-  // the one just evolved stays in the list (#94)
-  d.list = boxMons(d.box).filter((m) => !stone || m.stone || isJust(m)).sort((a, b) => (a.folder === "here" ? -1 : 0) - (b.folder === "here" ? -1 : 0) || (b.lv ?? 0) - (a.lv ?? 0));
+  // the one a stone just evolved leaves the list — it's shown on the right until another card is picked (#95)
+  const done = stone && d.stoneDone ? boxMons(d.box).find((m) => m.uid === d.stoneDone.uid) : null;
+  if (d.stoneDone) d.stoneDone.mon = done;
+  d.list = boxMons(d.box).filter((m) => !stone || (m.stone && m.uid !== done?.uid)).sort((a, b) => (a.folder === "here" ? -1 : 0) - (b.folder === "here" ? -1 : 0) || (b.lv ?? 0) - (a.lv ?? 0));
   grid.innerHTML = `<h4 class="pk-group"><button class="pk-back">← 가방으로</button> ${stone ? "진화의 돌을 쓸 포켓몬" : "이상한사탕을 줄 포켓몬"}</h4>`
     + (stone && !d.list.length ? '<p class="pk-empty">돌로 진화하는 포켓몬이 없어요 — 레벨로 진화하는 포켓몬엔 이상한사탕을</p>' : "")
     + d.list.map((m, i) => justEvolved(pkCard(m, i, { icons: TYPE_ICON, ago }).replace('class="pk-card', `class="pk-card${!stone && (m.lv ?? 0) >= 100 ? " off" : ""}`), m)).join("");
-  if (!d.list.length) { itemPreview(null); return; }
   for (const img of grid.querySelectorAll("img[data-gif]")) spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; });
-  const keep = d.stoneDone ? d.list.findIndex((m) => m.uid === d.stoneDone.uid) : -1;
-  d.bi = Math.max(0, keep);
+  if (done) { d.bi = Math.max(0, Math.min(d.list.length - 1, d.stoneAt ?? 0)); return boxPreview(done); } // no card picked: the keys start where it was
+  if (!d.list.length) { itemPreview(null); return; }
+  d.bi = 0;
   boxSelect(d.bi);
 }
 // 💎 진화의 돌 (#93, PKM-28 rule 3): this individual's stages as buttons — one press evolves it (the stone is used then)
@@ -2230,13 +2232,13 @@ function stoneEnter(m) {
   toast("💎 오른쪽에서 갈래를 골라 주세요");
 }
 async function stoneUse(uid, to) {
-  const d = dexState, before = d?.list?.find((m) => m.uid === uid);
+  const d = dexState, before = d?.list?.find((m) => m.uid === uid), at = d?.list?.indexOf(before);
   const r = await invoke("bag_use", { item: "stone", uid, to }).catch(() => null);
   if (!r?.ok) { toast(r?.why === "offline" ? "인터넷이 돌아오면 다시 — 진화의 돌은 그대로예요" : r?.why === "none" ? "진화의 돌이 없어요" : "이 포켓몬은 지금 진화의 돌로 진화하지 않아요"); return; }
   if (!d || dexState !== d) return;
-  // stay where you were (#94, PKM-28 rule 3-1): the same card, now the new form, its result in the preview
+  // its result in the preview (#94, PKM-28 rule 3-1) — 내 포켓몬: the same card, now the new form; the stone list: it leaves the list (#95)
   d.stoneDone = { uid, from: r.from || (before && { name: before.name, gif: before.gif }), to: r.evolved, coins: r.coins || 0, newCoins: r.newCoins || 0, played: false };
-  d.stoneOpts = null; shopSt = r;
+  d.stoneOpts = null; d.stoneAt = at; shopSt = r;
   coins = await invoke("economy_state").catch(() => coins);
   d.box = await invoke("box_list", { ws: active?.id }).catch(() => []);
   dexTitle();
@@ -2250,12 +2252,12 @@ const justEvolved = (html, m) => (isJust(m) ? html.replace('class="pk-card', 'cl
 async function stoneResult(m) {
   const d = dexState, s = d.stoneDone, b = $("#dex-take"), img = $("#dex-img"), box = $(".dex-preview");
   b.hidden = true;
-  const left = coins?.stones || 0, more = left > 0 && d.view === "bag" && d.list.some((x) => x.stone && x.uid !== m.uid);
+  const left = coins?.stones || 0;
   $("#dex-meta").innerHTML = `<b class="pk-evo-msg">🎉 ${esc(josa(s.from?.name || "", "이", "가"))} ${esc(josa(s.to.name, "으로", "로"))} 진화했어요!</b><br>`
     + `<span class="pk-evo-coins">+${coinTxt(s.coins - s.newCoins)} 진화${s.newCoins ? ` · +${coinTxt(s.newCoins)} 새 종` : ""}</span><br>${esc(lvLine(m))}`;
   $("#dex-from").innerHTML = (m.folder !== "here" && active ? '<button data-sd="take">이 탭의 파트너로</button>' : "")
     + '<button data-sd="box">내 포켓몬에서 보기</button>'
-    + (more ? `<button data-sd="more">💎 진화의 돌 하나 더 (${left})</button>` : left ? "" : '<p class="pk-note">진화의 돌을 다 썼어요</p>');
+    + (left ? "" : '<p class="pk-note">진화의 돌을 다 썼어요</p>'); // another one: pick it on the left (#95)
   if (s.played) return;
   s.played = true;
   const show = async (gif) => { const u = gif && await spriteUrl(gif); if (u) { img.src = u; await img.decode().catch(() => {}); img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`; } };
@@ -2338,17 +2340,24 @@ function boxSelect(i) {
   const d = dexState;
   if (!d?.list?.length) return;
   d.bi = Math.max(0, Math.min(d.list.length - 1, i));
-  d.boxAsk = false;
-  const m = d.list[d.bi];
+  if (d.stoneDone?.mon) d.stoneDone = null; // another card picked: the stone's result is over (#95)
   for (const c of document.querySelectorAll("#box-grid .pk-card.sel")) c.classList.remove("sel");
   const card = $(`#box-grid .pk-card[data-i="${d.bi}"]`);
   card?.classList.add("sel");
   card?.scrollIntoView({ block: "nearest" });
+  boxPreview(d.list[d.bi]);
+}
+// the preview of one Pokémon — a card's, or the one a stone just took out of the list (#95)
+const boxCur = (d = dexState) => d?.stoneDone?.mon || d?.list?.[d.bi];
+function boxPreview(m) {
+  const d = dexState;
+  d.boxAsk = false;
+  if (d.stoneDone?.mon) for (const c of document.querySelectorAll("#box-grid .pk-card.sel")) c.classList.remove("sel");
   const img = $("#dex-img"), want = m.uid;
   img.className = "";
   const playing = isJust(m) && !d.stoneDone.played; // 💎 stoneResult draws the picture (#94)
   if (m.gif && !playing) spriteUrl(m.gif).then(async (u) => {
-    if (!u || dexState?.list?.[dexState.bi]?.uid !== want) return;
+    if (!u || boxCur()?.uid !== want) return;
     img.src = u;
     await img.decode().catch(() => {});
     img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`;
@@ -2367,7 +2376,7 @@ function boxSelect(i) {
   }
   $("#dex-from").innerHTML = "";
   boxButton();
-  $("#dex-pos").textContent = `${d.bi + 1} / ${d.list.length}`;
+  $("#dex-pos").textContent = d.stoneDone?.mon ? `– / ${d.list.length}` : `${d.bi + 1} / ${d.list.length}`;
   // looked at: its NEW goes (like the Pokédex)
   if (m.new) {
     invoke("dex_viewed", { id: m.id });
@@ -2381,7 +2390,7 @@ function boxSelect(i) {
 }
 // the take button: a starter / resting → take · this tab's already · another folder's → press twice
 function boxButton() {
-  const d = dexState, m = d.list[d.bi], b = $("#dex-take");
+  const d = dexState, m = boxCur(d), b = $("#dex-take");
   if (isJust(m)) return stoneResult(m); // 💎 just evolved: its result (#94)
   if (d.pick === "stone") return stoneButtons(m); // 💎 (#93)
   if (d.pick) return candyButton(m);
@@ -2426,6 +2435,9 @@ function boxKey(k) {
   // ↑↓: the card above / below (the groups of 파트너 고르기 break the rows)
   const vert = (dir) => { const to = cur && dexGeo(cur, [...document.querySelectorAll("#box-grid .pk-card[data-i]")].filter((c) => Number(c.dataset.i) >= 0), dir); if (to) boxSelect(Number(to.dataset.i)); };
   if (k === "/") $("#dex-search").focus();
+  // a stone's result on the right, no card picked (#95): the first move picks the card where it was, Enter does nothing
+  else if (d.stoneDone?.mon && n && /^(Arrow\w+|Home|End|[hjkl])$/.test(k)) boxSelect(k === "End" ? n - 1 : k === "Home" ? 0 : d.bi);
+  else if (d.stoneDone?.mon && k === "Enter") return true;
   else if (!n) return k === "Enter" || k.startsWith("Arrow");
   else if (k === "ArrowRight" || k === "l") boxSelect(d.bi + 1);
   else if (k === "ArrowLeft" || k === "h") boxSelect(d.bi - 1);
@@ -2686,11 +2698,10 @@ $("#dex-from").addEventListener("click", async (e) => {
   if (b?.dataset.a === "stone") { const m = dexState.list?.[dexState.bi]; if (m) stoneButtons(m); return; } // 💎 내 포켓몬에서 (#93)
   if (b?.dataset.stone) return stoneUse(Number(b.dataset.uid), Number(b.dataset.stone)); // 💎 a stage (#93)
   if (b?.dataset.sd) { // 💎 after the evolution (#94)
-    const d = dexState, m = d.list?.[d.bi], uid = d.stoneDone?.uid;
+    const d = dexState, m = boxCur(d), uid = d.stoneDone?.uid;
     if (b.dataset.sd === "take" && m) { d.stoneDone = null; return pkTake(m); }
     d.stoneDone = null;
     if (b.dataset.sd === "box") { d.pick = false; await dexView("box"); const i = dexState.list.findIndex((x) => x.uid === uid); return boxSelect(Math.max(0, i)); }
-    if (b.dataset.sd === "more") { await pickRender(); const i = dexState.list.findIndex((x) => x.stone); return boxSelect(Math.max(0, i)); }
     return;
   }
   if (b?.dataset.legend) return invoke("bag_use", { item: "legend", id: Number(b.dataset.legend) }).then((r) => { if (r?.ok) toast("⭐ 다음 대발견에 걸어 뒀어요"); return shopRender(); }); // #82
@@ -3397,6 +3408,7 @@ function labState() {
     hintFits: (() => { const h = $("#hint"); return h.scrollHeight <= h.clientHeight + 1; })(),
     preview: dexOpen() ? $("#dex-meta")?.textContent || null : null,
     dexName: dexOpen() ? $("#dex-name")?.textContent || null : null, // #94
+    dexPos: dexOpen() ? $("#dex-pos")?.textContent || null : null, // #95
     justCard: dexOpen() ? $("#box-grid .pk-card.pk-just b")?.textContent || null : null,
     selCard: dexOpen() ? $("#box-grid .pk-card.sel b")?.textContent || null : null,
     fromBtns: dexOpen() ? [...document.querySelectorAll("#dex-from button")].map((b) => `${b.textContent}${b.disabled ? " (꺼짐)" : ""}`) : null, // #93

@@ -244,6 +244,9 @@
         "itemAct",
         "candyGive",
         "pickRender",
+        "stoneButtons",
+        "stoneUse",
+        "stoneResult",
         "candyButton",
         "lvupShow"
       ],
@@ -426,6 +429,7 @@
       "functions": [
         "dexShow",
         "boxSelect",
+        "boxPreview",
         "boxButton",
         "pkTake",
         "dexChoose",

@@ -71,6 +71,17 @@ const todayLocal = () => { const t = new Date(); return `${t.getFullYear()}-${St
 const econ = (box, f) => path.join(box.data, "economy", f);
 const ledgerRows = (box) => { try { return fs.readFileSync(econ(box, "ledger.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return null; } };
 const putEcon = (box, files) => { fs.mkdirSync(path.join(box.data, "economy"), { recursive: true }); for (const [f, v] of Object.entries(files)) fs.writeFileSync(econ(box, f), typeof v === "string" ? v : JSON.stringify(v)); };
+// 💎 the stone cases (#93 #94 #95): the partner an Eevee (three stone branches, 135 not in the Pokédex yet), `n` stones bought
+function stoneSetup(box, n) {
+  fakeSpecies(box, 133, "이브이", { reach: null, next: [{ to: 134, kind: "stone" }, { to: 135, kind: "stone" }, { to: 136, kind: "stone" }] });
+  for (const [id, name] of [[134, "샤미드"], [135, "쥬피썬더"], [136, "부스터"]]) fakeSpecies(box, id, name, { reach: { kind: "stone" }, next: [] });
+  evolvePartner(box, { id: 133, lv: 12, mile: 10 });
+  const d = todayLocal();
+  putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 1000 }, ...Array.from({ length: n }, () => ({ day: d, kind: "buy", item: "stone", n: 1, amount: -300 }))].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
+}
+// the bag → [쓸 포켓몬 고르기] → the Eevee (first: this tab's) → → 쥬피썬더
+const STONE_TO_135 = [{ until: "partner", timeout: 10000 }, { wait: 500 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 900 }, { probe: "bag" },
+  { key: "Enter" }, { wait: 1200 }, { probe: "pick" }, { click: "#dex-from [data-stone='135']" }, { wait: 2500 }];
 const DONE = (ws, times) => [{ invoke: "agent_state_test", args: { ws, from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws, from: "thinking", to: "done", ...(times ? { times } : {}) } }];
 
 module.exports = [
@@ -476,17 +487,10 @@ module.exports = [
     },
   },
   {
-    id: "stone-evolve", tags: ["smoke", "poke"], what: "진화의 돌: 가방에서 [쓸 포켓몬 고르기] → 쓸 수 있는 마리만(갈래 있는 이브이) → 갈래 버튼 셋 → 쥬피썬더로 바로 진화, 돌 1개 씀·+30 진화 +30 새 종, 진화한 카드는 그 자리에 \"✨ 방금 진화\"·결과 미리보기·[내 포켓몬에서 보기] (#93 #94)",
+    id: "stone-evolve", tags: ["smoke", "poke"], what: "진화의 돌: 가방에서 [쓸 포켓몬 고르기] → 쓸 수 있는 마리만(갈래 있는 이브이) → 갈래 버튼 셋 → 쥬피썬더로 바로 진화, 돌 1개 씀·+30 진화 +30 새 종, 진화한 마리는 고르기 목록에서 빠지고 오른쪽에 결과·[내 포켓몬에서 보기] (#93 #94 #95)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
-    setup: (box) => {
-      fakeSpecies(box, 133, "이브이", { reach: null, next: [{ to: 134, kind: "stone" }, { to: 135, kind: "stone" }, { to: 136, kind: "stone" }] });
-      for (const [id, name] of [[134, "샤미드"], [135, "쥬피썬더"], [136, "부스터"]]) fakeSpecies(box, id, name, { reach: { kind: "stone" }, next: [] });
-      evolvePartner(box, { id: 133, lv: 12, mile: 10 });
-      const d = todayLocal();
-      putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 1000 }, { day: d, kind: "buy", item: "stone", n: 1, amount: -300 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
-    },
-    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 900 }, { probe: "bag" },
-      { key: "Enter" }, { wait: 1200 }, { probe: "pick" }, { click: "#dex-from [data-stone='135']" }, { wait: 2500 }, { probe: "after" },
+    setup: (box) => stoneSetup(box, 1),
+    steps: [...STONE_TO_135, { probe: "after" },
       { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true },
       { click: "#dex-from [data-sd='box']" }, { wait: 900 }, { probe: "box" }],
     check: ({ probe, log }) => {
@@ -501,12 +505,30 @@ module.exports = [
         ok(/^bag use stone uid=\d+ to=135$/m.test(log) && me?.id === 135 && me.evo?.at(-1)?.to === "쥬피썬더", `진화 ${JSON.stringify(me && { id: me.id, evo: me.evo })}`),
         ok(st.stones === 0 && st.balance === 760, `돌 다 씀 ${st.stones} · 코인 ${st.balance} (1000−300+30 진화+30 새 종, #94)`),
         ok(probe.after?.partner === "쥬피썬더", `파트너 칸 ${probe.after?.partner}`),
-        // #94: stays in place — the same card, now 샤미드, marked and selected, the result with its coins and what next
-        ok(probe.after?.justCard === "쥬피썬더" && probe.after?.selCard === "쥬피썬더" && probe.after?.cards === probe.pick?.cards,
-          `그 자리 ${JSON.stringify({ just: probe.after?.justCard, sel: probe.after?.selCard, cards: [probe.pick?.cards, probe.after?.cards] })}`),
+        // #95: it leaves the stone list (no card picked) and its result stays on the right with its coins and what next
+        ok(probe.after?.cards === probe.pick?.cards - 1 && !probe.after?.justCard && !probe.after?.selCard && probe.after?.dexName === "#135 쥬피썬더" && /^– \//.test(probe.after?.dexPos || ""),
+          `목록에서 빠지고 오른쪽에 ${JSON.stringify({ cards: [probe.pick?.cards, probe.after?.cards], just: probe.after?.justCard, sel: probe.after?.selCard, name: probe.after?.dexName, pos: probe.after?.dexPos })}`),
         ok(/^🎉 이브이가 쥬피썬더로 진화했어요!\+30코인 진화 · \+30코인 새 종/.test(probe.after?.preview || "") && JSON.stringify(probe.after?.fromBtns) === '["내 포켓몬에서 보기"]',
           `결과 ${probe.after?.preview} · ${JSON.stringify(probe.after?.fromBtns)}`),
         ok(probe.box?.poke === "box" && probe.box?.selCard === "쥬피썬더", `내 포켓몬에서 보기 → ${probe.box?.poke} ${probe.box?.selCard}`),
+      ];
+    },
+  },
+  {
+    id: "stone-next", tags: ["smoke", "poke"], what: "진화의 돌을 쓴 뒤(돌이 남음): 오른쪽 결과가 떠 있는 동안 Enter는 아무것도 안 함, 방향키 → 빠진 자리의 카드가 골라지고 그 마리의 진화의 돌 미리보기 — 따로 [하나 더] 버튼 없음 (#95)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => stoneSetup(box, 2),
+    steps: [...STONE_TO_135, { probe: "after" }, { key: "Enter" }, { wait: 800 }, { probe: "enter" }, { key: "ArrowRight" }, { wait: 1500 }, { probe: "next" },
+      { invoke: "economy_state", log: true }],
+    check: ({ probe, log }) => {
+      const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
+      return [
+        ok(probe.after?.dexName === "#135 쥬피썬더" && JSON.stringify(probe.after?.fromBtns) === '["내 포켓몬에서 보기"]', `결과 ${probe.after?.dexName} ${JSON.stringify(probe.after?.fromBtns)}`),
+        ok(probe.enter?.dexName === "#135 쥬피썬더" && !probe.enter?.selCard && st.stones === 1, `Enter 뒤 ${probe.enter?.dexName} sel=${probe.enter?.selCard} · 돌 ${st.stones}`),
+        // the data's other stone-able ones are left; the first move picks the one now at the Eevee's place (the list's first)
+        ok(probe.next?.cards === probe.after?.cards && probe.next?.selCard && probe.next.selCard !== "쥬피썬더" && probe.next?.dexPos === `1 / ${probe.next?.cards}` && probe.next?.dexName !== "#135 쥬피썬더"
+          && !(probe.next?.fromBtns || []).some((b) => /하나 더|다른 포켓몬/.test(b)),
+          `방향키 → ${JSON.stringify({ sel: probe.next?.selCard, name: probe.next?.dexName, pos: probe.next?.dexPos, btns: probe.next?.fromBtns })}`),
       ];
     },
   },
