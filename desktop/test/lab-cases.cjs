@@ -496,6 +496,49 @@ module.exports = [
     },
   },
   {
+    id: "popover-dashboard", tags: ["smoke", "app"], what: "메뉴바 미니 대시보드: 왼쪽 클릭(시험 명령)으로 열면 오늘 완료·사용 한도(Claude 5h 42%·7d 18%)·Tamer 탭(입력 필요가 맨 위) — 탭을 누르면 대시보드가 닫히고 그 탭으로 (STA-22, #105)",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
+    steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "waiting" } }, { wait: 300 },
+      { invoke: "usage_seen", args: { key: "claude", five_hour: { pct: 42, resets_at: 4102444800 }, seven_day: { pct: 18, resets_at: 4102444800 } } },
+      { invoke: "popover_test", args: { open: true }, log: true }, { wait: 1500 }, { invoke: "popover_read_test", log: true },
+      { invoke: "popover_click_test", args: { sel: ".pop-tab" }, log: true }, { wait: 800 }, { invoke: "popover_test", log: true }, { probe: "after" }],
+    check: ({ log, probe }) => {
+      const opens = [...log.matchAll(/^lab-invoke popover_test (.*)$/gm)].map((m) => JSON.parse(m[1]).open);
+      const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
+      const first = r?.tabs?.[0] || "";
+      return [
+        ok(opens[0] === true && /^popover open$/m.test(log), `열림 ${JSON.stringify(opens)}`),
+        ok(/오늘 완료/.test(r?.text || "") && /사용 한도/.test(r?.text || "") && /Claude\s+5h[\s\S]*42%[\s\S]*7d[\s\S]*18%/.test(r?.text || ""), `오늘·한도 ${JSON.stringify(r?.text?.slice(0, 300))}`),
+        ok(r?.tabs?.length === 2 && /입력 필요/.test(first), `탭 2개, 입력 필요가 맨 위 ${JSON.stringify(r?.tabs)}`),
+        ok(/^lab-invoke popover_click_test true$/m.test(log) && opens[1] === false && probe.after?.active && first.startsWith(probe.after.active), `탭을 누르면 닫히고 그 탭으로 ${JSON.stringify(opens)} 지금 탭 ${probe.after?.active}`),
+      ];
+    },
+  },
+  {
+    id: "popover-wild", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 야생 잡기: 야생이 나와 있으면 대시보드에 야생 카드 — 마스터볼을 골라 던지면 잡히고 가방에서 한 개 줄어듦 (STA-22 규칙 3, #105)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    setup: (box) => {
+      const d = todayLocal();
+      putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 2000 }, { day: d, kind: "buy", item: "master", n: 1, amount: -1500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
+      fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } }));
+    },
+    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 },
+      { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_read_test", log: true },
+      { invoke: "popover_click_test", args: { sel: "#pop-wild .wild-balls [data-ball='master']" }, log: true }, { wait: 200 },
+      { invoke: "popover_click_test", args: { sel: "#pop-wild .wild-throw" }, log: true }, { wait: 4500 }, { invoke: "shop_state", log: true }],
+    check: ({ log }) => {
+      const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
+      const st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
+      const clicks = [...log.matchAll(/^lab-invoke popover_click_test (\w+)$/gm)].map((m) => m[1]);
+      return [
+        ok(r?.wild === true, `대시보드에 야생 카드 ${JSON.stringify(r && { wild: r.wild })}`),
+        ok(JSON.stringify(clicks) === '["true","true"]' && /^wild throw caught/m.test(log), `마스터볼로 던져 잡힘 ${JSON.stringify(clicks)} ${log.match(/^wild throw .*$/m)?.[0]}`),
+        ok((st.bag?.master || 0) === 0, `마스터볼 한 개 줄어듦 ${JSON.stringify(st.bag)}`),
+      ];
+    },
+  },
+  {
     id: "session-titles", tags: ["smoke", "agent"], what: "셸 이름·세션 제목: ⌘G Claude가 기록에 남긴 자동 제목이 칸 제목줄에, 기록에 아직 없으면 터미널 제목(✳·스피너 떼고, 'Claude Code'는 무시), 셸이 둘이면 레일에 마우스를 올려 펼친 목록에 · 펼쳐도 터미널 폭은 그대로 · 더블클릭으로 이름 바꾸기(저장) · 설정 '세션 제목'을 끄면 에이전트 제목은 사라지고 직접 붙인 이름은 남음 · 대화 줄은 해석 안 함 (TAB-13 규칙 4, TAB-20, #99)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     env: { CVIM_DESKTOP_AUTOSTART: "1", CVIM_DESKTOP_AGENT_CMD: (box) => path.join(box.dir, "fakebin", "claude-titled") },

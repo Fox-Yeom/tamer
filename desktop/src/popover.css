@@ -1,0 +1,66 @@
+@import "./theme.css";
+@import "./wild.css";
+
+/* 메뉴바 미니 대시보드 (STA-22, #105): a small card under the menu bar icon — the main process sizes the
+   window to #pop's height (popover_fit) */
+html, body { margin: 0; background: var(--pane); color: var(--fg); overflow: hidden; user-select: none;
+  font: 13px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+#pop { display: flex; flex-direction: column; width: 360px; box-sizing: border-box; }
+.pop-sec { padding: 12px 14px; border-bottom: 1px solid var(--line); }
+.pop-sec:empty { display: none; }
+.pop-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; font-weight: 600; color: var(--dim); }
+button { font: inherit; color: var(--fg); background: var(--raised); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
+button:hover { background: var(--hover); }
+
+/* 파트너 */
+#pop-partner { display: flex; gap: 12px; align-items: center; }
+.pop-sprite { width: 64px; height: 64px; flex: none; display: flex; align-items: flex-end; justify-content: center; border-radius: 10px; background: var(--raised); }
+.pop-sprite img { max-width: 60px; max-height: 60px; image-rendering: pixelated; }
+.pop-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.pop-name { font-size: 15px; font-weight: 600; }
+.pop-lv { font-size: 12px; color: var(--dim); }
+.pop-bar { height: 5px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.pop-bar > i { display: block; height: 100%; background: var(--accent); }
+.pop-chips { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
+.pop-none { color: var(--dim); font-size: 12px; }
+
+/* 오늘 */
+#pop-today { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pop-stat { background: var(--raised); border-radius: 8px; padding: 7px 10px; }
+.pop-stat small { display: block; font-size: 11px; color: var(--dim); }
+.pop-stat b { font: 500 17px "Fira Code", ui-monospace, monospace; }
+.pop-coin { color: var(--pk-coin, #f2c14e); }
+
+/* 한도 */
+.pop-lim { display: grid; grid-template-columns: 62px 24px minmax(0, 1fr) 40px 76px; gap: 6px; align-items: center; font-size: 12px; margin-top: 4px; }
+.pop-lim .ag { font-weight: 600; }
+.pop-lim .k, .pop-lim .until { color: var(--dim); }
+.pop-lim .pct { text-align: right; font-family: "Fira Code", ui-monospace, monospace; }
+.pop-lim .gauge { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.pop-lim .gauge > i { display: block; height: 100%; }
+.lv-ok { background: var(--ok); } .lv-warn { background: var(--warn); } .lv-bad { background: var(--bad); }
+#pop-refresh { font-size: 11px; padding: 2px 8px; }
+.pop-limits-none { font-size: 12px; color: var(--dim); }
+
+/* Tamer 탭 */
+#pop-tabs { padding: 10px 8px; }
+#pop-tabs .pop-h { padding: 0 6px; }
+.pop-tab { display: flex; width: 100%; gap: 8px; align-items: center; text-align: left; border: 0; background: transparent; padding: 6px; border-radius: 6px; }
+.pop-tab:hover { background: var(--hover); }
+.pop-tab.urgent { background: color-mix(in srgb, var(--bad) 16%, transparent); }
+.pop-tab .dot { width: 8px; height: 8px; border-radius: 4px; flex: none; background: var(--faint); }
+.pop-tab .dot.waiting, .pop-tab .dot.error { background: var(--bad); }
+.pop-tab .dot.working { background: var(--warn); }
+.pop-tab .dot.done { background: var(--ok); }
+.pop-tab .nm { font-weight: 600; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pop-tab .st { color: var(--dim); }
+.pop-more { font-size: 11px; color: var(--dim); padding: 4px 6px 0; }
+
+/* 야생: the wild card (src/wild.css) fills the section */
+#pop-wild .wild-card { width: auto; box-shadow: none; }
+#pop-wild:has(.wild-card[hidden]) { display: none; } /* no wild: no empty band */
+
+/* 아래 버튼 */
+#pop-foot { display: flex; gap: 8px; padding: 10px 12px; }
+#pop-foot button { flex: 1; padding: 8px; }
+#pop-foot .pop-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }

@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 메뉴바 미니 대시보드 (STA-22, #105): our own files only (POLICY.md 11) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+    <title>Tamer</title>
+    <link rel="stylesheet" href="/src/popover.css" />
+  </head>
+  <body>
+    <main id="pop">
+      <section id="pop-partner" class="pop-sec"></section>
+      <section id="pop-today" class="pop-sec"></section>
+      <section id="pop-wild" class="pop-sec"></section>
+      <section id="pop-limits" class="pop-sec"></section>
+      <section id="pop-tabs" class="pop-sec"></section>
+      <footer id="pop-foot"><button id="pop-settings">설정</button><button id="pop-open" class="pop-primary">Tamer 열기</button></footer>
+    </main>
+    <script type="module" src="/src/popover.js"></script>
+  </body>
+</html>

@@ -52,6 +52,7 @@ const DIST = path.join(__dirname, "..", "dist");
 const KINDS = ["agent", "shell"];
 let win;
 let overlay; // desktop overlay (overlay.html): partners while you're in another app
+let popover = null; // 메뉴바 미니 대시보드 (popover.html, STA-22 #105): the menu bar icon's left click
 let activeWs = null; // the tab on screen in the main window
 let core; // cvim-core process (started when the app is ready)
 const workspaces = new Map(); // ws id -> { id, cwd, agent, opened, partnerReady, partner, sessions }
@@ -65,10 +66,11 @@ function send(event, payload) {
   if (win && !win.isDestroyed()) win.webContents.send("host-event", { event, payload });
 }
 
-// to both windows (wild encounters show in either)
+// to every window (wild encounters show in any — the dashboard catches too, #105)
 function broadcast(event, payload) {
   send(event, payload);
   if (overlay && !overlay.isDestroyed()) overlay.webContents.send("host-event", { event, payload });
+  if (popover && !popover.isDestroyed()) popover.webContents.send("host-event", { event, payload });
 }
 
 // the app's own log: a file only with CVIM_DESKTOP_LOG (tests, diagnosis); the last lines are also
@@ -995,8 +997,8 @@ function trayUpdate() {
   if (!tray) {
     tray = new Tray(trayIcon(nativeImage));
     tray.setToolTip("Tamer");
-    const open = () => { limitsRefresh(); tray.popUpContextMenu(Menu.buildFromTemplate(trayTemplate(trayNow().items))); }; // #104: older than a minute → read again (shown next time)
-    tray.on("click", open);
+    const open = () => { popoverHide(); limitsRefresh(); tray.popUpContextMenu(Menu.buildFromTemplate(trayTemplate(trayNow().items))); }; // #104: older than a minute → read again (shown next time)
+    tray.on("click", (_e, bounds) => popoverToggle(bounds)); // left: the dashboard (#105) · right: the menu
     tray.on("right-click", open);
   }
   tray.setTitle(trayNow().title, { fontType: "monospacedDigit" });
@@ -1061,9 +1063,66 @@ async function limitsStart() {
 }
 setInterval(() => { if (uiReady) limitsRefresh(); }, 15 * 60 * 1000);
 
+// ── 메뉴바 미니 대시보드 (STA-22, #105): a panel under the icon — doesn't bring Tamer forward, closes when
+// another place is clicked (blur), Esc, or the icon again. Its model is redrawn while it's open ─────
+const POP_W = 360;
+let popoverClosedAt = 0;
+function popoverModel() {
+  const cur = workspaces.get(activeWs) || null, p = cur?.partner;
+  return {
+    folder: cur ? path.basename(cur.cwd) : null,
+    partner: p ? { name: p.name, gif: p.gif, shiny: p.shiny, lv: p.lv, final: p.final, next: p.next, grad: p.grad, xp: p.xp, egg: p.egg } : null,
+    today: (() => { try { return stats.summary(); } catch { return null; } })(), coins: coinsNow(), prog: progressNow(),
+    usage: usageSeen, limits: limitsView(), tabs: trayTabs(), wild: wild.current(), balls: ballsOwned(),
+  };
+}
+function popoverCreate() {
+  popover = new BrowserWindow({
+    // panel: like the overlay, a non-activating NSPanel — opening it doesn't bring Tamer's main window forward
+    type: "panel", width: POP_W, height: 400, show: false, frame: false, resizable: false, movable: false, minimizable: false,
+    maximizable: false, fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: true, roundedCorners: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1b1b22" : "#ffffff",
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false },
+  });
+  popover.setAlwaysOnTop(true, "pop-up-menu");
+  popover.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  popover.on("blur", () => { if (!TEST) popoverHide(); });
+  popover.webContents.on("will-navigate", (e) => e.preventDefault());
+  popover.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  popover.loadFile(path.join(DIST, "popover.html"));
+}
+// under the icon, kept on the icon's screen
+function popoverPlace(bounds) {
+  const area = screen.getDisplayMatching(bounds).workArea, [, h] = popover.getSize();
+  const x = Math.round(Math.min(Math.max(bounds.x + bounds.width / 2 - POP_W / 2, area.x + 8), area.x + area.width - POP_W - 8));
+  popover.setBounds({ x, y: Math.round(bounds.y + bounds.height + 4), width: POP_W, height: h });
+}
+function popoverShow(bounds) {
+  if (!popover || popover.isDestroyed()) popoverCreate();
+  popoverPlace(bounds);
+  popover.webContents.send("host-event", { event: "popover", payload: popoverModel() });
+  if (TEST) popover.showInactive(); else { popover.show(); popover.focus(); }
+  limitsRefresh(); // older than a minute → read again (STA-21 rule 3)
+  logLine("popover open");
+}
+function popoverHide() {
+  if (!popover || popover.isDestroyed() || !popover.isVisible()) return;
+  popover.hide();
+  popoverClosedAt = Date.now();
+}
+// the icon's click also blurs the open dashboard first (closing it): that same click mustn't reopen it
+function popoverToggle(bounds) {
+  if (popover?.isVisible?.()) return popoverHide();
+  if (Date.now() - popoverClosedAt < 300) return;
+  popoverShow(bounds || tray?.getBounds?.() || { x: 0, y: 0, width: 0, height: 24 });
+}
+function popoverUpdate() {
+  if (popover && !popover.isDestroyed() && popover.isVisible()) popover.webContents.send("host-event", { event: "popover", payload: popoverModel() });
+}
+
 function trayUpdateSoon() {
   if (trayTimer) return;
-  trayTimer = setTimeout(() => { trayTimer = null; trayUpdate(); }, 100);
+  trayTimer = setTimeout(() => { trayTimer = null; trayUpdate(); popoverUpdate(); }, 100);
 }
 // the window is sized to its cards (overlay_fit) and anchored at its bottom-right corner: a big
 // see-through window would stop the cards short of the screen top (macOS keeps windows below the
@@ -1187,6 +1246,26 @@ function focusMain(wsId) {
 
 // what the overlay page may ask for (nothing that runs or reads anything else)
 let drag = null;
+// the dashboard page (popover.html) may call only these (POL-SEC-02)
+const popoverCommands = {
+  popover_state: () => popoverModel(),
+  popover_fit({ height }) {
+    if (!popover || popover.isDestroyed()) return;
+    const b = popover.getBounds(), area = screen.getDisplayMatching(b).workArea;
+    const h = Math.round(Math.min(Math.max(Number(height) || 0, 80), area.y + area.height - b.y - 8));
+    if (h !== b.height) popover.setBounds({ ...b, height: h });
+  },
+  popover_hide: () => popoverHide(),
+  popover_tab({ ws }) { popoverHide(); focusMain(String(ws)); },
+  popover_open() { popoverHide(); focusMain(); },
+  popover_settings() { popoverHide(); focusMain(); send("open-settings", {}); },
+  popover_dex({ id }) { popoverHide(); focusMain(); send("open-dex", { id: Number(id) || null }); },
+  popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },
+  limits_refresh: () => limitsRefresh({ user: true }), // pressed in the dashboard = the user's 새로 고침 (STA-21)
+  sprite_b64: (args) => commands.sprite_b64(args),
+  wild_throw: (args) => commands.wild_throw(args),
+};
+
 const overlayCommands = {
   overlay_state: () => overlayPayload(),
   overlay_click({ ws }) { focusMain(String(ws)); },
@@ -1681,7 +1760,7 @@ const testCommands = {
   // from $CVIM_UI_BASELINE/<name>.png (share of pixels whose colour moved more than a little)
   async ui_shot({ name, target }) {
     const n = String(name).replace(/[^\w-]/g, "");
-    const wc = (target === "overlay" && overlay ? overlay : win).webContents; // the overlay's own page (STA-20)
+    const wc = (target === "overlay" && overlay ? overlay : target === "popover" && popover ? popover : win).webContents; // the overlay's own page (STA-20) · the dashboard's (#105)
     wc.invalidate(); await new Promise((r) => setTimeout(r, 120)); // paint the current scene first, not a stale frame
     const img = await wc.capturePage();
     if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${n}.png`), img.toPNG());
@@ -1711,6 +1790,13 @@ const testCommands = {
   // the pointer over the current tab's partner / gone (scenes, #68)
   // 메뉴바 (#64): the icon's text and the menu as data (a test app shows no icon); a menu item's click by its labels
   tray_test: () => ({ shown: !!tray, ...trayNow() }),
+  // 대시보드 (#105): open / close as the icon's left click would (a test app has no icon — a fixed place),
+  // its text and buttons as shown, a click on one of them
+  popover_test({ open }) { if (open) popoverShow({ x: 900, y: 0, width: 24, height: 24 }); else popoverHide(); return { open: !!popover?.isVisible?.() }; },
+  popover_read_test: () => (popover?.isVisible?.() ? popover.webContents.executeJavaScript(`({ text: document.querySelector("#pop").innerText,
+    tabs: [...document.querySelectorAll(".pop-tab")].map((b) => b.innerText.replace(/\\s+/g, " ").trim()),
+    wild: !document.querySelector("#pop-wild .wild-card")?.hidden, height: innerHeight })`) : null),
+  popover_click_test: ({ sel }) => popover.webContents.executeJavaScript(`(() => { const b = document.querySelector(${JSON.stringify(String(sel))}); if (b) b.click(); return !!b; })()`),
   // 한도 (#104): what was read and how often the token was — counts only, never a value; status = the stand-in's answer
   // auto: the timer's read now (as if a minute had passed — the Keychain must not be touched)
   async limits_test({ status, auto } = {}) {
@@ -1941,7 +2027,8 @@ ipcMain.handle("host-invoke", async (e, cmd, args) => {
   const url = e.senderFrame?.url || "";
   const page = url.startsWith("file://") ? decodeURIComponent(url.slice(7)).split(/[?#]/)[0] : "";
   const table = page === path.join(DIST, "index.html") && e.sender === win?.webContents ? commands
-    : page === path.join(DIST, "overlay.html") && e.sender === overlay?.webContents ? overlayCommands : null;
+    : page === path.join(DIST, "overlay.html") && e.sender === overlay?.webContents ? overlayCommands
+    : page === path.join(DIST, "popover.html") && e.sender === popover?.webContents ? popoverCommands : null;
   if (!table) throw new Error("unexpected sender");
   const fn = Object.hasOwn(table, cmd) && table[cmd];
   if (!fn) throw new Error(`unknown command ${cmd}`);

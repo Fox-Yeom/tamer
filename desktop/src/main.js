@@ -3872,6 +3872,14 @@ async function uiScenes(set) {
       await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
       await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" });
       await invoke("overlay_show_test", { on: false });
+      // 메뉴바 미니 대시보드 (#105, STA-22): this tab needing you, Claude's limits (no reset time: the picture doesn't move with the clock)
+      await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "waiting", hold: true });
+      await invoke("usage_seen", { key: "claude", five_hour: { pct: 42 }, seven_day: { pct: 86 } });
+      await invoke("popover_test", { open: true }); await wait(1500);
+      { const r = await invoke("ui_shot", { name: "menubar-dashboard", target: "popover" });
+        await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`); }
+      await invoke("popover_test", { open: false });
+      await invoke("agent_state_test", { ws: tab.id, from: "waiting", to: "idle" });
       // the shell rail opened by the pointer (#99): one agent's own title, one shell named by hand — last, as a
       // second shell changes what the tab shows
       await invoke("win_resize_test", { w: 1100, h: 600 });
