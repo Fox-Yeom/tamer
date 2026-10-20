@@ -133,6 +133,7 @@ function endDrag(e, click) {
   if (d.moved) invoke("overlay_drag", { phase: "end", x: e.screenX, y: e.screenY });
   else if (click && d.act === "wild") invoke("wild_open");
   else if (click && d.act === "hatch") invoke("hatch_open");
+  else if (click && d.act === "party") invoke("overlay_click", { ws: "" }); // 파티 card (#107): Tamer opens
   else if (click && d.ws) invoke("overlay_click", { ws: d.ws });
 }
 document.addEventListener("mouseup", (e) => { if (drag) endDrag(e, true); });

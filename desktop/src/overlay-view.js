@@ -81,6 +81,21 @@ async function bigCard(t, { show, stallMs, spriteUrl, extra = "" }) {
   </div>`;
 }
 
+// 파티 (#107, STA-15 rule 10): no tab open (Tamer in the menu bar only) — the party's lead big, the others small,
+// and the last finish done outside Tamer / grown by the party as a bubble ("밖에서 +5 · 리자드 Lv 31")
+async function partyCard(party, note, { show, spriteUrl }) {
+  const [lead, ...rest] = party.list, min = isMinimal(show);
+  const url = await spriteUrl(lead.gif);
+  const others = await Promise.all(rest.map(async (m) => { const u = await spriteUrl(m.gif); return `<span class="mini" title="${esc(m.name)} Lv ${m.lv ?? "?"}">${u ? `<img src="${u}" alt="" />` : "·"}</span>`; }));
+  const said = note && show.alerts !== false ? `<div class="bubble ok">${min ? "+" : `${note.outside ? "밖에서 " : ""}+${note.coins || 0}${note.mon?.name ? ` · ${esc(note.mon.name)}${note.mon.lv ? ` Lv ${note.mon.lv}` : ""}` : ""}`}</div>` : "";
+  return `<div class="card hit current party" data-act="party" title="${min ? "" : "파티 — 클릭: Tamer 열기 · 드래그: 이동"}">
+    ${said}
+    <div class="row"><div class="sprite">${url ? `<img class="poke st-idle" src="${url}" alt="" />` : '<div class="pokeball"></div>'}</div>
+    ${min ? "" : `<div class="meta"><div class="name">${esc(`${lead.shiny ? "✨" : ""}${lead.name}`)}</div><div class="folder">파티 · Lv ${lead.lv ?? "?"}</div><div class="state">Tamer 밖 작업도 키워요</div></div>`}</div>
+    ${others.length && !min ? `<div class="minis">${others.join("")}</div>` : ""}
+  </div>`;
+}
+
 // every card of an overlay payload { current, urgent, minis, more, counts, collapsed, show, stallMs }
 export async function cardsHtml(p, { spriteUrl }) {
   const show = p.show || {}, stallMs = p.stallMs, min = isMinimal(show);
@@ -100,6 +115,7 @@ export async function cardsHtml(p, { spriteUrl }) {
   // 진행 (#88 #90): a line under the current tab's card (minimal: chips under the partner), or a card of its own
   const prog = show.progress !== false && progItems(p.prog).length ? p.prog : null;
   if (p.current && show.partner !== false) cards.push(await bigCard(p.current, { show, stallMs, spriteUrl, extra: (prog && min ? progMini(prog, p.current.ws) : "") + strip + (prog && !min ? progHtml(prog) : "") }));
+  else if (p.party?.list?.length && show.partner !== false) cards.push(await partyCard(p.party, p.partyNote, { show, spriteUrl })); // no tab: the party (#107)
   else if (strip || prog) cards.push(`<div class="card">${strip}${prog ? progHtml(prog) : ""}</div>`); // no partner card: the icon row / the line alone
   return cards.join("");
 }

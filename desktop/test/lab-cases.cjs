@@ -518,14 +518,15 @@ module.exports = [
   {
     id: "background-close", tags: ["smoke", "app"], what: "백그라운드: 메인 창을 닫으면 앱은 메뉴바에 남음 — 터미널은 끝나고 탭 기록은 그대로, 처음 한 번 안내, 대시보드는 계속 · 대시보드 [Tamer 열기]로 창이 다시 열리고 탭이 돌아옴 (APP-21, #106)",
     data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 40000,
-    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { invoke: "background_test" }, { wait: 15000 }],
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 2 } }, { invoke: "background_test" }, { wait: 15000 }],
     check: ({ log }) => {
       const closed = log.match(/^bg closed (.*)$/m)?.[1] || "", back = log.match(/^bg reopened (.*)$/m)?.[1] || "";
       return [
         ok(/^window closed: Tamer stays in the menu bar$/m.test(log) && !/^user quit/m.test(log), "창을 닫아도 끝나지 않아야"),
         ok(/win=false tabs=0 popover=\w+ saved=1 quit=false/.test(closed), `닫은 뒤: 창 없음·터미널 끝·탭 기록 1개 그대로(끝냄 표시 없음) — ${closed}`),
         ok((log.match(/^background notice$/gm) || []).length === 1, "처음 한 번 안내"),
-        ok(/click=true win=true tabs=1 overlay=true/.test(back) && (log.match(/^startup window created/gm) || []).length === 2, `[Tamer 열기]로 창·탭·오버레이가 다시 — ${back}`),
+        ok(/^bg overlay alive=true wants=true party=2$/m.test(log), `탭이 없을 때 오버레이에 파티 2마리(#107) — ${log.match(/^bg overlay .*$/m)?.[0]}`),
+        ok(/click=true win=true tabs=1 overlay=true/.test(back) && (log.match(/^startup window created/gm) || []).length === 2 && !/overlay twice/.test(log), `[Tamer 열기]로 창·탭이 다시, 오버레이는 그대로 — ${back}`),
       ];
     },
   },
@@ -557,6 +558,73 @@ module.exports = [
         ok(JSON.stringify(clicks) === '["true","true"]' && /^wild throw caught/m.test(log), `마스터볼로 던져 잡힘 ${JSON.stringify(clicks)} ${log.match(/^wild throw .*$/m)?.[0]}`),
         ok((st.bag?.master || 0) === 0, `마스터볼 한 개 줄어듦 ${JSON.stringify(st.bag)}`),
       ];
+    },
+  },
+  {
+    id: "outside-claude", tags: ["smoke", "poke"], what: "Tamer 밖 Claude 작업(STA-23, #107): 동의(가짜 '켜기') 뒤 다른 곳에서 끝난 Claude 작업 2번 → 코인·파티가 차례로 한 마리씩 +2 · 켜기 전부터 있던 줄·스크립트(sdk-cli)·하위 에이전트·Claude가 떠 있는 탭의 폴더는 안 셈 · 기록 본문은 앱 기록·데이터에 없음",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    env: { CVIM_DESKTOP_AUTOSTART: "1", CVIM_DESKTOP_AGENT_CMD: (box) => path.join(box.dir, "fakebin", "claude-idle"), CVIM_TEST_OUTSIDE_CONSENT: "yes" },
+    files: { "fakebin/claude-idle": "#!/bin/sh\nsleep 60\n",
+      // a log that was there before Tamer started: its finish must not count (POL-FUT-05 rule 8)
+      "claudecfg/projects/-elsewhere/old.jsonl": '{"type":"system","subtype":"turn_duration","cwd":"/tmp/tamer-lab-outside","durationMs":60000,"entrypoint":"cli","isSidechain":false}\n' },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "party_test", args: { n: 2 }, log: true },
+      { invoke: "outside_append_test", args: { agent: "claude", rel: "-elsewhere/new.jsonl", lines: [
+        { type: "user", message: { content: "LAB-PRIVATE-107" }, cwd: "/tmp/tamer-lab-outside" },
+        { type: "system", subtype: "turn_duration", cwd: "/tmp/tamer-lab-outside", durationMs: 60000, entrypoint: "cli", isSidechain: false }] } },
+      { wait: 1500 },
+      { invoke: "outside_append_test", args: { agent: "claude", rel: "-elsewhere/new.jsonl", lines: [
+        { type: "system", subtype: "turn_duration", cwd: "/tmp/tamer-lab-outside", durationMs: 45000, entrypoint: "claude-desktop", isSidechain: false },
+        { type: "system", subtype: "turn_duration", cwd: "/tmp/tamer-lab-outside", durationMs: 45000, entrypoint: "sdk-cli", isSidechain: false },
+        { type: "system", subtype: "turn_duration", cwd: "/tmp/tamer-lab-outside", durationMs: 45000, entrypoint: "cli", isSidechain: true },
+        { type: "system", subtype: "turn_duration", cwd: "$tab", durationMs: 45000, entrypoint: "cli", isSidechain: false }] } },
+      { wait: 2000 }, { invoke: "party_state", log: true }],
+    check: ({ log, box }) => {
+      const party0 = JSON.parse(log.match(/^lab-invoke party_test (.*)$/m)?.[1] || "{}");
+      const party1 = JSON.parse(log.match(/^lab-invoke party_state (.*)$/m)?.[1] || "{}");
+      const done = (log.match(/^outside done claude/gm) || []).length, skip = (log.match(/^outside skip claude: a tab runs it there$/gm) || []).length;
+      const grew = [...log.matchAll(/^exp outside via=party \{"uid":(\d+)\}/gm)].map((m) => Number(m[1]));
+      const lv = (p, u) => p.list?.find((m) => m.uid === u)?.lv;
+      const files = []; const walk = (d) => { for (const n of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, n.name); if (n.isDirectory()) walk(p); else files.push(p); } };
+      try { walk(box.data); } catch {}
+      const leaked = files.filter((f) => { try { return fs.readFileSync(f, "utf8").includes("LAB-PRIVATE-107"); } catch { return false; } });
+      return [
+        ok(/^outside ask$/m.test(log) && /^outside on: \d+ logs$/m.test(log), "처음 한 번 묻고 켜짐"),
+        ok(party0.list?.length === 2, `파티 2마리 ${JSON.stringify(party0.list?.map((m) => m.uid))}`),
+        ok(done === 2 && skip === 1, `센 것 2번(cli·claude-desktop), 탭이 있는 폴더 1번 건너뜀 — 센 ${done} 건너뜀 ${skip} (켜기 전 줄·sdk-cli·하위 에이전트는 아예 안 셈)`),
+        ok(grew.length === 2 && grew[0] !== grew[1] && grew.every((u) => party0.list.some((m) => m.uid === u)), `파티가 차례로 한 마리씩 ${JSON.stringify(grew)}`),
+        ok(party0.list?.every((m) => lv(party1, m.uid) === m.lv + 2 || (m.final && lv(party1, m.uid) === m.lv + 1)), `각각 +2 ${JSON.stringify(party0.list?.map((m) => [m.lv, lv(party1, m.uid)]))}`),
+        ok((log.match(/^coins outside \+/gm) || []).length === 2, `코인 2번 ${(log.match(/^coins outside .*/gm) || []).join(" | ")}`),
+        ok(!log.includes("LAB-PRIVATE-107") && !leaked.length, `기록 본문이 앱 기록·데이터에 없어야 ${JSON.stringify(leaked)}`),
+      ];
+    },
+  },
+  {
+    id: "outside-codex", tags: ["smoke", "poke"], what: "Tamer 밖 Codex 작업(STA-23, #107): 터미널(codex-tui)·Codex 앱(Codex Desktop)의 task_complete는 셈 · Claude Code가 띄운 Codex·codex_exec·하위 에이전트·실패한 턴은 안 셈",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_OUTSIDE_CONSENT: "yes" },
+    files: { "codex/sessions/2026/10/20/.keep": "" },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 }, { invoke: "party_test", args: { n: 1 } },
+      ...[["tui", { originator: "codex-tui", source: "cli" }, false], ["app", { originator: "Codex Desktop", source: "vscode" }, false], ["byclaude", { originator: "Claude Code", source: "vscode" }, false],
+        ["exec", { originator: "codex_exec", source: "exec" }, false], ["sub", { originator: "Codex Desktop", source: { subagent: "review" } }, false], ["fail", { originator: "codex-tui", source: "cli" }, true]].map(([n, meta, fail]) => (
+        { invoke: "outside_append_test", args: { agent: "codex", rel: `2026/10/20/rollout-${n}.jsonl`, lines: [
+          { type: "session_meta", payload: { ...meta, cwd: "/tmp/tamer-lab-outside" } },
+          { type: "event_msg", payload: { type: "task_complete", duration_ms: 50000, ...(fail ? { error: { message: "x" } } : {}) } }] } })),
+      { wait: 1500 }],
+    check: ({ log }) => {
+      const done = (log.match(/^outside done codex/gm) || []).length;
+      return [ok(/^outside on: \d+ logs$/m.test(log), "켜짐"), ok(done === 2 && /^exp outside via=party/m.test(log), `센 것 2번(codex-tui · Codex Desktop) — ${done}번`)];
+    },
+  },
+  {
+    id: "outside-declined", tags: ["smoke", "poke"], what: "Tamer 밖 작업(켜지 않음): 처음 질문에 '켜지 않음'이면 기록을 열지도 않고, 다른 곳에서 끝난 작업은 세지 않음 (STA-23 규칙 6, #107)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_OUTSIDE_CONSENT: "no" },
+    files: { "claudecfg/projects/-elsewhere/.keep": "" },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "outside_append_test", args: { agent: "claude", rel: "-elsewhere/x.jsonl", lines: [{ type: "system", subtype: "turn_duration", cwd: "/tmp/tamer-lab-outside", durationMs: 60000, entrypoint: "cli", isSidechain: false }] } },
+      { wait: 1500 }, { invoke: "settings_get", log: true }],
+    check: ({ log }) => {
+      const st = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
+      return [ok(/^outside ask$/m.test(log) && st.outside === false && !/^outside on/m.test(log) && !/^outside done/m.test(log), `켜지 않음 → 안 읽음 ${JSON.stringify({ outside: st.outside })}`)];
     },
   },
   {

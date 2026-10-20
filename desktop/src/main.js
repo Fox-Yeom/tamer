@@ -1997,7 +1997,7 @@ function dexTitle() {
   const tab = chooseFor || active, on = (v) => (view === v ? ' class="on"' : "");
   const cur = d.chooseOpts?.current;
   $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button>${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
-    + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button>`
+    + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button><button data-view="party"${on("party")}>⭐ 파티</button>`
     + `<button data-view="shop"${on("shop")}>🛒 상점</button><button data-view="bag"${on("bag")}>👜 가방${coins?.bagN ? ` <span class="dim">${coins.bagN}</span>` : ""}${prog?.inc ? ' <span class="dim">· 🥚</span>' : ""}</button></span>`
     + (view === "choose" && tab ? `<span class="pk-sub">${esc(base(tab.cwd))}의 파트너 — ${cur ? `지금 ${cur.shiny ? "✨" : ""}${esc(cur.name)} · Lv ${cur.lv ?? "?"}` : "아직 없어요"}</span>`
       + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>' : `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
@@ -2021,6 +2021,7 @@ const HELP = {
   dex: "←→↑↓ 이동 · / 검색 · Tab 다음 만난 포켓몬 · Enter 이 탭의 파트너로(박스에 있으면) · M 내 포켓몬 · Esc 닫기",
   box: "←→↑↓ 이동 · / 검색 · Enter 이 탭의 파트너로 · M 도감 · Esc 닫기",
   home: "⌘P 홈 · S 상점 · I 가방 · M 내 포켓몬 · Esc 닫기 — 한도는 각 에이전트가 마지막으로 알려 준 값이에요",
+  party: "파트너가 없는 폴더·Tamer 밖에서 끝낸 작업으로 파티가 차례로 한 마리씩 커요 · 최대 6마리 · Esc 닫기", // #107
   shop: "←→↑↓ 고르기 · 한 번 더 누르면(− +) 수 · Enter 사기 · I 가방 · Esc 닫기 — 1,000코인 이상은 두 번 눌러 사요",
   bag: "←→↑↓ 고르기 · Enter 쓰기 · S 상점 · Esc 닫기",
   pick: "←→↑↓ 고르기 · Enter 사탕 주기 · Esc 가방으로",
@@ -2031,9 +2032,9 @@ function viewChrome(v) {
   const w = $("#dex");
   w.classList.toggle("cardview", v !== "dex");
   w.classList.toggle("chooseview", v === "choose");
-  w.classList.toggle("homeview", v === "home");
+  w.classList.toggle("homeview", v === "home" || v === "party"); // 파티 (#107) is laid out like 홈
   w.classList.toggle("shopview", v === "shop" || v === "bag");
-  $("#dex-take").hidden = v === "home";
+  $("#dex-take").hidden = v === "home" || v === "party";
   $("#dex-pos").textContent = "";
   $("#dex-grid").hidden = v !== "dex";
   $("#box-grid").hidden = v === "dex";
@@ -2049,6 +2050,7 @@ async function dexView(v) {
   if (v !== "choose") dexLastView = v; // 파트너 고르기 opens for a reason; the window remembers the other two
   viewChrome(v);
   if (v === "home") { dexTitle(); return homeRender(); }
+  if (v === "party") { dexTitle(); return partyRender(); }
   if (v === "shop" || v === "bag") { d.pick = false; d.ii = v === "bag" ? null : 0; d.qty = 1; dexTitle(); return shopRender(); }
   if (v === "dex") {
     $(".dex-preview").style.visibility = "";
@@ -2068,6 +2070,41 @@ async function dexView(v) {
   }
   dexTitle();
 }
+
+// ── ⭐ 파티 (PKM-31, #107): up to 6 that grow in turn from finishes in folders without a partner — a tab's
+// or one done outside Tamer (STA-23). Six slots (넣기 · 빼기 · 선두로), the box below to add from ──
+async function partyRender() {
+  const d = dexState;
+  const [p, box] = await Promise.all([invoke("party_state").catch(() => null), d.box ? d.box : invoke("box_list", { ws: active?.id }).catch(() => [])]);
+  if (dexState !== d || d.view !== "party" || !p) return;
+  d.box = box; d.party = p;
+  const inParty = new Set(p.list.map((m) => m.uid));
+  const slots = Array.from({ length: p.max }, (_, i) => {
+    const m = p.list[i];
+    if (!m) return `<div class="pk-party-slot empty"><span class="dim">빈 칸</span></div>`;
+    return `<div class="pk-party-slot${i === p.next ? " next" : ""}">${pkCard({ ...m, folder: m.folder ? base(m.folder) : null }, `p${i}`, { icons: TYPE_ICON, ago })}`
+      + `<span class="pk-party-acts">${i ? `<button data-party-lead="${m.uid}">선두로</button>` : '<span class="dim">선두</span>'}<button data-party-out="${m.uid}">빼기</button></span>`
+      + (i === p.next ? '<i class="pk-party-turn">다음 차례</i>' : "") + "</div>";
+  }).join("");
+  const cands = boxMons(box).filter((m) => !inParty.has(m.uid) && !(m.grad && m.lv >= 100));
+  const full = p.list.length >= p.max;
+  const recent = (p.recent || []).slice(0, 3).map((r) => `<li>${r.outside ? "밖에서" : "탭"} · ${esc(r.folder)} · +${r.coins || 0}${r.mon?.name ? ` · ${esc(r.mon.name)}${r.mon.lv ? ` Lv ${r.mon.lv}` : ""}` : ""}</li>`).join("");
+  $("#box-grid").innerHTML = `<div class="pk-home pk-party">
+    <p class="pk-party-about">파트너가 없는 폴더에서 끝낸 작업과 Tamer 밖(다른 터미널·Claude 앱·Codex 앱)에서 끝낸 작업은 파티가 <b>차례로 한 마리씩</b> 받아요. 폴더 파트너는 그 폴더 작업으로 따로 커요.</p>
+    <div class="pk-party-slots">${slots}</div>
+    ${recent ? `<ul class="pk-party-recent">${recent}</ul>` : ""}
+    <h4>${full ? "파티가 찼어요 — 빼고 넣으세요" : "내 포켓몬에서 넣기"}</h4>
+    <div class="pk-party-cands">${cands.length ? cands.map((m, i) => `<div class="pk-party-cand">${pkCard(m, `c${i}`, { icons: TYPE_ICON, ago })}<button data-party-in="${m.uid}"${full ? " disabled" : ""}>파티에 넣기</button></div>`).join("") : '<span class="dim">넣을 포켓몬이 없어요 — 작업을 끝내면 가끔 야생 포켓몬이 나타나요</span>'}</div>
+  </div>`;
+  $("#box-grid").querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
+  $(".dex-preview").style.visibility = "hidden"; // nothing picked here — the last view's Pokémon mustn't linger
+}
+async function partyChange(uids) {
+  const v = await invoke("party_set", { uids }).catch(() => null);
+  if (v && dexState?.view === "party") partyRender();
+}
+listen("party", () => { if (dexState?.view === "party") partyRender(); });
+listen("party-done", () => { if (dexState?.view === "party") partyRender(); });
 
 // ── 🏠 홈 (#44): this tab's partner (the preview), tasks finished today and in a row, the last 7
 // days, and each agent's 5-hour / weekly limit as last reported (nothing new is measured here) ──
@@ -2839,6 +2876,13 @@ $("#box-grid").addEventListener("click", async (e) => {
     return itemSelect(i);
   }
   if (e.target.closest(".pk-goods")) return shopView(); // 빈 가방 → 상점
+  // ⭐ 파티 (#107): a new list each time — the main process checks it (partner.partySet)
+  const pin = e.target.closest("[data-party-in]"), pout = e.target.closest("[data-party-out]"), plead = e.target.closest("[data-party-lead]");
+  if (pin || pout || plead) {
+    const cur = (dexState?.party?.list || []).map((m) => m.uid);
+    const u = Number((pin || pout || plead).dataset.partyIn || (pin || pout || plead).dataset.partyOut || (pin || pout || plead).dataset.partyLead);
+    return partyChange(pin ? [...cur, u] : pout ? cur.filter((x) => x !== u) : [u, ...cur.filter((x) => x !== u)]);
+  }
   const go = e.target.closest("button[data-view]"); // 내 포켓몬 "가방 열기" (#91) · 가방 "막 태어남 [보기]" (#88)
   if (go) return dexView(go.dataset.view);
   const add = e.target.closest("[data-incadd]"); // 빈 부화기 → 가방의 알 넣기 (#88)
@@ -2850,7 +2894,7 @@ $("#box-grid").addEventListener("click", async (e) => {
   if (e.target.closest(".pk-back")) { dexState.pick = false; dexState.stoneDone = null; return shopRender(); }
   const c = e.target.closest(".pk-card[data-i]"); if (c && Number(c.dataset.i) >= 0) boxSelect(Number(c.dataset.i));
 });
-$("#box-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".pk-card[data-i]") || (dexState?.view === "bag" && e.target.closest(".pk-item[data-i]"))) boxTake(); }); // the shop buys only by its button (#81)
+$("#box-grid").addEventListener("dblclick", (e) => { if (dexState?.view === "party") return; if (e.target.closest(".pk-card[data-i]") || (dexState?.view === "bag" && e.target.closest(".pk-item[data-i]"))) boxTake(); }); // the shop buys only by its button (#81)
 $("#dex").addEventListener("mousedown", (e) => { if (e.target === $("#dex")) dexEsc(); }); // outside the window
 $("#dex-from").addEventListener("click", async (e) => {
   const b = e.target.closest("button");
@@ -3872,6 +3916,10 @@ async function uiScenes(set) {
       await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
       await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" });
       await invoke("overlay_show_test", { on: false });
+      // ⭐ 파티 (#107, PKM-31): three of the box in the party, the next in turn marked
+      await invoke("party_test", { n: 3 });
+      await openDex(); await dexView("party"); await wait(700); await shot("party"); closeDex();
+      await invoke("party_set", { uids: [] });
       // 메뉴바 미니 대시보드 (#105, STA-22): this tab needing you, Claude's limits (no reset time: the picture doesn't move with the clock)
       await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "waiting", hold: true });
       await invoke("usage_seen", { key: "claude", five_hour: { pct: 42 }, seven_day: { pct: 86 } });

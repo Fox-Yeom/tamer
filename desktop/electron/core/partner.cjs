@@ -423,26 +423,67 @@ function prefetchOpen(m, trade) {
 // level after the move from EXP). Only one call per individual evolves at a time (#12); offline (no
 // facts / no picture) it keeps its level and tries again on the next finish (PKM-04 rule 6).
 const evolving = new Set(); // uid
+// one finish for an individual: +2 (+1 after its last form), friendship, milestones, graduation (PKM-21)
+function grow(m) {
+  m.xp = (m.xp || 0) + 1; // the old EXP (folders.json's mirror, PKM-17)
+  const before = lvOf(m);
+  if (!m.final && isFinal(m)) m.final = true;
+  m.lv = Math.min(MAX_LV, before + (m.final ? 1 : 2));
+  m.friend = (m.friend || 0) + 1;
+  return { miles: milesOf(m, before), graduated: graduate(m) };
+}
+// a finished task in a folder: its partner grows — none there: the party's next in turn (PKM-31, #107),
+// none in the party either: nobody (coins and wild Pokémon go on as before). via: "folder" | "party"
 async function onDone(cwd) {
-  let m, miles = [], trade = false, egg = false, graduated = false;
+  let m, miles = [], trade = false, egg = false, graduated = false, via = null;
   updateBox((b) => {
     m = b.mons.find((x) => x.folder === cwd);
-    if (!m) return;
-    if (m.egg) { egg = true; return; } // an egg isn't a partner any more (#85) — nothing here
-    m.xp = (m.xp || 0) + 1; // the old EXP (folders.json's mirror, PKM-17)
-    const before = lvOf(m);
-    if (!m.final && isFinal(m)) m.final = true;
-    m.lv = Math.min(MAX_LV, before + (m.final ? 1 : 2));
-    m.friend = (m.friend || 0) + 1;
-    miles = milesOf(m, before);
-    graduated = graduate(m);
-    trade = !!m.traded;
-    delete m.traded; // the first finish after the move only
+    if (m?.egg) { egg = true; return; } // an egg isn't a partner any more (#85) — nothing here
+    if (m) {
+      via = "folder";
+      ({ miles, graduated } = grow(m));
+      trade = !!m.traded;
+      delete m.traded; // the first finish after the move only
+      return;
+    }
+    const list = partyUids(b);
+    if (!list.length) return;
+    const i = (b.partyNext || 0) % list.length;
+    m = monOf(b, list[i]);
+    b.partyNext = (i + 1) % list.length;
+    via = "party";
+    ({ miles, graduated } = grow(m)); // a trade evolution opens only by a folder's own finish (rule 4)
   });
-  if (!m) return { evolved: null, miles: [] };
-  if (egg) return { evolved: null, miles: [] };
-  mirror(cwd, m);
-  return { ...(await evolveNow(m.uid, trade)), miles, graduated };
+  if (!m || egg) return { evolved: null, miles: [] };
+  if (via === "folder") mirror(cwd, m);
+  else if (m.folder) mirror(m.folder, m);
+  return { ...(await evolveNow(m.uid, trade)), miles, graduated, via, uid: m.uid };
+}
+
+// ── 파티 (PKM-31, #107): up to 6 individuals, in order (1 = the lead), that grow in turn from finishes in
+// folders without a partner — a Tamer tab's or one done outside Tamer (STA-23). A folder's partner may be in it too
+const PARTY_MAX = 6;
+const partyOk = (m) => !!m && !m.egg && !(m.grad && lvOf(m) >= MAX_LV); // an egg / a graduate at Lv 100 doesn't grow
+const partyUids = (b) => (b.party || []).filter((u) => partyOk(monOf(b, u)));
+function party() {
+  const b = readBox(), list = partyUids(b);
+  return { list: list.map((u) => monView(monOf(b, u))), next: list.length ? (b.partyNext || 0) % list.length : 0, max: PARTY_MAX };
+}
+// the whole list at once (the 파티 tab's add · remove · lead are each a new list) — checked here, not on the page
+function partySet(uids) {
+  updateBox((b) => {
+    const seen = new Set(), ok = [];
+    for (const u of Array.isArray(uids) ? uids : []) {
+      const n = Number(u);
+      if (seen.has(n) || !partyOk(monOf(b, n))) continue;
+      seen.add(n); ok.push(n);
+      if (ok.length === PARTY_MAX) break;
+    }
+    const kept = partyUids(b)[(b.partyNext || 0) % Math.max(1, partyUids(b).length)]; // whose turn it was
+    b.party = ok;
+    b.partyNext = Math.max(0, ok.indexOf(kept));
+  });
+  return party();
 }
 // 🎓 졸업 (E5, #84, PKM-19): Lv 100 — once an individual (its date kept), and it asks "계속 함께 / 새 파트너"
 // until answered (gradAsk). Nothing is taken away: it stays your Pokémon, a partner whenever you like
@@ -633,4 +674,4 @@ async function evolveNow(uid, trade) {
   return { evolved: to, from: first, evoNew };
 }
 
-module.exports = { assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, stoneOk: (uid) => stoneOk(monOf(readBox(), Number(uid))), stoneOptions, stoneEvolve, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { party, partySet, PARTY_MAX, assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, stoneOk: (uid) => stoneOk(monOf(readBox(), Number(uid))), stoneOptions, stoneEvolve, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

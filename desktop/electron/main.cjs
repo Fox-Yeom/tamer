@@ -18,6 +18,7 @@ const economy = require("./core/economy.cjs"); // 포켓코인 (#72)
 const legends = require("./core/legends.cjs"); // 전설의 길 (#86)
 const research = require("./core/research.cjs"); // 환상 스페셜 리서치 (#86)
 const limits = require("./core/limits.cjs"); // 채팅 없이 한도 (#104)
+const outside = require("./core/outside.cjs"); // Tamer 밖에서 끝낸 작업 (#107)
 const { RustCore } = require("./core/rust.cjs");
 
 const ptys = new Map(); // pane id "<ws>:<agent|shell>" -> IPty
@@ -505,60 +506,85 @@ function onCoreEvent(msg) {
     setTimeout(overlayUpdate, 15100); // the bubble goes away
   }
   if (msg.event === "transition" && msg.to === "done" && msg.from !== "done") {
-    stats.recordDone(); // Home: today's count, the streak (#44) — every finished task, guessed ones too
-    research.onDone(ws.cwd, caughtSet().size); // ✦ "서로 다른 폴더 3곳" (#86)
-    bigCheck(); // ⭐ the 7th 연구 스탬프 brings a legend (#82) · a research done brings its mythical (#86)
     // an agent without events (any CLI, or one whose events never came): "done" was guessed from its
     // output — it still raises the partner, at half the pace (every other one), and brings no wild
     if (msg.guess) {
       ws.guessed = (ws.guessed || 0) + 1;
       logLine(`guessed done ws=${msg.ws} n=${ws.guessed}`);
-      if (ws.guessed % 2) return;
     }
-    // 🪙 포켓코인 (#72, PKM-18): +5 (+1 for a turn under 30 s), the day's first +20, ₽300 a day.
-    // The core sends the transition before the "done" state: the times are still the turn's
-    // (turn_at = when it started); a test sends the state first, with its own times.
+    // the core sends the transition before the "done" state: the times are still the turn's
+    // (turn_at = when it started); a test sends the state first, with its own times
     const t = (fromShell ? ws.shell?.times : sess?.times) || {};
-    const coins = economy.onDone({ turnAt: t.turn_at || null, took: t.took ?? (t.turn_at ? Date.now() - t.turn_at : null) });
-    if (coins) {
-      logLine(`coins ws=${ws.id} +${coins.gained} (${coins.pay}${coins.first ? `+${coins.first}` : ""}${coins.capped ? " capped" : ""})`);
-      send("economy", { ...economy.summary(), ws: ws.id, gained: coins.gained });
-    }
-    // sometimes a wild Pokémon comes out (PLAN 3.6)
-    // where and during whose task it showed up: kept with the individual if it's caught (#44)
-    const w = msg.guess ? null : wild.onDone(ws.id, { empty: !ws.partner, folder: ws.cwd, agent: fromShell ? ws.shell?.key : sess?.agent, incense: !!economy.incenseUntil() });
-    if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ws=${ws.id}`); broadcast("wild", { ...w, balls: ballsOwned() }); overlayUpdate(); }
-    // 🥚 the incubator (#85): every finished task anywhere — the first egg one closer, maybe a hatch into the box
-    partner.incubatorStep().then((r) => {
-      if (!r) return;
-      if (r.hatched) {
-        const coins = r.newdex ? economy.onNewDex() : 0;
-        logLine(`incubator hatched ${r.hatched.id}${r.hatched.shiny ? "s" : ""}${coins ? " newdex" : ""}`);
-        if (research.onCatch(caughtSet().size)) researchCheck();
-        // the overlay shows it too (#88, PKM-30 rule 5) — with its picture, no further download
-        broadcast("hatched", { id: r.hatched.id, name: r.hatched.name, shiny: r.hatched.shiny, coins, gif: partner.loadSprite(r.hatched.id, r.hatched.shiny)?.gif || null });
-        send("economy", economy.summary());
-      }
-      send("incubator", partner.incubator());
-      progressBump(); // the stamp of the day too (stats are in by now)
-    }).catch((e) => logLine(`incubator error ${e}`));
-    // a finished task: EXP for the folder's partner, maybe an evolution
-    const t0 = Date.now();
-    partner.onDone(ws.cwd).then(({ evolved, from, miles = [], hatched, newdex, graduated, evoNew }) => {
-      logLine(`exp ws=${ws.id} ${JSON.stringify(partner.progress(ws.cwd))} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"}${hatched ? ` hatched=${hatched.id}${hatched.shiny ? "s" : ""}` : ""}${graduated ? " graduated" : ""} ${Date.now() - t0}ms`);
-      const newCoins = evolved && evoNew ? economy.onNewDex() : 0; // 🪙 a species new to the Pokédex by evolving: +30 more (#94)
-      const coins = (evolved ? economy.onEvolve() : hatched && newdex ? economy.onNewDex() : 0) + newCoins; // 🪙 +30 (#72) · a new species out of an egg (#84)
-      if (evolved && research.onEvolve(caughtSet().size)) researchCheck(); // ✦ "진화 3번" (#86)
-      const mileCoins = miles.reduce((s) => s + economy.onMilestone(), 0); // every 10 levels ₽20 (#74)
-      const gradCoins = graduated ? economy.graduated() : 0; // 🎓 300 + an egg (#84)
-      if (evolved || hatched) { ws.partner = { ...(evolved || hatched), ...partner.progress(ws.cwd) }; overlayUpdate(); }
-      if (evolved || mileCoins || gradCoins || coins) send("economy", economy.summary());
-      if (evolved) progressBump(); // ✦ "진화 3번"
-      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: evolved || null, from: from || null, coins, newCoins, mile: miles.at(-1) || null, mileCoins,
-        hatched: hatched || null, graduated: !!graduated, gradCoins });
-    }).catch((e) => logLine(`exp error ${e}`));
+    finishGame({ ws, cwd: ws.cwd, agent: fromShell ? ws.shell?.key : sess?.agent, took: t.took ?? (t.turn_at ? Date.now() - t.turn_at : null), turnAt: t.turn_at || null,
+      guess: !!msg.guess, skipGrowth: !!msg.guess && ws.guessed % 2 === 1 });
   }
 }
+
+// ── a finished task, wherever it was done (a tab, or outside Tamer — STA-23, #107): the same game for both
+// (POL-FUT-05 rule 4). ws = the tab (null outside Tamer); skipGrowth = a guessed finish's every other one
+function finishGame({ ws = null, cwd, agent = null, took = null, turnAt = null, guess = false, skipGrowth = false, outside = false }) {
+  stats.recordDone(); // Home: today's count, the streak (#44) — every finished task, guessed ones too
+  research.onDone(cwd, caughtSet().size); // ✦ "서로 다른 폴더 3곳" (#86)
+  bigCheck(); // ⭐ the 7th 연구 스탬프 brings a legend (#82) · a research done brings its mythical (#86)
+  if (skipGrowth) return;
+  // 🪙 포켓코인 (#72, PKM-18): +5 (+1 for a turn under 30 s), the day's first +20, ₽300 a day (tabs and outside together)
+  const coins = economy.onDone({ turnAt, took });
+  if (coins) {
+    logLine(`coins ${ws ? `ws=${ws.id}` : "outside"} +${coins.gained} (${coins.pay}${coins.first ? `+${coins.first}` : ""}${coins.capped ? " capped" : ""})`);
+    send("economy", { ...economy.summary(), ws: ws?.id || null, gained: coins.gained });
+  }
+  // sometimes a wild Pokémon comes out (PLAN 3.6) — where and during whose task it showed up: kept with the
+  // individual if it's caught (#44). A folder without a partner: more often (PKM-06)
+  const empty = ws ? !ws.partner : partner.progress(cwd).lv == null;
+  const w = guess ? null : wild.onDone(ws ? ws.id : null, { empty, folder: cwd, agent, incense: !!economy.incenseUntil() });
+  if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ${ws ? `ws=${ws.id}` : "outside"}`); broadcast("wild", { ...w, balls: ballsOwned() }); overlayUpdate(); }
+  // 🥚 the incubator (#85): every finished task anywhere — the first egg one closer, maybe a hatch into the box
+  partner.incubatorStep().then((r) => {
+    if (!r) return;
+    if (r.hatched) {
+      const coins = r.newdex ? economy.onNewDex() : 0;
+      logLine(`incubator hatched ${r.hatched.id}${r.hatched.shiny ? "s" : ""}${coins ? " newdex" : ""}`);
+      if (research.onCatch(caughtSet().size)) researchCheck();
+      // the overlay shows it too (#88, PKM-30 rule 5) — with its picture, no further download
+      broadcast("hatched", { id: r.hatched.id, name: r.hatched.name, shiny: r.hatched.shiny, coins, gif: partner.loadSprite(r.hatched.id, r.hatched.shiny)?.gif || null });
+      send("economy", economy.summary());
+    }
+    send("incubator", partner.incubator());
+    progressBump(); // the stamp of the day too (stats are in by now)
+  }).catch((e) => logLine(`incubator error ${e}`));
+  // EXP for the folder's partner — none there: the party's next in turn (PKM-31) — maybe an evolution
+  const t0 = Date.now();
+  partner.onDone(cwd).then(({ evolved, from, miles = [], hatched, newdex, graduated, evoNew, via, uid }) => {
+    logLine(`exp ${ws ? `ws=${ws.id}` : "outside"} via=${via || "-"} ${JSON.stringify(via === "party" ? { uid } : partner.progress(cwd))} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"}${hatched ? ` hatched=${hatched.id}${hatched.shiny ? "s" : ""}` : ""}${graduated ? " graduated" : ""} ${Date.now() - t0}ms`);
+    const newCoins = evolved && evoNew ? economy.onNewDex() : 0; // 🪙 a species new to the Pokédex by evolving: +30 more (#94)
+    const evoCoins = (evolved ? economy.onEvolve() : hatched && newdex ? economy.onNewDex() : 0) + newCoins; // 🪙 +30 (#72) · a new species out of an egg (#84)
+    if (evolved && research.onEvolve(caughtSet().size)) researchCheck(); // ✦ "진화 3번" (#86)
+    const mileCoins = miles.reduce((s) => s + economy.onMilestone(), 0); // every 10 levels ₽20 (#74)
+    const gradCoins = graduated ? economy.graduated() : 0; // 🎓 300 + an egg (#84)
+    if (evolved || mileCoins || gradCoins || evoCoins) send("economy", economy.summary());
+    if (evolved) progressBump(); // ✦ "진화 3번"
+    // the tabs showing this individual (the folder's own tab; a party member may be some folder's partner too)
+    const grown = via === "party" ? partner.party().list.find((m) => m.uid === uid) : null;
+    const tabs = [...workspaces.values()].filter((x) => (via === "folder" ? x.cwd === cwd : grown?.folder && x.cwd === grown.folder));
+    for (const x of tabs) {
+      if (evolved || hatched) { x.partner = { ...(evolved || hatched), ...partner.progress(x.cwd) }; overlayUpdate(); }
+      send("partner-progress", { ws: x.id, ...partner.progress(x.cwd), evolved: evolved || null, from: from || null, coins: evoCoins, newCoins, mile: miles.at(-1) || null, mileCoins,
+        hatched: hatched || null, graduated: !!graduated, gradCoins });
+    }
+    // 파티 · 밖 작업 (#107): the dashboard, the overlay and the 파티 tab hear who grew
+    if (via === "party" || outside) {
+      const mon = grown || (via === "folder" ? partner.progress(cwd) : null);
+      const note = { at: Date.now(), outside, folder: path.basename(cwd), agent, via: via || null, coins: coins?.gained || 0,
+        mon: mon && via ? { uid: mon.uid ?? uid, name: grown?.name || [...workspaces.values()].find((x) => x.cwd === cwd)?.partner?.name || null, lv: mon.lv ?? null } : null, evolved: evolved ? { id: evolved.id, name: evolved.name } : null };
+      recentDone.unshift(note); recentDone.length = Math.min(recentDone.length, 5);
+      broadcast("party-done", note);
+      popoverUpdate(); overlayUpdate();
+      setTimeout(overlayUpdate, 15100); // its bubble goes away
+    }
+  }).catch((e) => logLine(`exp error ${e}`));
+}
+const recentDone = []; // the last few finishes done outside Tamer or grown by the party — memory only (#107)
+const partyLite = () => { try { const p = partner.party(); return { list: p.list.map((m) => ({ uid: m.uid, name: m.name, gif: m.gif, shiny: m.shiny, lv: m.lv })), next: p.next }; } catch { return { list: [], next: 0 }; } };
 
 // ── session restore (E1): the open tabs, reopened on the next launch with their agents resuming
 // (Claude --continue, Codex resume --last) — only when the app didn't end by the user's choice:
@@ -874,7 +900,8 @@ const SETTINGS = path.join(CACHE, "ui", "settings.json");
 const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away" }, tabGlow: true, theme: "system", side: true, titles: true,
   menubar: { on: true, text: "waiting" }, // 메뉴바 (STA-19, #64)
   limits: { codex: true, claude: null }, // 채팅 없이 한도 (STA-21, #104): Codex app server · Claude usage API (null = not asked yet)
-  background: true, loginOpen: false, backgroundSeen: false }; // 백그라운드 (APP-21, #106): stay in the menu bar · open at login · the one-time notice
+  background: true, loginOpen: false, backgroundSeen: false, // 백그라운드 (APP-21, #106): stay in the menu bar · open at login · the one-time notice
+  outside: null }; // Tamer 밖 작업도 포켓몬에 (STA-23, #107): null = not asked yet
 const MENUBAR_TEXT = ["waiting", "limit", "none"];
 const MINIMAL = ["auto", "always", "never"];
 const WHEN = ["away", "always"]; // 보일 때 (#98): while another app is in front (as before) / always, Tamer in front too // 최소 모드 (#63): by the background (≤ 30 %), always, never
@@ -893,6 +920,7 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
     limits: { codex: b(raw?.limits?.codex, SETTINGS_DEFAULT.limits.codex), claude: typeof raw?.limits?.claude === "boolean" ? raw.limits.claude : null },
     background: b(raw?.background, SETTINGS_DEFAULT.background), loginOpen: b(raw?.loginOpen, SETTINGS_DEFAULT.loginOpen), backgroundSeen: b(raw?.backgroundSeen, false),
+    outside: typeof raw?.outside === "boolean" ? raw.outside : null,
   };
 }
 let settings = readSettings();
@@ -1020,7 +1048,7 @@ function trayUpdate() {
 // it's turned on or the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d), the timer uses the
 // token kept in memory. Results go to the windows as "limits" — they merge them like an agent's report
 const limitsState = { claude: { at: 0, error: null }, codex: { at: 0, error: null } };
-let limitsBusy = null, limitsLast = 0, limitsResetTimer = null, limitsStarted = false;
+let limitsBusy = null, limitsLast = 0, limitsResetTimer = null;
 const codexCmd = () => (TEST ? process.env.CVIM_LIMITS_CODEX_CMD || null : agents.where("codex"));
 const limitsView = () => ({ codex: settings.limits.codex, claude: settings.limits.claude === true, token: limits.hasToken(), state: limitsState });
 async function limitsRefresh({ user = false } = {}) {
@@ -1073,7 +1101,52 @@ async function limitsStart() {
   setSettings({ limits: { claude: yes } });
   if (yes) limitsRefresh({ user: true });
 }
-setInterval(() => { if (uiReady) limitsRefresh(); }, 15 * 60 * 1000);
+setInterval(() => limitsRefresh(), 15 * 60 * 1000); // window or not (#106)
+
+// ── Tamer 밖에서 끝낸 작업 (STA-23, #107 — POL-FUT-05): with the user's yes, the agents' own logs are
+// watched (every 3 s, new lines only) and a finish feeds finishGame like a tab's. Not counted: the folder
+// has a Tamer tab running that agent (the tab counts it)
+let outsideWatch = null, outsideTimer = null;
+const realOf = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+const tabHas = (agent, cwd) => {
+  const c = realOf(cwd);
+  return [...workspaces.values()].some((ws) => realOf(ws.cwd) === c && (ws.shell?.key === agent || ws.sessions?.some((x) => x.running && x.agent === agent)));
+};
+function outsidePoll() {
+  if (!outsideWatch) return;
+  for (const d of outsideWatch.poll()) {
+    if (tabHas(d.agent, d.cwd)) { logLine(`outside skip ${d.agent}: a tab runs it there`); continue; }
+    logLine(`outside done ${d.agent} took=${d.took ?? "-"}`);
+    finishGame({ cwd: d.cwd, agent: d.agent, took: d.took, outside: true });
+  }
+}
+function outsideSync() {
+  const on = settings.outside === true;
+  if (on && !outsideWatch) {
+    outsideWatch = outside.createWatch(agents.processEnv()); // from the logs' size now: nothing before counts (rule 4)
+    outsideTimer = setInterval(outsidePoll, TEST ? 700 : 3000);
+    logLine(`outside on: ${outsideWatch.size()} logs`);
+  } else if (!on && outsideWatch) { clearInterval(outsideTimer); outsideWatch = null; logLine("outside off"); }
+}
+// rule 6: what's read, what isn't, what's kept — before anything is opened; closing it = off
+async function outsideConsent() {
+  if (TEST) { logLine("outside ask"); return process.env.CVIM_TEST_OUTSIDE_CONSENT === "yes"; }
+  const r = await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+    type: "question", buttons: ["켜기", "켜지 않음"], defaultId: 0, cancelId: 1,
+    message: "Tamer 밖에서 한 작업도 포켓몬에 반영할까요?",
+    detail: "다른 터미널(iTerm 등)·Claude 앱의 Code·Codex 앱에서 끝낸 Claude Code·Codex 작업도 레벨·코인·야생에 반영해요. 탭에서 끝낸 것과 같은 규칙이에요(하루 상한도 함께).\n\n"
+      + "· 읽는 곳: 에이전트가 이 맥에 남기는 기록(~/.claude/projects · ~/.codex/sessions)\n"
+      + "· 읽는 것: '작업이 끝났다'는 줄의 폴더·걸린 시간·어디서 실행했는지만\n"
+      + "· 안 읽는 것: 대화 내용·명령·파일 — 저장·전송도 없어요. 어디까지 읽었는지도 메모리에만\n"
+      + "· Tamer가 켜져 있는 동안만 세요(창이 없어도). 스크립트·다른 에이전트가 띄운 실행은 세지 않아요\n"
+      + "· 설정 › 일반 › 포켓몬에서 언제든 바꿀 수 있어요",
+  });
+  return r.response === 0;
+}
+async function outsideStart() {
+  if (settings.outside === null && outside.hasLogs(agents.processEnv())) setSettings({ outside: await outsideConsent() });
+  outsideSync();
+}
 
 // ── 메뉴바 미니 대시보드 (STA-22, #105): a panel under the icon — doesn't bring Tamer forward, closes when
 // another place is clicked (blur), Esc, or the icon again. Its model is redrawn while it's open ─────
@@ -1086,6 +1159,7 @@ function popoverModel() {
     partner: p ? { name: p.name, gif: p.gif, shiny: p.shiny, lv: p.lv, final: p.final, next: p.next, grad: p.grad, xp: p.xp, egg: p.egg } : null,
     today: (() => { try { return stats.summary(); } catch { return null; } })(), coins: coinsNow(), prog: progressNow(),
     usage: usageSeen, limits: limitsView(), tabs: trayTabs(), wild: wild.current(), balls: ballsOwned(),
+    party: partyLite(), recent: recentDone.slice(0, 3), outside: settings.outside, // #107
   };
 }
 function popoverCreate() {
@@ -1170,6 +1244,8 @@ function overlayPayload() {
       done: count((t) => t.ended === "done"), error: count((t) => t.ended === "error") },
     wild: settings.overlay.wild ? wild.current() : null, stallMs: STALL_MS, show: settings.overlay, theme: settings.theme, // #59 #60
     prog: settings.overlay.progress ? progressNow() : null, // #88
+    // 파티 (#107): only while no tab is open; the last finish outside Tamer / by the party for 15 s
+    party: tabs.length ? null : partyLite(), partyNote: recentDone[0] && now - recentDone[0].at < 15000 ? recentDone[0] : null,
   };
 }
 
@@ -1232,7 +1308,8 @@ function overlayWants({ focused = !!BrowserWindow.getFocusedWindow(), quiet = QU
   const o = settings.overlay, away = (!focused || o.when === "always" || !settings.side) && !quiet;
   // the 설정 창 (#59): off, or nothing chosen to show (a wild card counts only while one is out)
   const something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progShown()); // #88 #90: the progress line alone
-  return !!((away || overlayForced) && workspaces.size && o.on && something);
+  // no tab (in the menu bar only, #106): the party shows instead (#107, STA-15 rule 10)
+  return !!((away || overlayForced) && (workspaces.size || (o.partner && partner.party().list.length)) && o.on && something);
 }
 let overlayFront = null; // tests: would it show with Tamer in front — logged when it changes (#97)
 function overlaySync() {
@@ -1270,6 +1347,8 @@ const popoverCommands = {
   popover_hide: () => popoverHide(),
   popover_tab({ ws }) { popoverHide(); focusMain(String(ws)); },
   popover_open() { popoverHide(); focusMain(); },
+  popover_quit() { popoverHide(); logLine("popover quit"); app.quit(); }, // 완전히 끄기 — as ⌘Q / the menu's Tamer 종료
+  popover_party() { popoverHide(); focusMain(); whenUi(() => send("open-dex", { view: "party" })); }, // ⭐ 파티 (#107)
   popover_settings() { popoverHide(); focusMain(); whenUi(() => send("open-settings", {})); },
   popover_dex({ id }) { popoverHide(); focusMain(); whenUi(() => send("open-dex", { id: Number(id) || null })); },
   popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },
@@ -1333,13 +1412,19 @@ const commands = {
     const on = p.limits?.claude === true && settings.limits.claude !== true;
     if (on && !(await limitsConsent())) p = { ...p, limits: { ...p.limits, claude: false } };
     if (p.limits?.claude === false) limits.forget();
+    // 'Tamer 밖 작업도 포켓몬에' (STA-23 rule 6): turning it on shows what's read first
+    if (p.outside === true && settings.outside !== true && !(await outsideConsent())) p = { ...p, outside: false };
     const s = setSettings(p);
     if (on && s.limits.claude) limitsRefresh({ user: true });
+    if ("outside" in p) outsideSync();
     return s;
   },
   // 한도 새로 고침 (#104): user = pressed by the user (the only time the Keychain is read, besides turning it on)
   limits_refresh: ({ user } = {}) => limitsRefresh({ user: !!user }),
   limits_state: () => limitsView(),
+  // 파티 (PKM-31, #107): the list and its changes (checked by partner.partySet); everyone showing it hears
+  party_state: () => ({ ...partner.party(), recent: recentDone }),
+  party_set({ uids }) { const v = partner.partySet(uids); logLine(`party ${v.list.map((m) => m.uid).join(",") || "-"}`); broadcast("party", v); popoverUpdate(); overlayUpdate(); return v; },
   // 메뉴바 (STA-19): the last 5h · 7d the window remembers for an agent — numbers only, kept in memory
   usage_seen({ key, five_hour, seven_day }) {
     if (!TRAY_AGENTS.some(([k]) => k === key)) return;
@@ -1350,7 +1435,6 @@ const commands = {
   },
   startup_mark({ what }) { logLine(`startup ${String(what).slice(0, 40)} +${since()}ms`); },
   app_info() {
-    if (!limitsStarted) { limitsStarted = true; setTimeout(() => limitsStart().catch((e) => logLine(`limits start error ${e}`)), 4000); } // #104
     uiReady = true;
     sessionKept = false; // this window shows the tabs now (#106)
     setTimeout(() => { for (const fn of uiQueue.splice(0)) fn(); }, 600);
@@ -1819,6 +1903,7 @@ const testCommands = {
     (async () => {
       await T(100); win.close(); await T(1500);
       logLine(`bg closed win=${!!win} tabs=${workspaces.size} popover=${!!popover && !popover.isDestroyed()} saved=${(readJsonSafe(SESSION)?.tabs || []).length} quit=${!!readJsonSafe(SESSION)?.quit}`);
+      logLine(`bg overlay alive=${!!overlay && !overlay.isDestroyed()} wants=${overlayWants({ focused: false, quiet: false })} party=${overlayPayload().party?.list.length ?? "-"}`); // #107
       popoverShow({ x: 900, y: 0, width: 24, height: 24 }); await T(1500);
       const ok = await popover.webContents.executeJavaScript(`(() => { const b = document.querySelector("#pop-open"); if (b) b.click(); return !!b; })()`);
       await T(6000);
@@ -1832,6 +1917,20 @@ const testCommands = {
     wild: !document.querySelector("#pop-wild .wild-card")?.hidden, height: innerHeight })`) : null),
   popover_click_test: ({ sel }) => popover.webContents.executeJavaScript(`(() => { const b = document.querySelector(${JSON.stringify(String(sel))}); if (b) b.click(); return !!b; })()`),
   // 한도 (#104): what was read and how often the token was — counts only, never a value; status = the stand-in's answer
+  // Tamer 밖 작업 (#107): a line appended to a log as an agent would write it — only under the test's own
+  // CLAUDE_CONFIG_DIR / CODEX_HOME — and the watcher's next look right away
+  outside_append_test({ agent, rel, lines }) {
+    const root = outside.roots(agents.processEnv())[agent === "codex" ? "codex" : "claude"], f = path.join(root, String(rel));
+    if (!f.startsWith(root + path.sep)) return false;
+    fs.mkdirSync(path.dirname(f), { recursive: true });
+    const tab = [...workspaces.values()][0]?.cwd || ""; // "$tab": the first tab's folder (a case can't know its path)
+    fs.appendFileSync(f, (lines || []).map((l) => (typeof l === "string" ? l : JSON.stringify(l)).replaceAll("$tab", tab) + "\n").join(""));
+    outsidePoll();
+    return true;
+  },
+  // 파티 (#107): the first n of the box as the party (a test can't pick uids)
+  party_test({ n = 2 }) { const b = partner.boxList(null).filter((m) => !m.egg).slice(0, Number(n)); return partner.partySet(b.map((m) => m.uid)); },
+  overlay_payload_test: () => ({ wants: overlayWants({ focused: false, quiet: false }), ...overlayPayload() }),
   // auto: the timer's read now (as if a minute had passed — the Keychain must not be touched)
   async limits_test({ status, auto } = {}) {
     if (status != null) limits.setTestStatus(status);
@@ -2097,6 +2196,9 @@ app.whenReady().then(() => {
   // 로그인할 때 열기 (APP-21 rule 7): opened by the login item → the menu bar only, no window
   const atLogin = !TEST && settings.loginOpen && backgroundOn() && (() => { try { return app.getLoginItemSettings().wasOpenedAtLogin; } catch { return false; } })();
   if (atLogin) { logLine("startup at login: menu bar only"); app.dock?.hide(); } else createMain();
+  // the questions of a first launch, one after the other — with a window or in the menu bar only:
+  // Claude 한도 (#104), then Tamer 밖 작업 (#107)
+  setTimeout(() => limitsStart().catch((e) => logLine(`limits start error ${e}`)).then(() => outsideStart()).catch((e) => logLine(`outside start error ${e}`)), 4000);
   trayUpdate(); // 메뉴바 (STA-19)
   wild.setOnEnd((e) => { logLine(`wild end ${e.reason}`); broadcast("wild-end", e); overlayUpdate(); setTimeout(() => (wild.bigPending() ? bigShow() : researchCheck()), 1500); }); // a waiting breakthrough / research after it (#82, #86)
   if (wild.enabled()) wild.prefetch();
@@ -2138,7 +2240,7 @@ function createMain() {
   win.webContents.once("did-finish-load", () => logLine(`startup page loaded +${since()}ms`));
   win.on("focus", overlaySync);
   win.on("blur", () => setTimeout(overlaySync, 250)); // focus may be moving to our own dialog
-  createOverlay();
+  if (!overlay || overlay.isDestroyed()) createOverlay(); // kept through the menu bar time (#107)
 }
 // Finder · Dock opened the app again while it sits in the menu bar
 app.on("activate", () => { if (app.isReady() && (!win || win.isDestroyed())) createMain(); });
@@ -2149,8 +2251,8 @@ app.on("activate", () => { if (app.isReady() && (!win || win.isDestroyed())) cre
 const backgroundOn = () => settings.background && settings.menubar.on;
 app.on("browser-window-created", (_e, w) => w.on("closed", () => {
   if (w !== win) return;
+  if (!quitting && backgroundOn()) return toBackground(); // the overlay stays: the party shows there (#107)
   if (overlay && !overlay.isDestroyed()) overlay.destroy();
-  if (!quitting && backgroundOn()) return toBackground();
   if (popover && !popover.isDestroyed()) popover.destroy();
 }));
 function toBackground() {
@@ -2159,6 +2261,7 @@ function toBackground() {
   win = null; uiReady = false;
   logLine("window closed: Tamer stays in the menu bar");
   trayUpdateSoon();
+  overlaySync(); overlayUpdate(); // no tab now: the party, if there is one (#107, STA-15 rule 10)
   const hideDock = () => { if (!TEST && !win) app.dock?.hide(); };
   if (settings.backgroundSeen) return hideDock();
   // the first time (rule 3): say where it went and how to really quit

@@ -1,6 +1,13 @@
 {
   "about": "Tamer UI map (docs/UI_SYSTEM.md): components → the screens using them → the scenes npm run ui:shots captures. npm run ui:impact -- <name|file|class|function> reads this. Add a component / screen / scene here when you add one.",
   "screens": {
+    "party": {
+      "what": "포켓몬 창 ⭐ 파티 — 6칸(다음 차례 표시·선두로·빼기), 최근 파티·밖 작업 결과, 내 포켓몬에서 넣기 (PKM-31, #107)",
+      "entry": "partyRender",
+      "scenes": [
+        "party"
+      ]
+    },
     "menubar-dashboard": {
       "what": "메뉴바 미니 대시보드 — 메뉴바 아이콘 왼쪽 클릭: 파트너·오늘·야생(그 자리에서 잡기)·사용 한도·Tamer 탭·Tamer 열기 (STA-22, #105)",
       "entry": "draw",
@@ -130,11 +137,18 @@
     }
   },
   "components": {
+    "pk-party": {
+      "what": "파티 화면 — 칸·다음 차례·넣기 목록 (#107)",
+      "files": ["src/main.js", "src/poke/poke.css"],
+      "selectors": [".pk-party", ".pk-party-"],
+      "functions": ["partyRender", "partyChange"],
+      "screens": ["party"]
+    },
     "pop-dash": {
       "what": "메뉴바 대시보드 창 그리기 — 파트너 줄·오늘 칸 3개·한도 막대 줄·탭 줄·아래 버튼 (#105)",
       "files": ["popover.html", "src/popover.js", "src/popover.css"],
       "selectors": ["#pop", ".pop-"],
-      "functions": ["draw", "drawPartner", "drawToday", "drawLimits", "drawTabs", "popoverModel"],
+      "functions": ["draw", "drawPartner", "drawParty", "drawToday", "drawLimits", "drawTabs", "popoverModel"],
       "screens": ["menubar-dashboard"]
     },
     "pk-tokens": {
@@ -671,7 +685,8 @@
         "isMinimal",
         "progHtml",
         "progSoon",
-        "hatchNoteHtml"
+        "hatchNoteHtml",
+        "partyCard"
       ],
       "screens": [
         "overlay",

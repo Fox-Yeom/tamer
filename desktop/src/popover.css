@@ -24,6 +24,15 @@ button:hover { background: var(--hover); }
 .pop-chips { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
 .pop-none { color: var(--dim); font-size: 12px; }
 
+/* 파티 (#107) */
+.pop-party { display: flex; gap: 6px; }
+.pop-mon { display: flex; flex-direction: column; align-items: center; width: 50px; padding: 4px 0; border-radius: 8px; background: var(--raised); }
+.pop-mon.next { outline: 1px solid var(--accent); }
+.pop-mon img { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; }
+.pop-mon small { font-size: 10px; color: var(--dim); }
+.pop-recent { margin-top: 6px; font-size: 12px; color: var(--dim); }
+#pop-party-go { font-size: 11px; padding: 2px 8px; }
+
 /* 오늘 */
 #pop-today { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pop-stat { background: var(--raised); border-radius: 8px; padding: 7px 10px; }
@@ -63,4 +72,5 @@ button:hover { background: var(--hover); }
 /* 아래 버튼 */
 #pop-foot { display: flex; gap: 8px; padding: 10px 12px; }
 #pop-foot button { flex: 1; padding: 8px; }
+#pop-foot #pop-quit { flex: 0 0 auto; color: var(--dim); } /* 종료: small, at the side */
 #pop-foot .pop-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }
