@@ -264,7 +264,7 @@ pub fn translate(c: &mut Codex, usage: &mut Option<Usage>, changed: &mut bool, r
             }
             for (key, src) in [("five_hour", &p["rate_limits"]["primary"]), ("seven_day", &p["rate_limits"]["secondary"])] {
                 if let Some(pct) = src["used_percent"].as_f64() {
-                    let w = Some(Window { pct, resets_at: src["resets_at"].as_i64() });
+                    let w = Some(Window { pct, resets_at: src["resets_at"].as_i64(), at: Some(crate::state::unix_ms(SystemTime::now())) });
                     if key == "five_hour" { u.five_hour = w } else { u.seven_day = w }
                 }
             }
@@ -343,8 +343,8 @@ mod tests {
         assert_eq!(u.model.as_deref(), Some("gpt-5.5 high"));
         assert_eq!(u.tokens.as_ref().unwrap()["gpt-5.5"], [15995.0, 0.0, 0.0, 6912.0, 6.0]);
         assert_eq!(u.ctx, Some(25.0));
-        assert_eq!(u.five_hour, Some(Window { pct: 12.0, resets_at: Some(100) }));
-        assert_eq!(u.seven_day, Some(Window { pct: 30.0, resets_at: None }));
+        assert_eq!(u.five_hour, Some(Window { pct: 12.0, resets_at: Some(100), at: u.five_hour.as_ref().and_then(|w| w.at) }));
+        assert_eq!(u.seven_day, Some(Window { pct: 30.0, resets_at: None, at: u.seven_day.as_ref().and_then(|w| w.at) }));
     }
 
     #[test]

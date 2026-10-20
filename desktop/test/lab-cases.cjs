@@ -389,11 +389,12 @@ module.exports = [
     },
   },
   {
-    id: "usage-shared", tags: ["smoke", "agent"], what: "같은 Claude를 두 탭에서: 각 탭 상태줄이 자기 마지막 응답 값을 계속 보내도(a 20%·b 35%) 두 탭 모두 같은 창의 더 높은 값 5h 35%·7d 15%, 기억값도 흔들리지 않음 (STA-09 규칙 5, #96)",
+    id: "usage-shared", tags: ["smoke", "agent"], what: "같은 Claude를 두 탭에서: 각 탭 상태줄이 자기 마지막 응답 값을 계속 보내도(a 20%·b 35%) 두 탭 모두 같은 창에서 더 늦게 받은 b의 값 5h 35%·7d 15%, 기억값도 흔들리지 않음 (STA-09 규칙 5, #96 #103)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
     env: { CVIM_DESKTOP_AUTOSTART: "1", CVIM_DESKTOP_AGENT_CMD: (box) => path.join(box.dir, "fakebin", "claude-tabs") },
     // a stand-in Claude whose status line says what "its last reply" saw: tab a an older 20 % of the same windows
-    files: { "fakebin/claude-tabs": "#!/bin/sh\ncase \"$(basename \"$PWD\")\" in a) p=20; w=12;; *) p=35; w=15;; esac\nfor i in $(seq 40); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":%s,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":%s,\"resets_at\":%s}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $p $(( (now / 3600 + 2) * 3600 )) $w $(( (now / 86400 + 3) * 86400 )) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n" },
+    // (b's reply comes 2 s later — the later one received wins, #103)
+    files: { "fakebin/claude-tabs": "#!/bin/sh\ncase \"$(basename \"$PWD\")\" in a) p=20; w=12;; *) p=35; w=15; sleep 2;; esac\nfor i in $(seq 40); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":%s,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":%s,\"resets_at\":%s}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $p $(( (now / 3600 + 2) * 3600 )) $w $(( (now / 86400 + 3) * 86400 )) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n" },
     steps: [{ until: "tabs.1" }, { wait: 1500 }, { call: "closeDex" }, { wait: 5000 },
       { key: "1", mods: 4 }, { wait: 2500 }, { probe: "a" }, { key: "2", mods: 4 }, { wait: 2500 }, { probe: "b" }, { key: "1", mods: 4 }, { wait: 2500 }, { probe: "a2" }],
     check: ({ probe }) => {
@@ -403,6 +404,24 @@ module.exports = [
         ok(both(probe.a) && both(probe.a2), `탭 a 상단 바 ${probe.a?.usage} / ${probe.a2?.usage} — b가 알린 35%·15%여야`),
         ok(both(probe.b), `탭 b 상단 바 ${probe.b?.usage}`),
         ok([probe.a, probe.b, probe.a2].every((p) => p?.usageLast === "35/15"), `기억값 ${[probe.a, probe.b, probe.a2].map((p) => p?.usageLast)}`),
+      ];
+    },
+  },
+  {
+    id: "usage-reset", tags: ["smoke", "agent"], what: "Claude 한도 초기화: 같은 창(초기화 시각 같음) 안에서 7d가 99% → 4%로 내려가면, 옛 99%를 계속 다시 쓰는 다른 탭이 있어도 두 탭 상단 바·기억값 모두 4% (STA-09 규칙 5, #103)",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
+    env: { CVIM_DESKTOP_AUTOSTART: "1", CVIM_DESKTOP_AGENT_CMD: (box) => path.join(box.dir, "fakebin", "claude-reset") },
+    // tab a waits: its status line keeps rewriting its last reply (7d 99 %); tab b replies again after the reset (4 %, new API time)
+    files: { "fakebin/claude-reset": "#!/bin/sh\nfor i in $(seq 40); do\n  now=$(date +%s); w=99; api=5\n  if [ \"$(basename \"$PWD\")\" = b ] && [ $i -gt 4 ]; then w=4; api=9; fi\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":%s,\"resets_at\":%s}},\"cost\":{\"total_api_duration_ms\":%s},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $(( (now / 3600 + 2) * 3600 )) $w $(( (now / 86400 + 3) * 86400 )) $api | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n" },
+    steps: [{ until: "tabs.1" }, { wait: 1500 }, { call: "closeDex" }, { wait: 7000 },
+      { key: "1", mods: 4 }, { wait: 2500 }, { probe: "a" }, { key: "2", mods: 4 }, { wait: 2500 }, { probe: "b" }],
+    check: ({ probe }) => {
+      const reset = (p) => /7d\D*4%/.test(p?.usage || "") && /5h\D*30%/.test(p?.usage || "");
+      return [
+        ok(probe.a?.active === "a" && probe.b?.active === "b", `탭 ${probe.a?.active} ${probe.b?.active}`),
+        ok(reset(probe.a), `탭 a 상단 바 ${probe.a?.usage} — b가 초기화 뒤 받은 7d 4%여야`),
+        ok(reset(probe.b), `탭 b 상단 바 ${probe.b?.usage}`),
+        ok([probe.a, probe.b].every((p) => p?.usageLast === "30/4"), `기억값 ${[probe.a, probe.b].map((p) => p?.usageLast)}`),
       ];
     },
   },

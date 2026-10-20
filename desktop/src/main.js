@@ -1095,12 +1095,14 @@ for (const k of ["claude", "codex"]) tellUsage(k);
 const live = (w) => w && (w.resets_at == null || w.resets_at * 1000 > Date.now());
 // 5h · 7d are the account's (STA-09 rule 5, #96): each tab's status line keeps sending what its own last reply
 // said, so of two reports of a window the newer wins — a later reset is a newer window; the same window
-// (resets within 2 min): the higher use (it only grows within a window); no reset time: the one just in (b)
+// (resets within 2 min): the one received later (`at`, from the core — a limit reset lowers the use, #103),
+// the higher use when neither says (remembered before #103); no reset time: the one just in (b)
 function newerWin(a, b) {
   if (!live(a)) return live(b) ? b : null;
   if (!live(b)) return a;
   if (a.resets_at == null || b.resets_at == null) return b;
   if (Math.abs(a.resets_at - b.resets_at) >= 120) return b.resets_at > a.resets_at ? b : a;
+  if (a.at != null || b.at != null) return (b.at ?? 0) >= (a.at ?? 0) ? b : a;
   return b.pct >= a.pct ? b : a;
 }
 function withLast(st, tab) {

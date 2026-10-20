@@ -48,11 +48,19 @@ pub fn now_secs() -> i64 {
     SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0)
 }
 
+pub fn unix_ms(t: SystemTime) -> i64 {
+    t.duration_since(SystemTime::UNIX_EPOCH).map(|d| d.as_millis() as i64).unwrap_or(0)
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct Window {
     pub pct: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub resets_at: Option<i64>,
+    /// when the agent got these numbers (unix ms): of two reports of the same window the later one
+    /// wins — a limit reset lowers the use within a window (#103)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub at: Option<i64>,
 }
 
 /// Usage in one shape for every agent.
@@ -219,7 +227,7 @@ fn num(v: &Value) -> Option<f64> {
 pub fn usage_from_status(st: &Value) -> Usage {
     let win = |k: &str| {
         let w = &st["rate_limits"][k];
-        num(&w["used_percentage"]).map(|pct| Window { pct, resets_at: w["resets_at"].as_i64() })
+        num(&w["used_percentage"]).map(|pct| Window { pct, resets_at: w["resets_at"].as_i64(), at: None })
     };
     Usage {
         model: st["model"]["display_name"].as_str().map(Into::into),
@@ -392,8 +400,8 @@ mod tests {
         let u = usage_from_status(&st);
         assert_eq!(u.model.as_deref(), Some("Opus"));
         assert_eq!(u.ctx, Some(42.0));
-        assert_eq!(u.five_hour, Some(Window { pct: 55.0, resets_at: Some(100) }));
-        assert_eq!(u.seven_day, Some(Window { pct: 81.0, resets_at: None }));
+        assert_eq!(u.five_hour, Some(Window { pct: 55.0, resets_at: Some(100), at: None }));
+        assert_eq!(u.seven_day, Some(Window { pct: 81.0, resets_at: None, at: None }));
         assert_eq!(u.cost, Some(1.5));
     }
 }

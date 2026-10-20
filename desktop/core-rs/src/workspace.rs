@@ -20,6 +20,10 @@ pub struct Workspace {
     offset: u64,
     status: Option<Value>,
     status_mtime: Option<SystemTime>,
+    /// the status line's limits and API time as last read, and when they changed (unix ms): a waiting
+    /// Claude keeps rewriting its last reply's limits, so the file's time isn't when they were new (#103)
+    limits_seen: String,
+    limits_at: Option<i64>,
     usage: Option<Usage>,
     codex: Option<Codex>,
     claude: Option<ClaudeLog>,
@@ -75,7 +79,7 @@ impl Workspace {
     pub fn new(id: &str, kind: Kind, cwd: &Path, tabs: &Path) -> Self {
         let mut ws = Workspace {
             id: id.into(), kind, cwd: cwd.into(), tabs: tabs.into(), st: State::default(),
-            offset: 0, status: None, status_mtime: None, usage: None, codex: None, claude: None,
+            offset: 0, status: None, status_mtime: None, limits_seen: String::new(), limits_at: None, usage: None, codex: None, claude: None,
             hits: VecDeque::new(), output_seen: false, last_output: None, esc_at: None, last_sent: String::new(),
             busy_since: None, any_event: false, started: Instant::now(), log_id: None, claude_title: None, codex_title: None,
         };
@@ -98,6 +102,8 @@ impl Workspace {
         self.offset = 0;
         self.status = None;
         self.status_mtime = None;
+        self.limits_seen.clear();
+        self.limits_at = None;
         self.usage = None;
         self.hits.clear();
         self.output_seen = false;
@@ -135,7 +141,13 @@ impl Workspace {
 
     pub fn usage(&self) -> Option<Usage> {
         match self.kind {
-            Kind::Hooks => self.status.as_ref().map(state::usage_from_status),
+            Kind::Hooks => self.status.as_ref().map(|s| {
+                let mut u = state::usage_from_status(s);
+                for w in [&mut u.five_hour, &mut u.seven_day].into_iter().flatten() {
+                    w.at = self.limits_at;
+                }
+                u
+            }),
             _ => self.usage.clone(),
         }
     }
@@ -269,7 +281,12 @@ impl Workspace {
                     let m = meta.modified().ok();
                     if m != self.status_mtime {
                         self.status_mtime = m;
-                        if let Ok(Ok(v)) = std::fs::read_to_string(&status).map(|s| serde_json::from_str(&s)) {
+                        if let Ok(Ok(v)) = std::fs::read_to_string(&status).map(|s| serde_json::from_str::<Value>(&s)) {
+                            let seen = json!([v["rate_limits"], v["cost"]["total_api_duration_ms"]]).to_string();
+                            if seen != self.limits_seen {
+                                self.limits_seen = seen;
+                                self.limits_at = m.map(state::unix_ms);
+                            }
                             self.status = Some(v);
                             out.changed = true;
                         }
@@ -402,6 +419,32 @@ mod tests {
         let p = ws.poll(&mut claimed, t0);
         assert_eq!(p.transitions, vec![("coding", "done")]);
         assert_eq!(ws.payload()["log"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn limits_seen_at() {
+        // a waiting Claude rewrites its last reply's limits: they keep the time they were first seen;
+        // new limits (or a new API call) get the file's time (#103)
+        let tabs = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::new("t5", Kind::Hooks, Path::new("/tmp"), tabs.path());
+        let mut claimed = HashMap::new();
+        let status = tabs.path().join("t5.status.json");
+        let write = |body: &str, ms: u64| {
+            std::fs::write(&status, body).unwrap();
+            let f = std::fs::File::options().write(true).open(&status).unwrap();
+            f.set_modified(SystemTime::UNIX_EPOCH + Duration::from_millis(ms)).unwrap();
+        };
+        let at = |ws: &Workspace| ws.usage().unwrap().seven_day.unwrap().at;
+        let old = r#"{"rate_limits":{"seven_day":{"used_percentage":99,"resets_at":100}},"cost":{"total_api_duration_ms":5}}"#;
+        write(old, 1_000);
+        ws.poll(&mut claimed, Instant::now());
+        assert_eq!(at(&ws), Some(1_000));
+        write(old, 2_000);
+        ws.poll(&mut claimed, Instant::now());
+        assert_eq!(at(&ws), Some(1_000), "the same limits rewritten keep their time");
+        write(r#"{"rate_limits":{"seven_day":{"used_percentage":4,"resets_at":100}},"cost":{"total_api_duration_ms":9}}"#, 3_000);
+        ws.poll(&mut claimed, Instant::now());
+        assert_eq!(ws.usage().unwrap().seven_day, Some(state::Window { pct: 4.0, resets_at: Some(100), at: Some(3_000) }));
     }
 
     #[test]
