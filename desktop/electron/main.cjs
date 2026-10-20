@@ -27,6 +27,10 @@ const TEST = process.env.CVIM_DESKTOP_TEST === "1";
 // fresh every run — never the user's ~/Library/Application Support/Tamer (until 2026-10-05 they
 // shared it, and a test's sort choice showed up in ui:shots)
 if (TEST) app.setPath("userData", process.env.CVIM_DESKTOP_USERDATA || path.join(require("node:os").tmpdir(), `tamer-test-profile-${process.pid}`));
+// 한 번만 실행 (APP-21 rule 6, #106): a second launch ends at once and the running Tamer shows its window
+// (two Tamers would write the same data — the preview app and the installed one share it). Tests skip it
+if (!TEST && !app.requestSingleInstanceLock()) { app.quit(); return; }
+app.on("second-instance", () => focusMain());
 // test instances show their window without activating it, so keys typed in the user's own apps
 // never land in a test terminal (seen 2026-10-02); CVIM_DESKTOP_TEST_FOCUS=1 for IME tests that need focus
 const QUIET_TEST = TEST && process.env.CVIM_DESKTOP_TEST_FOCUS !== "1";
@@ -574,8 +578,9 @@ function writeSession(data) {
   fs.closeSync(fd);
   fs.renameSync(tmp, SESSION);
 }
+let sessionKept = false; // 백그라운드 (#106): the tabs as the window closed — kept for its next opening
 function saveSession() {
-  if (quitting) return;
+  if (quitting || sessionKept) return;
   const tabs = [...workspaces.values()].map((w) => w.cwd);
   const active = workspaces.get(activeWs)?.cwd || null;
   // more sessions per folder (M1): their agents, started fresh on restore (null: a shell)
@@ -594,10 +599,13 @@ function titlesToCore() { core?.request("titles", { on: settings.titles }).catch
 function requestOpen(dir) {
   if (!isDir(dir)) return;
   if (win && !win.isDestroyed() && win.webContents.isLoading() === false && uiReady) send("open-folder", { cwd: dir });
-  else pendingOpen.push(dir);
+  else { pendingOpen.push(dir); if (app.isReady() && (!win || win.isDestroyed())) createMain(); } // in the menu bar only (#106): a window for it
 }
 let uiReady = false;
 let envWarned = false;
+// what waits for the window's page (#106: a window made again from the menu bar — 설정 · 도감 after it's up)
+const uiQueue = [];
+function whenUi(fn) { if (uiReady && win && !win.isDestroyed()) fn(); else uiQueue.push(fn); }
 
 // ── changes panel (E1b): git status / diff / revert of the folder ─────────────
 // git runs with an argument list (no shell); only paths from the folder's current change list
@@ -865,7 +873,8 @@ const SETTINGS = path.join(CACHE, "ui", "settings.json");
 // card background: 0 % by default (#100) — only the Pokémon on the desktop (minimal mode, auto ≤ 30 %); a settings.json that has a value keeps it
 const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away" }, tabGlow: true, theme: "system", side: true, titles: true,
   menubar: { on: true, text: "waiting" }, // 메뉴바 (STA-19, #64)
-  limits: { codex: true, claude: null } }; // 채팅 없이 한도 (STA-21, #104): Codex app server · Claude usage API (null = not asked yet)
+  limits: { codex: true, claude: null }, // 채팅 없이 한도 (STA-21, #104): Codex app server · Claude usage API (null = not asked yet)
+  background: true, loginOpen: false, backgroundSeen: false }; // 백그라운드 (APP-21, #106): stay in the menu bar · open at login · the one-time notice
 const MENUBAR_TEXT = ["waiting", "limit", "none"];
 const MINIMAL = ["auto", "always", "never"];
 const WHEN = ["away", "always"]; // 보일 때 (#98): while another app is in front (as before) / always, Tamer in front too // 최소 모드 (#63): by the background (≤ 30 %), always, never
@@ -883,6 +892,7 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
     menubar: { on: b(raw?.menubar?.on, SETTINGS_DEFAULT.menubar.on), text: MENUBAR_TEXT.includes(raw?.menubar?.text) ? raw.menubar.text : SETTINGS_DEFAULT.menubar.text },
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
     limits: { codex: b(raw?.limits?.codex, SETTINGS_DEFAULT.limits.codex), claude: typeof raw?.limits?.claude === "boolean" ? raw.limits.claude : null },
+    background: b(raw?.background, SETTINGS_DEFAULT.background), loginOpen: b(raw?.loginOpen, SETTINGS_DEFAULT.loginOpen), backgroundSeen: b(raw?.backgroundSeen, false),
   };
 }
 let settings = readSettings();
@@ -897,6 +907,8 @@ function setSettings(patch) {
   overlaySync();
   overlayUpdate();
   if (patch && "titles" in patch) titlesToCore();
+  // 로그인할 때 열기 (APP-21 rule 7): the login item only when the user turns it on (POL-OS-01)
+  if (patch && "loginOpen" in patch && !TEST) { try { app.setLoginItemSettings({ openAtLogin: settings.loginOpen }); } catch (e) { logLine(`login item error ${e}`); } }
   appMenu();
   trayUpdate();
   return settings;
@@ -982,7 +994,7 @@ const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, 
 function trayAct(act) {
   if (act?.tab) focusMain(String(act.tab));
   else if (act?.set) setSettings(act.set);
-  else if (act === "settings") { focusMain(); send("open-settings", {}); }
+  else if (act === "settings") { focusMain(); whenUi(() => send("open-settings", {})); }
   else if (act === "open") focusMain();
   else if (act === "hide") setSettings({ menubar: { on: false } });
   else if (act === "quit") app.quit();
@@ -1008,7 +1020,7 @@ function trayUpdate() {
 // it's turned on or the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d), the timer uses the
 // token kept in memory. Results go to the windows as "limits" — they merge them like an agent's report
 const limitsState = { claude: { at: 0, error: null }, codex: { at: 0, error: null } };
-let limitsBusy = null, limitsLast = 0, limitsResetTimer = null;
+let limitsBusy = null, limitsLast = 0, limitsResetTimer = null, limitsStarted = false;
 const codexCmd = () => (TEST ? process.env.CVIM_LIMITS_CODEX_CMD || null : agents.where("codex"));
 const limitsView = () => ({ codex: settings.limits.codex, claude: settings.limits.claude === true, token: limits.hasToken(), state: limitsState });
 async function limitsRefresh({ user = false } = {}) {
@@ -1235,7 +1247,7 @@ function overlaySync() {
 let overlayForced = false; // tests
 
 function focusMain(wsId) {
-  if (!win || win.isDestroyed()) return;
+  if (!win || win.isDestroyed()) { if (app.isReady()) createMain(); return; } // in the menu bar only (#106): open it again (last tabs back)
   if (win.isMinimized()) win.restore();
   if (QUIET_TEST) { win.showInactive(); if (wsId && workspaces.has(wsId)) send("select-tab", { ws: wsId }); return; }
   win.show();
@@ -1258,8 +1270,8 @@ const popoverCommands = {
   popover_hide: () => popoverHide(),
   popover_tab({ ws }) { popoverHide(); focusMain(String(ws)); },
   popover_open() { popoverHide(); focusMain(); },
-  popover_settings() { popoverHide(); focusMain(); send("open-settings", {}); },
-  popover_dex({ id }) { popoverHide(); focusMain(); send("open-dex", { id: Number(id) || null }); },
+  popover_settings() { popoverHide(); focusMain(); whenUi(() => send("open-settings", {})); },
+  popover_dex({ id }) { popoverHide(); focusMain(); whenUi(() => send("open-dex", { id: Number(id) || null })); },
   popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },
   limits_refresh: () => limitsRefresh({ user: true }), // pressed in the dashboard = the user's 새로 고침 (STA-21)
   sprite_b64: (args) => commands.sprite_b64(args),
@@ -1338,8 +1350,10 @@ const commands = {
   },
   startup_mark({ what }) { logLine(`startup ${String(what).slice(0, 40)} +${since()}ms`); },
   app_info() {
-    if (!uiReady) setTimeout(() => limitsStart().catch((e) => logLine(`limits start error ${e}`)), 4000); // #104
+    if (!limitsStarted) { limitsStarted = true; setTimeout(() => limitsStart().catch((e) => logLine(`limits start error ${e}`)), 4000); } // #104
     uiReady = true;
+    sessionKept = false; // this window shows the tabs now (#106)
+    setTimeout(() => { for (const fn of uiQueue.splice(0)) fn(); }, 600);
     const start = TEST && process.env.CVIM_DESKTOP_DIRS ? process.env.CVIM_DESKTOP_DIRS.split(":")
       : process.env.CVIM_DESKTOP_DIR ? [process.env.CVIM_DESKTOP_DIR] : [];
     const handed = [...start, ...pendingOpen.splice(0)].filter(isDir);
@@ -1740,6 +1754,7 @@ const commands = {
   },
 };
 
+let backgroundTested = false;
 const testCommands = {
   // put the focused element into IME composition (as if typing Hangul) via DevTools protocol
   async ime_compose({ text }) {
@@ -1792,6 +1807,25 @@ const testCommands = {
   tray_test: () => ({ shown: !!tray, ...trayNow() }),
   // 대시보드 (#105): open / close as the icon's left click would (a test app has no icon — a fixed place),
   // its text and buttons as shown, a click on one of them
+  // the main window closed as by its red button (#106: off → the app ends)
+  win_close_test() { setTimeout(() => win.close(), 100); },
+  // 백그라운드 (#106): close the window, then — the page is gone, so from here — the dashboard's
+  // [Tamer 열기] brings a window back; each step logged ("bg …"), "bg-done" at the end
+  // once: the window opened again runs the case's steps from the top
+  background_test() {
+    if (backgroundTested) return;
+    backgroundTested = true;
+    const T = (ms) => new Promise((r) => setTimeout(r, ms));
+    (async () => {
+      await T(100); win.close(); await T(1500);
+      logLine(`bg closed win=${!!win} tabs=${workspaces.size} popover=${!!popover && !popover.isDestroyed()} saved=${(readJsonSafe(SESSION)?.tabs || []).length} quit=${!!readJsonSafe(SESSION)?.quit}`);
+      popoverShow({ x: 900, y: 0, width: 24, height: 24 }); await T(1500);
+      const ok = await popover.webContents.executeJavaScript(`(() => { const b = document.querySelector("#pop-open"); if (b) b.click(); return !!b; })()`);
+      await T(6000);
+      logLine(`bg reopened click=${ok} win=${!!win && !win.isDestroyed()} tabs=${workspaces.size} overlay=${!!overlay && !overlay.isDestroyed()}`);
+      logLine("bg-done");
+    })();
+  },
   popover_test({ open }) { if (open) popoverShow({ x: 900, y: 0, width: 24, height: 24 }); else popoverHide(); return { open: !!popover?.isVisible?.() }; },
   popover_read_test: () => (popover?.isVisible?.() ? popover.webContents.executeJavaScript(`({ text: document.querySelector("#pop").innerText,
     tabs: [...document.querySelectorAll(".pop-tab")].map((b) => b.innerText.replace(/\\s+/g, " ").trim()),
@@ -2060,6 +2094,30 @@ app.whenReady().then(() => {
   if (TEST && process.env.CVIM_DESKTOP_QUIT_AFTER) setTimeout(() => app.quit(), Number(process.env.CVIM_DESKTOP_QUIT_AFTER));
   // no camera / mic / notifications / … for the page (voice will ask for the mic explicitly later)
   session.defaultSession.setPermissionRequestHandler((_wc, _perm, cb) => cb(false));
+  // 로그인할 때 열기 (APP-21 rule 7): opened by the login item → the menu bar only, no window
+  const atLogin = !TEST && settings.loginOpen && backgroundOn() && (() => { try { return app.getLoginItemSettings().wasOpenedAtLogin; } catch { return false; } })();
+  if (atLogin) { logLine("startup at login: menu bar only"); app.dock?.hide(); } else createMain();
+  trayUpdate(); // 메뉴바 (STA-19)
+  wild.setOnEnd((e) => { logLine(`wild end ${e.reason}`); broadcast("wild-end", e); overlayUpdate(); setTimeout(() => (wild.bigPending() ? bigShow() : researchCheck()), 1500); }); // a waiting breakthrough / research after it (#82, #86)
+  if (wild.enabled()) wild.prefetch();
+  // S1: owner-only data, old hook logs pruned (7 days without changes)
+  try {
+    const fixed = tighten(CACHE) + (STATE !== CACHE ? tighten(STATE) : 0);
+    const pruned = pruneTabs(TABS, 7);
+    logLine(`privacy: ${fixed} permissions tightened, ${pruned} old hook files removed`);
+  } catch (e) { logLine(`privacy error ${e}`); }
+  partner.migrate(); // box.json (first run: from folders.json / pokedex.json, backed up)
+  try { const e = economy.init(); logLine(`economy balance=${e.balance}${e.start ? ` start=${e.start.amount}` : ""}`); } catch (e) { logLine(`economy init error ${e}`); } // 🪙 (#72)
+  bigShow(); // a breakthrough not caught last time is back (#82)
+  loadStarter(); // the first partner's starters (only while the box is empty)
+  setInterval(() => { if (workspaces.size) scanShells().catch((e) => logLine(`scan error ${e}`)); }, 1500);
+});
+
+// the main window (and its overlay) — at launch, and again from the menu bar after it was closed (#106)
+function createMain() {
+  if (win && !win.isDestroyed()) return;
+  uiReady = false;
+  if (!TEST) app.dock?.show();
   win = new BrowserWindow({
     width: 1400, height: 900, title: "Tamer", backgroundColor: "#16161c", show: !QUIET_TEST,
     webPreferences: {
@@ -2081,24 +2139,39 @@ app.whenReady().then(() => {
   win.on("focus", overlaySync);
   win.on("blur", () => setTimeout(overlaySync, 250)); // focus may be moving to our own dialog
   createOverlay();
-  trayUpdate(); // 메뉴바 (STA-19)
-  wild.setOnEnd((e) => { logLine(`wild end ${e.reason}`); broadcast("wild-end", e); overlayUpdate(); setTimeout(() => (wild.bigPending() ? bigShow() : researchCheck()), 1500); }); // a waiting breakthrough / research after it (#82, #86)
-  if (wild.enabled()) wild.prefetch();
-  // S1: owner-only data, old hook logs pruned (7 days without changes)
-  try {
-    const fixed = tighten(CACHE) + (STATE !== CACHE ? tighten(STATE) : 0);
-    const pruned = pruneTabs(TABS, 7);
-    logLine(`privacy: ${fixed} permissions tightened, ${pruned} old hook files removed`);
-  } catch (e) { logLine(`privacy error ${e}`); }
-  partner.migrate(); // box.json (first run: from folders.json / pokedex.json, backed up)
-  try { const e = economy.init(); logLine(`economy balance=${e.balance}${e.start ? ` start=${e.start.amount}` : ""}`); } catch (e) { logLine(`economy init error ${e}`); } // 🪙 (#72)
-  bigShow(); // a breakthrough not caught last time is back (#82)
-  loadStarter(); // the first partner's starters (only while the box is empty)
-  setInterval(() => { if (workspaces.size) scanShells().catch((e) => logLine(`scan error ${e}`)); }, 1500);
-});
+}
+// Finder · Dock opened the app again while it sits in the menu bar
+app.on("activate", () => { if (app.isReady() && (!win || win.isDestroyed())) createMain(); });
 
-// closing the main window ends the app (the overlay alone doesn't keep it running)
-app.on("browser-window-created", (_e, w) => w.on("closed", () => { if (w === win && overlay && !overlay.isDestroyed()) overlay.destroy(); }));
+// the main window closed (APP-21, #106): with 백그라운드 on, Tamer stays in the menu bar — terminals end as
+// on ⌘Q, the tabs are kept for the next window, the Dock icon goes. Off (or no menu bar icon to come back
+// by): every window goes and the app ends as before (a hidden dashboard must not keep it alive — #105 preview)
+const backgroundOn = () => settings.background && settings.menubar.on;
+app.on("browser-window-created", (_e, w) => w.on("closed", () => {
+  if (w !== win) return;
+  if (overlay && !overlay.isDestroyed()) overlay.destroy();
+  if (!quitting && backgroundOn()) return toBackground();
+  if (popover && !popover.isDestroyed()) popover.destroy();
+}));
+function toBackground() {
+  sessionKept = true; // closing the tabs below mustn't empty the saved ones
+  for (const id of [...workspaces.keys()]) closeWorkspace(id);
+  win = null; uiReady = false;
+  logLine("window closed: Tamer stays in the menu bar");
+  trayUpdateSoon();
+  const hideDock = () => { if (!TEST && !win) app.dock?.hide(); };
+  if (settings.backgroundSeen) return hideDock();
+  // the first time (rule 3): say where it went and how to really quit
+  if (TEST) { logLine("background notice"); setSettings({ backgroundSeen: true }); return; }
+  dialog.showMessageBox({
+    type: "info", buttons: ["알겠어요", "창을 닫으면 종료하기"], defaultId: 0, cancelId: 0,
+    message: "Tamer는 메뉴바에 남아 있어요",
+    detail: "창을 닫아도 메뉴바 몬스터볼에서 파트너·사용 한도·야생을 볼 수 있어요. 왼쪽 클릭 = 대시보드, 오른쪽 클릭 = 메뉴.\n\n열려 있던 탭은 창을 다시 열 때 돌아와요(터미널은 끝났어요). 완전히 끄려면 ⌘Q 또는 메뉴바 메뉴의 종료.",
+  }).then(({ response }) => {
+    setSettings({ backgroundSeen: true, ...(response === 1 ? { background: false } : {}) });
+    if (response === 1) app.quit(); else hideDock();
+  });
+}
 
 // same escaping iTerm2 uses for dropped paths (as v1 did)
 function shellEscape(p) { return p.replace(/([\s!"#$&'()*,;<=>?[\]\\^`{|}~])/g, "\\$1"); }
@@ -2168,8 +2241,9 @@ app.on("before-quit", (e) => {
   });
 });
 
-// closing the window is quitting too
+// closing the window is quitting too — unless Tamer stays in the menu bar (#106)
 app.on("window-all-closed", () => {
+  if (!quitting && backgroundOn()) return;
   userQuit();
   for (const id of [...workspaces.keys()]) closeWorkspace(id);
   app.quit();

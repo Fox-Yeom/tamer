@@ -516,6 +516,27 @@ module.exports = [
     },
   },
   {
+    id: "background-close", tags: ["smoke", "app"], what: "백그라운드: 메인 창을 닫으면 앱은 메뉴바에 남음 — 터미널은 끝나고 탭 기록은 그대로, 처음 한 번 안내, 대시보드는 계속 · 대시보드 [Tamer 열기]로 창이 다시 열리고 탭이 돌아옴 (APP-21, #106)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 40000,
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { invoke: "background_test" }, { wait: 15000 }],
+    check: ({ log }) => {
+      const closed = log.match(/^bg closed (.*)$/m)?.[1] || "", back = log.match(/^bg reopened (.*)$/m)?.[1] || "";
+      return [
+        ok(/^window closed: Tamer stays in the menu bar$/m.test(log) && !/^user quit/m.test(log), "창을 닫아도 끝나지 않아야"),
+        ok(/win=false tabs=0 popover=\w+ saved=1 quit=false/.test(closed), `닫은 뒤: 창 없음·터미널 끝·탭 기록 1개 그대로(끝냄 표시 없음) — ${closed}`),
+        ok((log.match(/^background notice$/gm) || []).length === 1, "처음 한 번 안내"),
+        ok(/click=true win=true tabs=1 overlay=true/.test(back) && (log.match(/^startup window created/gm) || []).length === 2, `[Tamer 열기]로 창·탭·오버레이가 다시 — ${back}`),
+      ];
+    },
+  },
+  {
+    id: "background-off-quits", tags: ["smoke", "app"], what: "백그라운드를 끄면 메인 창을 닫을 때 전처럼 앱이 끝남 — 대시보드를 한 번 열었어도(숨은 창이 앱을 붙잡지 않음) (APP-21 규칙 1, #105 미리보기에서 발견)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "user quit", timeoutMs: 25000,
+    steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "settings_set", args: { patch: { background: false } } },
+      { invoke: "popover_test", args: { open: true } }, { wait: 800 }, { invoke: "popover_test", args: { open: false } }, { wait: 300 }, { invoke: "win_close_test" }, { wait: 5000 }],
+    check: ({ log }) => [ok(/^user quit: next launch starts clean$/m.test(log) && !/stays in the menu bar/.test(log), "메인 창을 닫으면 끝나야")], // not quitting = no line, and the run times out
+  },
+  {
     id: "popover-wild", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 야생 잡기: 야생이 나와 있으면 대시보드에 야생 카드 — 마스터볼을 골라 던지면 잡히고 가방에서 한 개 줄어듦 (STA-22 규칙 3, #105)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     setup: (box) => {
