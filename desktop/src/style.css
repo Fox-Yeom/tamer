@@ -359,3 +359,5 @@ body.ui-test .xterm-screen { visibility: hidden !important; } /* what the shells
 /* #49 a Claude typed in a shell that isn't linked: always-visible chip in the top bar (opens 에이전트 연결) */
 #usage .u-link { margin-right: 8px; padding: 0 6px; border: 1px solid var(--warn-line); border-radius: 4px; color: var(--warn-fg); background: transparent; font: inherit; cursor: pointer; }
 #usage .u-link:hover { background: var(--warn-hover); }
+#usage .u-lim { cursor: pointer; } /* 5h · 7d: pressed = 한도 새로 고침 (#104) */
+#usage .u-lim:hover { text-decoration: underline dotted; }

@@ -426,6 +426,76 @@ module.exports = [
     },
   },
   {
+    id: "limits-codex", tags: ["smoke", "agent"], what: "채팅 없이 Codex 한도: 앱이 뜨고 몇 초 뒤 Codex 앱 서버(가짜)에 계정 한도만 물어 메뉴바·기억값에 5시간 12%·주간 30% — 대화 없음, Claude는 로그인이 없으면 묻지도 읽지도 않음 (STA-21, #104)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    env: { CVIM_LIMITS_CODEX_CMD: (box) => path.join(box.dir, "fakebin", "codex-app") },
+    // a stand-in app server: answers initialize and account/rateLimits/read (the windows by their length), nothing else
+    files: { "fakebin/codex-app": "#!/bin/sh\nnow=$(date +%s)\nwhile IFS= read -r line; do\n  case \"$line\" in\n    *'\"id\":1,'*) printf '{\"id\":1,\"result\":{\"userAgent\":\"x\"}}\\n';;\n    *'\"id\":2,'*) printf '{\"id\":2,\"result\":{\"rateLimits\":{\"primary\":{\"usedPercent\":30,\"windowDurationMins\":10080,\"resetsAt\":%s},\"secondary\":{\"usedPercent\":12,\"windowDurationMins\":300,\"resetsAt\":%s}}}}\\n' $((now + 400000)) $((now + 7000));;\n  esac\ndone\n" },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 }, { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true }],
+    check: ({ log }) => {
+      const st = JSON.parse(log.match(/^lab-invoke limits_test (.*)$/m)?.[1] || "{}");
+      const tray = JSON.parse(log.match(/^lab-invoke tray_test (.*)$/m)?.[1] || "{}");
+      const labels = (tray.items || []).map((i) => i.label || "");
+      return [
+        ok(st.state?.codex?.at > 0 && !st.state?.codex?.error, `Codex 한도를 읽었어야 ${JSON.stringify(st.state)}`),
+        ok(labels.some((l) => /Codex\s+5시간 12%.*주간 30%/.test(l)), `메뉴바 Codex 줄(창 길이로 5시간·주간을 고름) ${JSON.stringify(labels.filter((l) => /%/.test(l)))}`),
+        ok(labels.some((l) => /^↻ 한도 새로 고침 \(방금\)$/.test(l)), `새로 고침 줄 ${JSON.stringify(labels.filter((l) => /↻/.test(l)))}`),
+        ok(st.keychainReads === 0 && st.fetches === 0 && st.settings?.claude === null && !/limits ask/.test(log), `Claude 로그인이 없으면 묻지도 읽지도 않아야 ${JSON.stringify({ k: st.keychainReads, f: st.fetches, s: st.settings })}`),
+      ];
+    },
+  },
+  {
+    id: "limits-claude", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켬): 처음 한 번 묻고(가짜 답 '켜기') 그때 로그인 정보를 한 번 읽어 5시간 23%·주간 9% · 15분 자동 갱신은 메모리의 토큰으로(키체인 안 읽음) · 만료(401)면 토큰을 버리고 '눌러야 읽어요' · 메뉴바 새로 고침을 누르면 다시 한 번 읽음 · 토큰 값은 기록·데이터 어디에도 없음 (STA-21, POL-AGENT-02 1-2~1-4, #104)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_CONSENT: "yes" },
+    files: {
+      "limits/claude-cred.json": '{"claudeAiOauth":{"accessToken":"LAB-SECRET-TOKEN-104","expiresAt":4102444800000}}',
+      "limits/claude-usage.json": '{"five_hour":{"utilization":23.0,"resets_at":"2099-01-01T05:00:00.000+00:00"},"seven_day":{"utilization":9.0,"resets_at":"2099-01-04T23:00:00+00:00"},"limits":[]}',
+    },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true },
+      { invoke: "limits_test", args: { auto: true }, log: true },
+      { invoke: "limits_test", args: { status: 401, auto: true }, log: true }, { invoke: "tray_test", log: true },
+      { invoke: "limits_test", args: { status: 200 } },
+      { invoke: "tray_click_test", args: { path: ["↻ 한도 새로 고침 — Claude는 눌러야 읽어요"] }, log: true }, { wait: 800 },
+      { invoke: "limits_test", log: true }],
+    check: ({ log, box }) => {
+      const st = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const trays = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => (JSON.parse(m[1]).items || []).map((i) => i.label || ""));
+      const [first, auto, expired, pressed] = st;
+      const files = []; const walk = (d) => { for (const n of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, n.name); if (n.isDirectory()) walk(p); else files.push(p); } };
+      try { walk(box.data); } catch {}
+      const leaked = files.filter((f) => { try { return fs.readFileSync(f, "utf8").includes("LAB-SECRET-TOKEN-104"); } catch { return false; } });
+      return [
+        ok(/limits ask/.test(log) && first?.settings?.claude === true, `처음 한 번 묻고 켜짐 ${JSON.stringify(first?.settings)}`),
+        ok(first?.keychainReads === 1 && first?.fetches === 1 && first?.token === true, `켤 때 로그인 정보 한 번 읽고 한 번 물음 ${JSON.stringify(first && { k: first.keychainReads, f: first.fetches, t: first.token })}`),
+        ok(trays[0]?.some((l) => /Claude Code\s+5시간 23%.*주간 9%/.test(l)), `메뉴바 Claude 줄 ${JSON.stringify(trays[0]?.filter((l) => /%/.test(l)))}`),
+        ok(auto?.keychainReads === 1 && auto?.fetches === 2, `자동 갱신은 메모리의 토큰으로 — 키체인 안 읽음 ${JSON.stringify(auto && { k: auto.keychainReads, f: auto.fetches })}`),
+        ok(expired?.token === false && expired?.state?.claude?.error === "expired" && trays[1]?.includes("↻ 한도 새로 고침 — Claude는 눌러야 읽어요"), `만료면 토큰을 버리고 '눌러야 읽어요' ${JSON.stringify(expired?.state?.claude)} ${JSON.stringify(trays[1]?.filter((l) => /↻/.test(l)))}`),
+        ok(/^lab-invoke tray_click_test true$/m.test(log) && pressed?.keychainReads === 2 && pressed?.token === true && !pressed?.state?.claude?.error, `누르면 다시 한 번 읽음 ${JSON.stringify(pressed && { k: pressed.keychainReads, t: pressed.token, s: pressed.state?.claude })}`),
+        ok(!log.includes("LAB-SECRET-TOKEN-104") && !leaked.length, `토큰 값이 앱 기록·데이터에 없어야 ${JSON.stringify(leaked.map((f) => path.relative(box.data, f)))}`),
+      ];
+    },
+  },
+  {
+    id: "limits-claude-declined", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켜지 않음): 처음 질문에 '켜지 않음'이면 꺼진 채 — 로그인 정보·주소 모두 안 씀, 다시 묻지 않음 · 설정에서 켜려 해도 설명 창에서 '켜지 않음'이면 그대로 꺼짐 (STA-21, POL-AGENT-02 1-2, #104)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_CONSENT: "no" },
+    files: { "limits/claude-cred.json": '{"claudeAiOauth":{"accessToken":"LAB-SECRET-TOKEN-104","expiresAt":4102444800000}}', "limits/claude-usage.json": '{"five_hour":{"utilization":23.0}}' },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "limits_test", log: true },
+      { invoke: "settings_set", args: { patch: { limits: { claude: true } } } }, { wait: 500 },
+      { invoke: "limits_test", log: true }],
+    check: ({ log }) => {
+      const [first, again] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const asks = (log.match(/^limits ask$/gm) || []).length;
+      return [
+        ok(first?.settings?.claude === false && first?.keychainReads === 0 && first?.fetches === 0, `켜지 않음이면 아무것도 안 읽음 ${JSON.stringify(first && { s: first.settings, k: first.keychainReads, f: first.fetches })}`),
+        ok(again?.settings?.claude === false && again?.keychainReads === 0 && again?.fetches === 0 && asks === 2, `설정에서 켜려 하면 다시 설명 창(2번째) — 켜지 않음이면 그대로 ${JSON.stringify(again && { s: again.settings, k: again.keychainReads })} 물음 ${asks}`),
+      ];
+    },
+  },
+  {
     id: "session-titles", tags: ["smoke", "agent"], what: "셸 이름·세션 제목: ⌘G Claude가 기록에 남긴 자동 제목이 칸 제목줄에, 기록에 아직 없으면 터미널 제목(✳·스피너 떼고, 'Claude Code'는 무시), 셸이 둘이면 레일에 마우스를 올려 펼친 목록에 · 펼쳐도 터미널 폭은 그대로 · 더블클릭으로 이름 바꾸기(저장) · 설정 '세션 제목'을 끄면 에이전트 제목은 사라지고 직접 붙인 이름은 남음 · 대화 줄은 해석 안 함 (TAB-13 규칙 4, TAB-20, #99)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     env: { CVIM_DESKTOP_AUTOSTART: "1", CVIM_DESKTOP_AGENT_CMD: (box) => path.join(box.dir, "fakebin", "claude-titled") },

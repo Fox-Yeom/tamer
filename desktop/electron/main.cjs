@@ -17,6 +17,7 @@ const stats = require("./core/stats.cjs");
 const economy = require("./core/economy.cjs"); // 포켓코인 (#72)
 const legends = require("./core/legends.cjs"); // 전설의 길 (#86)
 const research = require("./core/research.cjs"); // 환상 스페셜 리서치 (#86)
+const limits = require("./core/limits.cjs"); // 채팅 없이 한도 (#104)
 const { RustCore } = require("./core/rust.cjs");
 
 const ptys = new Map(); // pane id "<ws>:<agent|shell>" -> IPty
@@ -861,7 +862,8 @@ const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
 const SETTINGS = path.join(CACHE, "ui", "settings.json");
 // card background: 0 % by default (#100) — only the Pokémon on the desktop (minimal mode, auto ≤ 30 %); a settings.json that has a value keeps it
 const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away" }, tabGlow: true, theme: "system", side: true, titles: true,
-  menubar: { on: true, text: "waiting" } }; // 메뉴바 (STA-19, #64)
+  menubar: { on: true, text: "waiting" }, // 메뉴바 (STA-19, #64)
+  limits: { codex: true, claude: null } }; // 채팅 없이 한도 (STA-21, #104): Codex app server · Claude usage API (null = not asked yet)
 const MENUBAR_TEXT = ["waiting", "limit", "none"];
 const MINIMAL = ["auto", "always", "never"];
 const WHEN = ["away", "always"]; // 보일 때 (#98): while another app is in front (as before) / always, Tamer in front too // 최소 모드 (#63): by the background (≤ 30 %), always, never
@@ -878,6 +880,7 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
     titles: b(raw?.titles, SETTINGS_DEFAULT.titles), // 세션 제목 (#99): agents' conversation titles read and shown
     menubar: { on: b(raw?.menubar?.on, SETTINGS_DEFAULT.menubar.on), text: MENUBAR_TEXT.includes(raw?.menubar?.text) ? raw.menubar.text : SETTINGS_DEFAULT.menubar.text },
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
+    limits: { codex: b(raw?.limits?.codex, SETTINGS_DEFAULT.limits.codex), claude: typeof raw?.limits?.claude === "boolean" ? raw.limits.claude : null },
   };
 }
 let settings = readSettings();
@@ -885,7 +888,7 @@ nativeTheme.themeSource = settings.theme;
 // macOS switched between dark and light: "시스템 따라가기" pages re-pick their colours (#60)
 nativeTheme.on("updated", () => { broadcast("settings", settings); overlayUpdate(); });
 function setSettings(patch) {
-  settings = readSettings({ ...settings, ...patch, overlay: { ...settings.overlay, ...(patch?.overlay || {}) }, menubar: { ...settings.menubar, ...(patch?.menubar || {}) } });
+  settings = readSettings({ ...settings, ...patch, overlay: { ...settings.overlay, ...(patch?.overlay || {}) }, menubar: { ...settings.menubar, ...(patch?.menubar || {}) }, limits: { ...settings.limits, ...(patch?.limits || {}) } });
   nativeTheme.themeSource = settings.theme; // menus, dialogs, scroll bars follow too (#60)
   writeFile(SETTINGS, JSON.stringify(settings));
   broadcast("settings", settings);
@@ -973,7 +976,7 @@ const progShown = (v = progressNow()) => !!(v.inc || v.stamps?.soon || v.researc
 function progressBump() { progCache = null; send("progress", progressNow()); overlaySync(); overlayUpdate(); }
 // the balls in the bag, for the wild card's ball chips (#76)
 const ballsOwned = () => { try { const b = economy.bag(); return { great: b.great || 0, ultra: b.ultra || 0, master: b.master || 0 }; } catch { return {}; } };
-const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow(), prog: progressNow() });
+const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow(), prog: progressNow(), limits: limitsView() });
 function trayAct(act) {
   if (act?.tab) focusMain(String(act.tab));
   else if (act?.set) setSettings(act.set);
@@ -981,6 +984,7 @@ function trayAct(act) {
   else if (act === "open") focusMain();
   else if (act === "hide") setSettings({ menubar: { on: false } });
   else if (act === "quit") app.quit();
+  else if (act === "limits") limitsRefresh({ user: true });
   logLine(`menubar ${typeof act === "string" ? act : Object.keys(act || {})[0] || "-"}`);
 }
 const trayTemplate = (items) => items.map(({ act, submenu, ...it }) => ({ ...it, ...(submenu ? { submenu: trayTemplate(submenu) } : {}), ...(act ? { click: () => trayAct(act) } : {}) }));
@@ -991,12 +995,72 @@ function trayUpdate() {
   if (!tray) {
     tray = new Tray(trayIcon(nativeImage));
     tray.setToolTip("Tamer");
-    const open = () => tray.popUpContextMenu(Menu.buildFromTemplate(trayTemplate(trayNow().items)));
+    const open = () => { limitsRefresh(); tray.popUpContextMenu(Menu.buildFromTemplate(trayTemplate(trayNow().items))); }; // #104: older than a minute → read again (shown next time)
     tray.on("click", open);
     tray.on("right-click", open);
   }
   tray.setTitle(trayNow().title, { fontType: "monospacedDigit" });
 }
+// ── 채팅 없이 한도 (STA-21, #104 — POL-AGENT-02 rules 1 … 1-6) ──────────────────────────────────
+// Codex: its app server, on a timer too. Claude: only when turned on (asked once); the Keychain only when
+// it's turned on or the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d), the timer uses the
+// token kept in memory. Results go to the windows as "limits" — they merge them like an agent's report
+const limitsState = { claude: { at: 0, error: null }, codex: { at: 0, error: null } };
+let limitsBusy = null, limitsLast = 0, limitsResetTimer = null;
+const codexCmd = () => (TEST ? process.env.CVIM_LIMITS_CODEX_CMD || null : agents.where("codex"));
+const limitsView = () => ({ codex: settings.limits.codex, claude: settings.limits.claude === true, token: limits.hasToken(), state: limitsState });
+async function limitsRefresh({ user = false } = {}) {
+  if (limitsBusy) return limitsBusy;
+  if (!user && Date.now() - limitsLast < 60000) return limitsView();
+  limitsLast = Date.now();
+  limitsBusy = (async () => {
+    await ready;
+    const env = agents.processEnv(), cmd = settings.limits.codex ? codexCmd() : null;
+    const jobs = [cmd && ["codex", limits.codex(cmd, env)], settings.limits.claude === true && ["claude", limits.claude(env, { user })]].filter(Boolean);
+    for (const [key, job] of jobs) {
+      const r = await job;
+      limitsState[key] = r.error ? { ...limitsState[key], error: r.error } : { at: Date.now(), error: null };
+      if (!r.error) broadcast("limits", { key, five_hour: r.five_hour, seven_day: r.seven_day });
+      logLine(`limits ${key} ${r.error || "ok"}${user ? " (asked)" : ""}`);
+    }
+  })();
+  try { await limitsBusy; } finally { limitsBusy = null; }
+  send("limits-state", limitsView());
+  trayUpdateSoon();
+  return limitsView();
+}
+// a window's reset time passed: read again once (30 s after)
+function limitsResetSoon() {
+  clearTimeout(limitsResetTimer);
+  const now = Date.now(), next = Object.values(usageSeen).flatMap((u) => [u?.five_hour?.resets_at, u?.seven_day?.resets_at])
+    .filter((t) => t && t * 1000 > now).sort((a, b) => a - b)[0];
+  if (next) limitsResetTimer = setTimeout(() => limitsRefresh(), Math.min(next * 1000 - now + 30000, 2 ** 31 - 1));
+}
+// rule 1-2: what turning it on means, before anything is read — closing it without an answer = off
+async function limitsConsent() {
+  if (TEST) { logLine("limits ask"); return process.env.CVIM_TEST_LIMITS_CONSENT === "yes"; }
+  const r = await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+    type: "question", buttons: ["켜기", "켜지 않음"], defaultId: 0, cancelId: 1,
+    message: "Claude 한도를 대화 없이 볼까요?",
+    detail: "켜면 Tamer가 Claude Code의 로그인 정보를 macOS 키체인에서 읽어, Anthropic에 이 계정의 5시간·주간 사용률만 물어봐요.\n\n"
+      + "· 보내는 것: 로그인 토큰(Anthropic에만). 대화·폴더·파일은 보내지 않아요\n"
+      + "· 토큰은 메모리에만 두고 저장하지 않아요\n"
+      + "· 공개되지 않은 주소라 언제든 바뀌거나 막힐 수 있어요. Anthropic 약관상 허용되는지 Tamer는 확인하지 못했어요\n"
+      + "· 켤 때와 '한도 새로 고침'을 누를 때 macOS가 키체인 확인 창을 띄울 수 있어요\n"
+      + "· 켜지 않으면 지금처럼 Claude가 응답할 때 받은 값을 써요. 설정 › 일반 › 한도에서 언제든 바꿀 수 있어요",
+  });
+  return r.response === 0;
+}
+// once, after the window is up: Codex's limits, and the question when there is a Claude Code login and it was never asked
+async function limitsStart() {
+  await limitsRefresh();
+  if (settings.limits.claude !== null || !(await limits.claudeHasLogin(agents.processEnv()))) return;
+  const yes = await limitsConsent();
+  setSettings({ limits: { claude: yes } });
+  if (yes) limitsRefresh({ user: true });
+}
+setInterval(() => { if (uiReady) limitsRefresh(); }, 15 * 60 * 1000);
+
 function trayUpdateSoon() {
   if (trayTimer) return;
   trayTimer = setTimeout(() => { trayTimer = null; trayUpdate(); }, 100);
@@ -1172,16 +1236,30 @@ const OPEN_DEFAULT = new Set([".html", ".htm", ".svg", ".pdf", ".png", ".jpg", "
 const commands = {
   // 설정 창 (APP-19): read, and change (only known keys survive readSettings)
   settings_get: () => settings,
-  settings_set: ({ patch }) => setSettings(patch && typeof patch === "object" ? patch : {}),
+  // turning 'Claude 한도' on asks first (POL-AGENT-02 rule 1-2); off forgets the token at once
+  async settings_set({ patch }) {
+    let p = patch && typeof patch === "object" ? patch : {};
+    const on = p.limits?.claude === true && settings.limits.claude !== true;
+    if (on && !(await limitsConsent())) p = { ...p, limits: { ...p.limits, claude: false } };
+    if (p.limits?.claude === false) limits.forget();
+    const s = setSettings(p);
+    if (on && s.limits.claude) limitsRefresh({ user: true });
+    return s;
+  },
+  // 한도 새로 고침 (#104): user = pressed by the user (the only time the Keychain is read, besides turning it on)
+  limits_refresh: ({ user } = {}) => limitsRefresh({ user: !!user }),
+  limits_state: () => limitsView(),
   // 메뉴바 (STA-19): the last 5h · 7d the window remembers for an agent — numbers only, kept in memory
   usage_seen({ key, five_hour, seven_day }) {
     if (!TRAY_AGENTS.some(([k]) => k === key)) return;
     const win = (w) => (w && Number.isFinite(Number(w.pct)) ? { pct: Number(w.pct), resets_at: Number.isFinite(Number(w.resets_at)) && w.resets_at != null ? Number(w.resets_at) : null } : null);
     usageSeen[key] = { five_hour: win(five_hour), seven_day: win(seven_day) };
     trayUpdateSoon();
+    limitsResetSoon();
   },
   startup_mark({ what }) { logLine(`startup ${String(what).slice(0, 40)} +${since()}ms`); },
   app_info() {
+    if (!uiReady) setTimeout(() => limitsStart().catch((e) => logLine(`limits start error ${e}`)), 4000); // #104
     uiReady = true;
     const start = TEST && process.env.CVIM_DESKTOP_DIRS ? process.env.CVIM_DESKTOP_DIRS.split(":")
       : process.env.CVIM_DESKTOP_DIR ? [process.env.CVIM_DESKTOP_DIR] : [];
@@ -1633,6 +1711,12 @@ const testCommands = {
   // the pointer over the current tab's partner / gone (scenes, #68)
   // 메뉴바 (#64): the icon's text and the menu as data (a test app shows no icon); a menu item's click by its labels
   tray_test: () => ({ shown: !!tray, ...trayNow() }),
+  // 한도 (#104): what was read and how often the token was — counts only, never a value; status = the stand-in's answer
+  // auto: the timer's read now (as if a minute had passed — the Keychain must not be touched)
+  async limits_test({ status, auto } = {}) {
+    if (status != null) limits.setTestStatus(status);
+    if (auto) { limitsLast = 0; await limitsRefresh(); }
+    return { ...limitsView(), keychainReads: limits.test.keychainReads, fetches: limits.test.fetches, settings: settings.limits }; },
   tray_click_test({ path: labels }) {
     let items = trayNow().items, it = null;
     for (const l of labels || []) { it = items.find((x) => x.label === l); items = it?.submenu || []; }

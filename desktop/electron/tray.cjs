@@ -1,7 +1,7 @@
 // 메뉴바 (STA-19, #64): what the menu bar icon shows and its menu, as data — main.cjs turns it into
 // a Tray and a native Menu (and a test reads it without putting an icon on anyone's menu bar).
 // Items carry an `act` instead of a click: { tab: ws } · { set: patch } · "settings" · "open" ·
-// "hide" · "quit".
+// "hide" · "quit" · "limits" (한도 새로 고침, #104).
 
 const DOING = {
   idle: "대기", sleep: "쉬는 중", thinking: "생각 중", coding: "편집", reading: "읽는 중", searching: "검색",
@@ -25,7 +25,8 @@ function tabRow(t) {
 }
 
 // tabs: [{ ws, name, state, ended, active }] · usage: { claude: { five_hour, seven_day } } · settings: readSettings()
-function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null, now = Date.now() }) {
+// limits (#104): { codex, claude (turned on), token (Claude's in memory), state: { claude|codex: { at, error } } }
+function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null, limits = null, now = Date.now() }) {
   const mb = settings.menubar, o = settings.overlay;
   const waiting = tabs.filter((t) => t.state === "waiting").length;
   const fives = AGENTS.map(([k]) => usage[k]?.five_hour).filter((w) => live(w, now)).map((w) => w.pct);
@@ -49,6 +50,13 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null,
     items.push({ label: `${name}  ${parts.join(" · ")}`, enabled: false });
   }
   if (!any) items.push({ label: "한도: 에이전트가 아직 알려 주지 않았어요", enabled: false });
+  // 한도 새로 고침 (#104): when it was last read; a turned-on Claude without a token reads only when pressed
+  if (limits && (limits.codex || limits.claude)) {
+    const last = Math.max(limits.state?.claude?.at || 0, limits.state?.codex?.at || 0);
+    const ago = last ? Math.max(0, Math.round((now - last) / 60000)) : null;
+    const need = limits.claude && (!limits.token || limits.state?.claude?.error === "expired");
+    items.push({ label: `↻ 한도 새로 고침${need ? " — Claude는 눌러야 읽어요" : ago != null ? ` (${ago ? `${ago}분 전` : "방금"})` : ""}`, act: "limits" });
+  }
   // 🪙 포켓코인 (#72, SCREENS_P3 S10): one line, not clickable — never on the icon's text
   if (coins) items.push({ label: `🪙 포켓코인 ${coins.balance.toLocaleString("en-US")} · 오늘 +${coins.today.earned.toLocaleString("en-US")}`, enabled: false });
   // 진행 (#88, PKM-30 rule 7): what there is of the incubator · stamps · research, one line, not clickable

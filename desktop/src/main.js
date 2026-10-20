@@ -1044,13 +1044,15 @@ function renderBar(tab) {
   document.title = `${tm.stall ? "⏳" : ICON[st.state] || ""} ${base(tab.cwd)} — Tamer`;
   const u = withLast(st, tab), parts = [];
   const old = (k) => (u.stale?.includes(k) ? ' title="지난번 값 — 첫 응답 뒤에 새로 고쳐져요" style="opacity:.55"' : "");
+  // 5h · 7d: pressed = 한도 새로 고침 (#104 — the agents' limits read now, Claude's only if turned on)
+  const lim = (k) => (u.stale?.includes(k) ? ' class="u-lim" title="지난번 값 — 눌러서 한도 새로 고침" style="opacity:.55"' : ' class="u-lim" title="눌러서 한도 새로 고침"');
   // gauges and the model name give way first on a narrow window: the numbers stay (#38)
   const gauge = (p) => `<span class="gauge">${bar(p)} </span>`;
   if (u?.model) parts.push(`<span class="dim u-model"${old("model")}>${esc(u.model)}</span>`);
   if (u?.ctx != null) parts.push(`<span class="${level(u.ctx)}"${u.ctxEst ? ' title="모델의 최대 입력 크기로 계산한 추정치"' : ""}>ctx ${gauge(u.ctx)}${u.ctxEst ? "≈" : ""}${Math.round(u.ctx)}%</span>`);
   else if (u?.ctx_tokens != null) parts.push(`<span class="dim">ctx ${Math.round(u.ctx_tokens / 1000)}k</span>`);
-  if (u?.five_hour) parts.push(`<span class="${level(u.five_hour.pct)}"${old("five_hour")}>5h ${gauge(u.five_hour.pct)}${Math.round(u.five_hour.pct)}%${untilReset(u.five_hour.resets_at)}</span>`);
-  if (u?.seven_day) parts.push(`<span class="${level(u.seven_day.pct)}"${old("seven_day")}>7d ${gauge(u.seven_day.pct)}${Math.round(u.seven_day.pct)}%</span>`);
+  if (u?.five_hour) parts.push(`<span${lim("five_hour")}><span class="${level(u.five_hour.pct)}">5h ${gauge(u.five_hour.pct)}${Math.round(u.five_hour.pct)}%${untilReset(u.five_hour.resets_at)}</span></span>`);
+  if (u?.seven_day) parts.push(`<span${lim("seven_day")}><span class="${level(u.seven_day.pct)}">7d ${gauge(u.seven_day.pct)}${Math.round(u.seven_day.pct)}%</span></span>`);
   // a Claude typed in the shell without the opt-in line: no 5h · 7d (only its status line has them) (#45)
   const typedClaude = (st.shellKey || tab.hostAgent?.key) === "claude" && st.state !== "shell";
   // #49: always in view while such a Claude is the one shown — the 1.8-6 s toast is easy to miss
@@ -1092,6 +1094,16 @@ function tellUsage(key, l = lastUsage(key)) {
   if (l.five_hour || l.seven_day) invoke("usage_seen", { key, five_hour: l.five_hour || null, seven_day: l.seven_day || null }).catch(() => {});
 }
 for (const k of ["claude", "codex"]) tellUsage(k);
+// 채팅 없이 한도 (STA-21, #104): read by the main process — merged like an agent's report (newer window wins)
+listen("limits", (e) => rememberUsage(e.payload.key, { five_hour: e.payload.five_hour, seven_day: e.payload.seven_day }));
+$("#usage").addEventListener("click", (e) => {
+  if (!e.target.closest(".u-lim")) return;
+  toast("한도를 새로 읽는 중…");
+  invoke("limits_refresh", { user: true }).then((v) => {
+    const err = v?.claude && v.state?.claude?.error;
+    if (err) toast(err === "login" ? "Claude 로그인 정보를 읽지 못했어요 — 키체인 확인 창에서 허용하거나 Claude Code에 다시 로그인" : err === "expired" ? "Claude 로그인이 만료됐어요 — Claude Code를 한 번 쓰고 다시 눌러 주세요" : "Claude 한도를 읽지 못했어요 — 응답할 때 받은 값을 써요");
+  }).catch(() => {});
+});
 const live = (w) => w && (w.resets_at == null || w.resets_at * 1000 > Date.now());
 // 5h · 7d are the account's (STA-09 rule 5, #96): each tab's status line keeps sending what its own last reply
 // said, so of two reports of a window the newer wins — a later reset is a newer window; the same window
@@ -1119,7 +1131,7 @@ function withLast(st, tab) {
   }
   if (!u.model && l.model) { u.model = l.model; stale.push("model"); }
   for (const k of ["five_hour", "seven_day"]) {
-    if (!u[k] && live(l[k])) { u[k] = l[k]; stale.push(k); } // not reported by this tab yet: the last value, dimmed
+    if (!u[k] && live(l[k])) { u[k] = l[k]; if (!(l[k].at && Date.now() - l[k].at < 20 * MINUTE)) stale.push(k); } // not reported by this tab yet: the last value, dimmed — unless read just now (#104)
     else if (u[k]) u[k] = newerWin(l[k], u[k]); // another tab may know newer (#96)
   }
   u.stale = stale;
@@ -1534,7 +1546,7 @@ function settingsPage(page) {
   for (const el of document.querySelectorAll("#settings .set-page")) el.hidden = el.dataset.page !== page;
   if (page === "overlay" && settingsNow) renderPreview(settingsNow.overlay); // the 미리보기 lives on this page only
 }
-async function openSettings(page = setPage) { const s = await invoke("settings_get"); $("#settings").hidden = false; settingsPage(page); applySettings(s); $("#settings").focus(); }
+async function openSettings(page = setPage) { const s = await invoke("settings_get"); $("#settings").hidden = false; settingsPage(page); applySettings(s); $("#settings").focus(); invoke("limits_state").then(limitsStateShow).catch(() => {}); }
 function closeSettings() { $("#settings").hidden = true; focusBig(active); }
 $("#settings").addEventListener("change", (e) => {
   const k = e.target.dataset?.set, t = e.target.type;
@@ -1549,6 +1561,16 @@ $("#settings").addEventListener("click", async (e) => {
 });
 $("#settings").addEventListener("mousedown", (e) => { if (e.target.id === "settings") closeSettings(); });
 $("#settings-close").addEventListener("click", closeSettings);
+// 한도 (#104): when each was last read · Claude needs a press after a launch (the Keychain only then)
+const agoText = (t) => { const m = Math.round((Date.now() - t) / MINUTE); return m < 1 ? "방금" : m < 60 ? `${m}분 전` : `${Math.round(m / 60)}시간 전`; };
+function limitsStateShow(v) {
+  if (!v) return;
+  const part = (name, on, s, needs) => (!on ? null : needs ? `${name} 눌러야 읽어요` : s?.error && !s.at ? `${name} 못 읽음` : s?.at ? `${name} ${agoText(s.at)}` : null);
+  const t = [part("Codex", v.codex, v.state?.codex), part("Claude", v.claude, v.state?.claude, !v.token || v.state?.claude?.error === "expired")].filter(Boolean).join(" · ");
+  $("#set-limits-state").textContent = t || "상단 바 5h·7d를 눌러도 돼요";
+}
+listen("limits-state", (e) => limitsStateShow(e.payload));
+$("#set-limits-refresh").addEventListener("click", () => invoke("limits_refresh", { user: true }).then(limitsStateShow).catch(() => {}));
 listen("open-settings", () => openSettings());
 listen("settings", (e) => applySettings(e.payload));
 invoke("settings_get").then(applySettings).catch(() => {});
