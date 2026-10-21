@@ -40,12 +40,10 @@ async function drawPartner(m) {
   if (!p) { root.innerHTML = `<div class="pop-none">${m.folder ? `${esc(m.folder)} — 이 탭엔 파트너가 없어요` : "열린 탭이 없어요"}</div>`; return; }
   const goal = p.final || p.grad ? 100 : p.next?.level || null;
   const pct = goal && p.lv ? Math.min(100, Math.round((p.lv / goal) * 100)) : null;
-  const prog = m.prog || {};
-  const chips = [prog.inc && `알 ${prog.inc.have}/${prog.inc.need}`, prog.stamps && `스탬프 ${prog.stamps.n}/${prog.stamps.need}`, prog.research && `리서치 ${prog.research.done}/${prog.research.of}`].filter(Boolean);
   root.innerHTML = `<div class="pop-sprite"><img alt="" /></div>
     <div class="pop-who"><div><span class="pop-name">${esc(p.name)}${p.shiny ? " ✨" : ""}</span> <span class="pop-lv">${esc(lvLine(p))}</span></div>
       ${pct != null ? `<div class="pop-bar"><i style="width:${pct}%"></i></div>` : ""}
-      <div class="pop-chips"><span>${esc(m.folder || "")}</span>${chips.map((c) => `<span>· ${esc(c)}</span>`).join("")}</div></div>`;
+      <div class="pop-chips"><span>${esc(m.folder || "")}</span></div></div>`;
   const src = await sprite(p.gif);
   const img = root.querySelector("img");
   if (src && img) img.src = src;
@@ -59,6 +57,17 @@ async function drawParty(m) {
   if (!p.list.length) { root.innerHTML = head + '<div class="pop-none">파티가 비어 있어요 — 파트너 없는 폴더와 Tamer 밖 작업은 파티가 키워요</div>' + last; return; }
   root.innerHTML = head + `<div class="pop-party">${p.list.map((x, i) => `<span class="pop-mon${i === p.next ? " next" : ""}${i ? "" : " lead"}" data-uid="${x.uid}" title="${esc(x.name)} Lv ${x.lv ?? "?"}${i === p.next ? " · 다음 차례" : ""}${i ? " — 눌러서 선두로" : " · 선두"}"><img alt="" data-gif="${esc(x.gif || "")}" /><small>Lv ${x.lv ?? "?"}</small></span>`).join("")}</div>` + last;
   for (const img of root.querySelectorAll("img[data-gif]")) sprite(img.dataset.gif).then((u) => { if (u) img.src = u; });
+}
+
+// 진행 (#116, PKM-30 rule 9): the incubator · stamps · research — shown with no tab too — and 알 넣기 from the bag
+function drawProg(m) {
+  const p = m.prog || {}, e = m.eggs || {}, soon = (x) => (x?.soon ? "곧 " : "");
+  const items = [p.inc && `🥚 ${soon(p.inc)}${esc(p.inc.name || "알")} ${p.inc.have}/${p.inc.need}${p.inc.waiting ? ` · 대기 ${p.inc.waiting}` : ""}`,
+    p.stamps && `⭐ ${soon(p.stamps)}스탬프 ${p.stamps.n}/${p.stamps.need}`, p.research && `✦ ${soon(p.research)}리서치 ${p.research.done}/${p.research.of}`].filter(Boolean);
+  const kind = e.egg > 0 ? "egg" : e.egg2 > 0 ? "egg2" : null; // an ordinary egg first
+  const put = kind ? `<button id="pop-egg-in" data-kind="${kind}" title="가방의 ${kind === "egg" ? "알" : "희귀 알"}을 부화기에 — 작업을 끝낼 때마다 부화가 가까워져요">🥚 알 넣기 <span class="dim">가방 ${e.egg + e.egg2}</span></button>` : "";
+  $("#pop-prog").innerHTML = items.length || put
+    ? `<div class="pop-h"><span>진행</span>${put}</div>${items.length ? `<div class="pop-progline">${items.join(" · ")}</div>` : '<div class="pop-none">부화기가 비어 있어요</div>'}` : "";
 }
 
 function drawToday(m) {
@@ -104,6 +113,7 @@ function draw(m) {
   const now = Date.now();
   drawPartner(m);
   drawParty(m);
+  drawProg(m);
   drawToday(m);
   drawLimits(m, now);
   drawTabs(m);
@@ -131,7 +141,8 @@ document.addEventListener("click", (e) => {
   else if (t.id === "pop-open") invoke("popover_open");
   else if (t.id === "pop-settings") invoke("popover_settings");
   else if (t.id === "pop-quit") invoke("popover_quit");
-  else if (t.id === "pop-party-go") invoke("popover_party"); // 포켓몬 창의 ⭐ 파티 (#107) // 완전히 끄기 (#106 — the right-click menu's "Tamer 종료" too)
+  else if (t.id === "pop-party-go") invoke("popover_party"); // 포켓몬 창의 ⭐ 파티 (#107)
+  else if (t.id === "pop-egg-in") invoke("egg_in", { kind: t.dataset.kind }).then(() => invoke("popover_state")).then(draw).catch(() => {}); // 🥚 (#116) // 완전히 끄기 (#106 — the right-click menu's "Tamer 종료" too)
   else if (t.dataset.ws) invoke("popover_tab", { ws: t.dataset.ws });
 });
 document.addEventListener("keydown", (e) => {

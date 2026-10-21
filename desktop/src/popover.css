@@ -35,6 +35,11 @@ button:hover { background: var(--hover); }
 .pop-recent { margin-top: 6px; font-size: 12px; color: var(--dim); }
 #pop-party-go { font-size: 11px; padding: 2px 8px; }
 
+/* 진행 (#116) */
+.pop-progline { font-size: 12px; color: var(--fg); }
+#pop-egg-in { font-size: 11px; padding: 2px 8px; }
+#pop-egg-in .dim { color: var(--dim); }
+
 /* 오늘 */
 #pop-today { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .pop-stat { background: var(--raised); border-radius: 8px; padding: 7px 10px; }

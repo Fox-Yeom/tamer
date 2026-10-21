@@ -1168,6 +1168,7 @@ function popoverModel() {
     today: (() => { try { return stats.summary(); } catch { return null; } })(), coins: coinsNow(), prog: progressNow(),
     usage: usageSeen, limits: limitsView(), tabs: trayTabs(), wild: wild.current(), balls: ballsOwned(),
     party: partyLite(), recent: recentDone.slice(0, 3), outside: settings.outside, // #107
+    eggs: (() => { try { const b = economy.bag(); return { egg: b.egg || 0, egg2: b.egg2 || 0 }; } catch { return { egg: 0, egg2: 0 }; } })(), // 🥚 in the bag (#116)
   };
 }
 function popoverCreate() {
@@ -1253,7 +1254,7 @@ function overlayPayload() {
     wild: settings.overlay.wild ? wild.current() : null, stallMs: STALL_MS, show: settings.overlay, theme: settings.theme, // #59 #60
     prog: settings.overlay.progress ? progressNow() : null, // #88
     // 파티 (#107): only while no tab is open; the last finish outside Tamer / by the party for 15 s
-    party: tabs.length ? null : partyLite(), partyNote: recentDone[0] && now - recentDone[0].at < 15000 ? recentDone[0] : null,
+    party: tabs.length ? null : partyLite(), partyNote: recentDone[0] && now - recentDone[0].at < 15000 ? recentDone[0] : null, // (prog above shows under it too, #116)
   };
 }
 
@@ -1358,6 +1359,13 @@ const popoverCommands = {
   popover_quit() { popoverHide(); logLine("popover quit"); app.quit(); }, // 완전히 끄기 — as ⌘Q / the menu's Tamer 종료
   popover_party() { popoverHide(); focusMain(); whenUi(() => send("open-dex", { view: "party" })); }, // ⭐ 파티 (#107)
   party_set: (args) => commands.party_set(args), // 선두 바꾸기 right there (#112) — partner.partySet checks the list
+  // 🥚 알 넣기 right there (#116, PKM-30 rule 9): an egg from the bag into the incubator — eggs only, as the bag does it
+  async egg_in({ kind }) {
+    if (kind !== "egg" && kind !== "egg2") return { ok: false };
+    const r = await commands.bag_use({ item: kind });
+    popoverUpdate(); overlayUpdate();
+    return { ok: !!r?.ok, incubator: r?.incubator || null };
+  },
   popover_settings() { popoverHide(); focusMain(); whenUi(() => send("open-settings", {})); },
   popover_dex({ id }) { popoverHide(); focusMain(); whenUi(() => send("open-dex", { id: Number(id) || null })); },
   popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },

@@ -540,7 +540,7 @@ module.exports = [
       fs.writeFileSync(path.join(box.data, "ui", "desktop_overlay.json"), JSON.stringify({ right: 1093, bottom: 480, collapsed: false }));
     },
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { invoke: "settings_set", args: { patch: { overlay: { minimal: "always", alpha: 0, when: "always" } } } },
-      { invoke: "party_test", args: { n: 3 } }, { invoke: "background_test" }, { wait: 25000 }],
+      { invoke: "party_test", args: { n: 3 } }, { invoke: "incubator_add_test", args: { kind: "egg", have: 4 } }, { invoke: "background_test" }, { wait: 25000 }],
     check: ({ log }) => {
       const fit = JSON.parse(log.match(/^bg overlay fit (\{.*?\}) bounds/m)?.[1] || "{}");
       return [ok(/^bg overlay wild /m.test(log), "야생 알림까지 찍음"),
@@ -614,6 +614,39 @@ module.exports = [
         ok(party0.list?.every((m) => lv(party1, m.uid) === m.lv + 2 || (m.final && lv(party1, m.uid) === m.lv + 1)), `각각 +2 ${JSON.stringify(party0.list?.map((m) => [m.lv, lv(party1, m.uid)]))}`),
         ok((log.match(/^coins outside \+/gm) || []).length === 2, `코인 2번 ${(log.match(/^coins outside .*/gm) || []).join(" | ")}`),
         ok(!log.includes("LAB-PRIVATE-107") && !leaked.length, `기록 본문이 앱 기록·데이터에 없어야 ${JSON.stringify(leaked)}`),
+      ];
+    },
+  },
+  {
+    id: "outside-egg", tags: ["smoke", "poke"], what: "Tamer 밖 작업이 끝나도 부화기의 알이 한 칸 가까워짐 — 탭과 같은 공용 처리(finishGame) (PKM-25, #116)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_OUTSIDE_CONSENT: "yes" },
+    files: { "claudecfg/projects/-elsewhere/.keep": "" },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "incubator_add_test", args: { kind: "egg", have: 2 } }, { invoke: "incubator_state", log: true },
+      { invoke: "outside_append_test", args: { agent: "claude", rel: "-elsewhere/egg.jsonl", lines: [{ type: "system", subtype: "turn_duration", cwd: "/tmp/tamer-lab-outside", durationMs: 60000, entrypoint: "cli", isSidechain: false }] } },
+      { wait: 1500 }, { invoke: "incubator_state", log: true }],
+    check: ({ log }) => {
+      const [a, b] = [...log.matchAll(/^lab-invoke incubator_state (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      return [ok(/^outside done claude/m.test(log) && a?.active?.have === 2 && b?.active?.have === 3, `밖 작업 한 번에 알 2 → 3 ${JSON.stringify([a?.active?.have, b?.active?.have])}`)];
+    },
+  },
+  {
+    id: "popover-egg-in", tags: ["smoke", "poke"], what: "메뉴바 대시보드 진행 줄: 가방에 알이 있으면 [알 넣기]로 부화기에 — 진행 줄에 '알 0/10', 가방에서 한 개 줄어듦 · 진행 줄은 탭 파트너 줄과 따로(탭과 상관없이) (PKM-30 규칙 9, #116)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    setup: (box) => {
+      const d = todayLocal();
+      putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 1000 }, { day: d, kind: "buy", item: "egg", n: 2, amount: -100 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
+    },
+    steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "popover_test", args: { open: true } }, { wait: 1500 },
+      { invoke: "popover_read_test", log: true }, { invoke: "popover_click_test", args: { sel: "#pop-egg-in" }, log: true }, { wait: 1000 },
+      { invoke: "popover_read_test", log: true }, { invoke: "incubator_state", log: true }, { invoke: "shop_state", log: true }],
+    check: ({ log }) => {
+      const [a, b] = [...log.matchAll(/^lab-invoke popover_read_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const inc = JSON.parse(log.match(/^lab-invoke incubator_state (.*)$/m)?.[1] || "null"), st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
+      return [
+        ok(/알 넣기 가방 2/.test(a?.text || "") && !/🥚 알 \d/.test(a?.text || "") && /⭐ 스탬프/.test(a?.text || ""), `처음: [알 넣기 가방 2], 부화기 줄 없음, 스탬프는 보임(탭이 없어도) ${JSON.stringify(a?.text?.match(/진행[\s\S]{0,60}/)?.[0])}`),
+        ok(/^lab-invoke popover_click_test true$/m.test(log) && inc?.active?.need === 10 && /🥚 알 0\/10/.test(b?.text || ""), `넣은 뒤 부화기 알 0/10 ${JSON.stringify(inc?.active)} ${JSON.stringify(b?.text?.match(/진행[\s\S]{0,60}/)?.[0])}`),
+        ok((st.bag?.egg || 0) === 1, `가방 알 2 → 1 ${JSON.stringify(st.bag)}`),
       ];
     },
   },
