@@ -10,12 +10,17 @@
 //!   {"id":6,"method":"path_inside","params":{"root":"…","path":"…"}}   -> {"inside":bool,"real":…}
 //!   {"method":"output","params":{"ws":"<id>"}}                          agent printed something (no reply)
 //!   {"method":"esc","params":{"ws":"<id>"}}                             Esc / Ctrl-C typed into the agent (no reply)
+//!   {"id":8,"method":"claude_login","params":{"services":["Claude Code-credentials"],"read":false}}
+//!       Claude Code's login in the Keychain (#115 A1, keychain.rs): read false -> {"found":bool} (no prompt);
+//!       read true -> {"token":"…","exp":ms|null} | {"denied":true} | {"found":false} | {"busy":true} — answered
+//!       when macOS's prompt is answered (the loop doesn't wait for it)
 //! stdout (to the main process):
 //!   {"id":1,"result":…} / {"id":1,"error":"…"}
 //!   {"event":"state","ws":"<id>","payload":{state,tool,detail,usage,log}}
 //!   {"event":"transition","ws":"<id>","from":"…","to":"…","guess":bool}  guess: "done" from output only
 //! The core polls every 250 ms. It exits when stdin closes (the app quit).
 
+use cvim_core::keychain;
 use cvim_core::policy;
 use cvim_core::state::Kind;
 use cvim_core::workspace::{self, Workspace};
@@ -23,6 +28,7 @@ use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
@@ -147,6 +153,11 @@ impl Core {
                 }
                 Ok(Value::Null)
             }
+            // is there a Claude Code login (its attributes only — no prompt)
+            "claude_login" => {
+                let found = services(p).iter().any(|s| keychain::exists(s) == Some(true));
+                Ok(json!({ "found": found }))
+            }
             "path_inside" => {
                 let real = policy::inside(Path::new(str_param(p, "root")?), Path::new(str_param(p, "path")?));
                 Ok(json!({ "inside": real.is_some(), "real": real }))
@@ -178,6 +189,44 @@ impl Core {
     }
 }
 
+// the Keychain item names asked for — only Claude Code's (keychain::allowed)
+fn services(p: &Value) -> Vec<String> {
+    p["services"].as_array().into_iter().flatten().filter_map(|s| s.as_str()).filter(|s| keychain::allowed(s)).map(String::from).collect()
+}
+
+// one prompt at a time
+static ASKING: AtomicBool = AtomicBool::new(false);
+
+// the login's access token, on its own thread: macOS may ask the user first, and the answer can take a while.
+// The token goes into the reply and nowhere else (never logged)
+fn read_login(id: Value, p: &Value) {
+    if ASKING.swap(true, Ordering::SeqCst) {
+        send(&json!({ "id": id, "result": { "busy": true } }));
+        return;
+    }
+    let list = services(p);
+    std::thread::spawn(move || {
+        let mut out = json!({ "found": false });
+        for s in &list {
+            match keychain::read(s) {
+                keychain::Found::Token { value, exp } => {
+                    out = json!({ "token": value, "exp": exp });
+                    break;
+                }
+                keychain::Found::Denied => {
+                    out = json!({ "denied": true });
+                    break;
+                }
+                keychain::Found::Bad => out = json!({ "found": true }),
+                keychain::Found::Error(code) => out = json!({ "error": code }),
+                keychain::Found::NotFound => {}
+            }
+        }
+        ASKING.store(false, Ordering::SeqCst);
+        send(&json!({ "id": id, "result": out }));
+    });
+}
+
 fn main() {
     let (tx, rx) = mpsc::channel::<Option<String>>();
     std::thread::spawn(move || {
@@ -198,6 +247,12 @@ fn main() {
         match rx.recv_timeout(wait) {
             Ok(Some(line)) => {
                 let Ok(req) = serde_json::from_str::<Value>(&line) else { continue };
+                if req["method"] == "claude_login" && req["params"]["read"] == true {
+                    if let Some(id) = req.get("id") {
+                        read_login(id.clone(), &req["params"]);
+                    }
+                    continue;
+                }
                 let res = core.handle(req["method"].as_str().unwrap_or(""), &req["params"]);
                 if let Some(id) = req.get("id") {
                     send(&match res {

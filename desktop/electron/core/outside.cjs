@@ -126,4 +126,4 @@ function createWatch(env) {
   return { poll, size: () => files.size };
 }
 
-module.exports = { createWatch, hasLogs, roots, claudeDone, codexDone, codexMeta };
+module.exports = { createWatch, hasLogs, roots, claudeFiles, codexFiles, claudeDone, codexDone, codexMeta };

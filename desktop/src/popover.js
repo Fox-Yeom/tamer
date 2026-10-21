@@ -25,7 +25,6 @@ const sprite = (gif) => {
 };
 
 const level = (p) => (p >= 80 ? "lv-bad" : p >= 50 ? "lv-warn" : "lv-ok"); // STA-08 rule 2
-const live = (w, now) => w && Number.isFinite(w.pct) && (w.resets_at == null || w.resets_at * 1000 > now);
 function until(sec, now) {
   if (!sec) return "";
   const m = Math.max(0, Math.round((sec * 1000 - now) / 60000));
@@ -83,22 +82,43 @@ function drawToday(m) {
     <div class="pop-stat"><small>오늘 코인</small><b class="pop-coin">${c ? `+${c.today.earned.toLocaleString("en-US")}` : "—"}</b></div>`;
 }
 
+// 한도 칸 (#115, STA-22 rule 10 — PokeTokenBar's "Limits"): per agent, each window a row — the bar fills with
+// what's LEFT (coloured by how much is used, STA-08), "76% 남음", when it resets; a tick = the window's time
+// left (a bar shorter than the tick: using faster than the clock — a fact, no forecast: STA-18 ✖). A window past
+// its reset stays as "초기화됨"; one never heard of is "—"
+const WINS = [["five_hour", "5시간 세션", 5 * 3600], ["seven_day", "주간", 7 * 86400]];
+const DAYS = ["일", "월", "화", "수", "목", "금", "토"];
+function resetAt(sec, now) {
+  const d = new Date(sec * 1000), hm = `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+  return `${until(sec, now)} (${sec * 1000 - now >= 86400000 ? `${DAYS[d.getDay()]} ` : ""}${hm})`;
+}
+function limitRow(label, w, span, now) {
+  if (!w || !Number.isFinite(w.pct)) return `<div class="pop-win none"><span class="k">${label}</span><span class="gauge"></span><span class="pct">—</span></div>`;
+  if (w.resets_at && w.resets_at * 1000 <= now) // A6: reset since — the next request opens a new window
+    return `<div class="pop-win reset"><span class="k">${label}</span><span class="gauge"><i class="lv-ok" style="width:100%"></i></span><span class="pct">100% 남음</span><span class="when">초기화됨 — 다음 요청부터 새 창</span></div>`;
+  const used = Math.min(100, Math.max(0, w.pct)), left = 100 - used;
+  const rest = w.resets_at ? (w.resets_at * 1000 - now) / 1000 / span : null; // A4: the time left of the window (a reset further off than its length: no tick)
+  const tick = rest != null && rest <= 1 ? Math.max(0, rest * 100) : null;
+  return `<div class="pop-win"><span class="k">${label}</span><span class="gauge" ${tick != null ? `title="눈금: 남은 시간 ${Math.round(tick)}% — 막대가 눈금보다 짧으면 시간보다 빨리 쓰는 중"` : ""}><i class="${level(used)}" style="width:${left}%"></i>${tick != null ? `<b class="tick" style="left:${tick}%"></b>` : ""}</span>
+    <span class="pct">${Math.round(left)}% 남음</span>${w.resets_at ? `<span class="when">${esc(resetAt(w.resets_at, now))}</span>` : ""}</div>`;
+}
 function drawLimits(m, now) {
-  const rows = [];
+  const blocks = [];
   for (const [k, name] of AGENTS) {
     const u = m.usage?.[k] || {};
-    const ws = [["5h", u.five_hour], ["7d", u.seven_day]].filter(([, w]) => live(w, now));
-    ws.forEach(([kk, w], i) => rows.push(`<span class="ag">${i ? "" : name}</span><span class="k">${kk}</span>
-      <span class="gauge"><i class="${level(w.pct)}" style="width:${Math.min(100, Math.max(0, w.pct))}%"></i></span>
-      <span class="pct">${Math.round(w.pct)}%</span><span class="until">${esc(until(w.resets_at, now))}</span>`));
+    const t = m.spend?.[k]; // A5: today's tokens · ≈$ (with STA-23's yes)
+    if (!WINS.some(([key]) => u[key]) && !t) continue;
+    blocks.push(`<div class="pop-ag"><div class="pop-ag-h"><b>${name}</b>${t ? `<span title="오늘 이 맥의 ${name} 기록에 쓰인 토큰 수 — ≈$는 API 가격으로 계산한 추정치, 실제 청구 금액이 아니에요">오늘 ${esc(tokens(t.tokens))}${t.usd != null ? ` · ≈$${t.usd.toFixed(2)}` : ""}</span>` : ""}</div>
+      ${WINS.map(([key, label, span]) => limitRow(label, u[key], span, now)).join("")}</div>`);
   }
   const L = m.limits || {}, st = L.state || {};
   const last = Math.max(st.claude?.at || 0, st.codex?.at || 0);
   const need = L.claude && (!L.token || st.claude?.error === "expired");
   const note = need ? "Claude는 눌러야 읽어요" : last ? ago(last, now) : "";
   $("#pop-limits").innerHTML = `<div class="pop-h"><span>사용 한도</span>${L.codex || L.claude ? `<button id="pop-refresh" title="지금 다시 읽기">↻ 새로 고침${note ? ` · ${esc(note)}` : ""}</button>` : ""}</div>
-    ${rows.length ? `<div class="pop-lim">${rows.join("")}</div>` : '<div class="pop-limits-none">에이전트가 아직 알려 주지 않았어요</div>'}`;
+    ${blocks.length ? blocks.join("") : '<div class="pop-limits-none">에이전트가 아직 알려 주지 않았어요</div>'}`;
 }
+const tokens = (n) => (n >= 1e9 ? `${(n / 1e9).toFixed(1)}B` : n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e3 ? `${Math.round(n / 1e3)}K` : String(n)) + " 토큰";
 
 // needs you → failed → working → finished → resting (as the menu, STA-19)
 function drawTabs(m) {

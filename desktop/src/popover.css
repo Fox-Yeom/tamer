@@ -56,13 +56,19 @@ button:hover { background: var(--hover); }
 .pop-stat b { font: 500 17px "Fira Code", ui-monospace, monospace; }
 .pop-coin { color: var(--pk-coin, #f2c14e); }
 
-/* 한도 */
-.pop-lim { display: grid; grid-template-columns: 62px 24px minmax(0, 1fr) 40px 76px; gap: 6px; align-items: center; font-size: 12px; margin-top: 4px; }
-.pop-lim .ag { font-weight: 600; }
-.pop-lim .k, .pop-lim .until { color: var(--dim); }
-.pop-lim .pct { text-align: right; font-family: "Fira Code", ui-monospace, monospace; }
-.pop-lim .gauge { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
-.pop-lim .gauge > i { display: block; height: 100%; }
+/* 한도 (#115): per agent — rows of label · bar (what's left) with a tick (time left) · "n% 남음", then when it resets */
+.pop-ag + .pop-ag { margin-top: 10px; }
+.pop-ag-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+.pop-ag-h span { color: var(--dim); font-size: 11px; font-family: "Fira Code", ui-monospace, monospace; }
+.pop-win { display: grid; grid-template-columns: 64px minmax(0, 1fr) 70px; column-gap: 8px; row-gap: 2px; align-items: center; padding: 3px 0; font-size: 12px; }
+.pop-win .k { color: var(--dim); }
+.pop-win .pct { text-align: right; font-family: "Fira Code", ui-monospace, monospace; }
+.pop-win .when { grid-column: 2 / -1; font-size: 11px; color: var(--dim); }
+.pop-win.reset .when { color: var(--ok); }
+.pop-win.none .pct { color: var(--faint); }
+.pop-win .gauge { position: relative; height: 6px; border-radius: 3px; background: var(--line); }
+.pop-win .gauge > i { display: block; height: 100%; border-radius: 3px; }
+.pop-win .gauge > .tick { position: absolute; top: -3px; width: 2px; height: 12px; margin-left: -1px; border-radius: 1px; background: var(--fg); opacity: .55; }
 .lv-ok { background: var(--ok); } .lv-warn { background: var(--warn); } .lv-bad { background: var(--bad); }
 #pop-refresh { font-size: 11px; padding: 2px 8px; }
 .pop-limits-none { font-size: 12px; color: var(--dim); }

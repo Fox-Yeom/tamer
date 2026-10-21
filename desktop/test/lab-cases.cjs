@@ -67,6 +67,11 @@ function birds(box) {
   }
 }
 // 🪙 포켓코인 (#72): today as the app counts it (this Mac's midnight), the economy files of a sandbox
+// 한도 칸 (#115 A6 · A4): a window reset a minute ago; a week window half gone — fixed when the cases load, so +40 min:
+// a smoke run reaches the case minutes later and "3일 12시간" · the tick at ~50 % still hold
+const LIM_PAST = Math.floor(Date.now() / 1000) - 60, LIM_HALF_WEEK = Math.floor(Date.now() / 1000) + 3.5 * 86400 + 40 * 60;
+// 오늘 사용량 (#115 A5): a line of now and one of two days ago
+const SPEND_NOW = new Date().toISOString(), SPEND_OLD = new Date(Date.now() - 2 * 86400000).toISOString();
 const todayLocal = () => { const t = new Date(); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
 const econ = (box, f) => path.join(box.data, "economy", f);
 const ledgerRows = (box) => { try { return fs.readFileSync(econ(box, "ledger.jsonl"), "utf8").split("\n").filter(Boolean).map((l) => JSON.parse(l)); } catch { return null; } };
@@ -445,7 +450,7 @@ module.exports = [
     },
   },
   {
-    id: "limits-claude", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켬): 처음 한 번 묻고(가짜 답 '켜기') 그때 로그인 정보를 한 번 읽어 5시간 23%·주간 9% · 15분 자동 갱신은 메모리의 토큰으로(키체인 안 읽음) · 만료(401)면 토큰을 버리고 '눌러야 읽어요' · 메뉴바 새로 고침을 누르면 다시 한 번 읽음 · 토큰 값은 기록·데이터 어디에도 없음 (STA-21, POL-AGENT-02 1-2~1-4, #104)",
+    id: "limits-claude", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켬): 처음 한 번 묻고(가짜 답 '켜기') 그때 로그인 정보를 한 번 읽어 5시간 23%·주간 9% · 15분 자동 갱신은 메모리의 토큰으로(로그인 안 읽음) · 만료(401)면 토큰을 버리고 저절로 한 번 더 읽음 — 그것도 만료면 '눌러야 읽어요', 그 뒤 자동 갱신은 안 읽음 · 메뉴바 새로 고침을 누르면 다시 읽음 · 토큰 값은 기록·데이터 어디에도 없음 (STA-21, POL-AGENT-02 1-2~1-4, #104 #115 A1)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_CONSENT: "yes" },
     files: {
@@ -456,13 +461,13 @@ module.exports = [
       { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true },
       { invoke: "limits_test", args: { auto: true }, log: true },
       { invoke: "limits_test", args: { status: 401, auto: true }, log: true }, { invoke: "tray_test", log: true },
-      { invoke: "limits_test", args: { status: 200 } },
+      { invoke: "limits_test", args: { status: 200, auto: true }, log: true },
       { invoke: "tray_click_test", args: { path: ["↻ 한도 새로 고침 — Claude는 눌러야 읽어요"] }, log: true }, { wait: 800 },
       { invoke: "limits_test", log: true }],
     check: ({ log, box }) => {
       const st = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const trays = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => (JSON.parse(m[1]).items || []).map((i) => i.label || ""));
-      const [first, auto, expired, pressed] = st;
+      const [first, auto, expired, after, pressed] = st;
       const files = []; const walk = (d) => { for (const n of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, n.name); if (n.isDirectory()) walk(p); else files.push(p); } };
       try { walk(box.data); } catch {}
       const leaked = files.filter((f) => { try { return fs.readFileSync(f, "utf8").includes("LAB-SECRET-TOKEN-104"); } catch { return false; } });
@@ -471,9 +476,37 @@ module.exports = [
         ok(first?.keychainReads === 1 && first?.fetches === 1 && first?.token === true, `켤 때 로그인 정보 한 번 읽고 한 번 물음 ${JSON.stringify(first && { k: first.keychainReads, f: first.fetches, t: first.token })}`),
         ok(trays[0]?.some((l) => /Claude Code\s+5시간 23%.*주간 9%/.test(l)), `메뉴바 Claude 줄 ${JSON.stringify(trays[0]?.filter((l) => /%/.test(l)))}`),
         ok(auto?.keychainReads === 1 && auto?.fetches === 2, `자동 갱신은 메모리의 토큰으로 — 키체인 안 읽음 ${JSON.stringify(auto && { k: auto.keychainReads, f: auto.fetches })}`),
-        ok(expired?.token === false && expired?.state?.claude?.error === "expired" && trays[1]?.includes("↻ 한도 새로 고침 — Claude는 눌러야 읽어요"), `만료면 토큰을 버리고 '눌러야 읽어요' ${JSON.stringify(expired?.state?.claude)} ${JSON.stringify(trays[1]?.filter((l) => /↻/.test(l)))}`),
-        ok(/^lab-invoke tray_click_test true$/m.test(log) && pressed?.keychainReads === 2 && pressed?.token === true && !pressed?.state?.claude?.error, `누르면 다시 한 번 읽음 ${JSON.stringify(pressed && { k: pressed.keychainReads, t: pressed.token, s: pressed.state?.claude })}`),
+        ok(expired?.token === false && expired?.state?.claude?.error === "expired" && expired?.keychainReads === 2 && expired?.fetches === 4 && trays[1]?.includes("↻ 한도 새로 고침 — Claude는 눌러야 읽어요"), `만료면 버리고 저절로 한 번 더 읽음(그것도 만료) → '눌러야 읽어요' ${JSON.stringify(expired && { s: expired.state?.claude, k: expired.keychainReads, f: expired.fetches })} ${JSON.stringify(trays[1]?.filter((l) => /↻/.test(l)))}`),
+        ok(after?.keychainReads === 2 && after?.fetches === 4 && after?.token === false, `그 뒤 자동 갱신은 로그인을 다시 읽지 않음 ${JSON.stringify(after && { k: after.keychainReads, f: after.fetches })}`),
+        ok(/^lab-invoke tray_click_test true$/m.test(log) && pressed?.keychainReads === 3 && pressed?.token === true && !pressed?.state?.claude?.error, `누르면 다시 읽음 ${JSON.stringify(pressed && { k: pressed.keychainReads, t: pressed.token, s: pressed.state?.claude })}`),
         ok(!log.includes("LAB-SECRET-TOKEN-104") && !leaked.length, `토큰 값이 앱 기록·데이터에 없어야 ${JSON.stringify(leaked.map((f) => path.relative(box.data, f)))}`),
+      ];
+    },
+  },
+  {
+    id: "limits-claude-start", tags: ["smoke", "agent"], what: "Claude 한도가 켜져 있으면 앱이 뜰 때 로그인을 저절로 한 번 읽어 5시간·주간을 채움(전엔 누를 때까지 비어 있었음) · 확인 창에서 '거부'(가짜)면 그 실행 동안 자동 갱신은 다시 묻지 않고, 누르면 다시 물음 (STA-21 규칙 2, POL-AGENT-02 1-3, #115 A1)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits") },
+    files: {
+      "limits/claude-cred.json": '{"claudeAiOauth":{"accessToken":"LAB-SECRET-TOKEN-115","expiresAt":4102444800000}}',
+      "limits/claude-usage.json": '{"five_hour":{"utilization":31.0,"resets_at":"2099-01-01T05:00:00.000+00:00"},"seven_day":{"utilization":12.0,"resets_at":"2099-01-04T23:00:00+00:00"}}',
+    },
+    setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true } })); },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true },
+      { invoke: "limits_deny_test", args: { on: true } }, { invoke: "limits_test", args: { status: 401, auto: true }, log: true },
+      { invoke: "limits_test", args: { status: 200, auto: true }, log: true },
+      { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true },
+      { invoke: "limits_deny_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }],
+    check: ({ log }) => {
+      const [start, deny, quiet, pressDenied, pressOk] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const tray = (JSON.parse(log.match(/^lab-invoke tray_test (.*)$/m)?.[1] || "{}").items || []).map((i) => i.label || "");
+      return [
+        ok(!/^limits ask$/m.test(log) && start?.keychainReads === 1 && start?.token === true && tray.some((l) => /Claude Code\s+5시간 31%.*주간 12%/.test(l)), `앱이 뜰 때 저절로 한 번 읽음 — 묻지 않음, 메뉴바에 5시간 31%·주간 12% ${JSON.stringify(start && { k: start.keychainReads, t: start.token })} ${JSON.stringify(tray.filter((l) => /%/.test(l)))}`),
+        ok(deny?.state?.claude?.error === "denied" && deny?.keychainReads === 2, `만료 뒤 저절로 읽다 거부 ${JSON.stringify(deny && { s: deny.state?.claude, k: deny.keychainReads })}`),
+        ok(quiet?.keychainReads === 2 && quiet?.state?.claude?.error === "denied", `거부 뒤 자동 갱신은 다시 묻지 않음 ${JSON.stringify(quiet && { s: quiet.state?.claude, k: quiet.keychainReads })}`),
+        ok(pressDenied?.keychainReads === 3 && pressOk?.keychainReads === 4 && pressOk?.token === true && !pressOk?.state?.claude?.error, `누르면 다시 물음(거부 → 허용) ${JSON.stringify([pressDenied?.keychainReads, pressOk && { k: pressOk.keychainReads, t: pressOk.token, s: pressOk.state?.claude }])}`),
+        ok(!log.includes("LAB-SECRET-TOKEN-115"), "토큰 값이 앱 기록에 없음"),
       ];
     },
   },
@@ -496,11 +529,12 @@ module.exports = [
     },
   },
   {
-    id: "popover-dashboard", tags: ["smoke", "app"], what: "메뉴바 미니 대시보드: 왼쪽 클릭(시험 명령)으로 열면 오늘 완료·사용 한도(Claude 5h 42%·7d 18%)·Tamer 탭(입력 필요가 맨 위) — 탭을 누르면 대시보드가 닫히고 그 탭으로 (STA-22, #105)",
+    id: "popover-dashboard", tags: ["smoke", "app"], what: "메뉴바 미니 대시보드: 왼쪽 클릭(시험 명령)으로 열면 오늘 완료·사용 한도(Claude 5시간 세션 58% 남음·주간 82% 남음 — 남은 만큼, #115 A2)·Tamer 탭(입력 필요가 맨 위) — 탭을 누르면 대시보드가 닫히고 그 탭으로 · 초기화가 지난 창은 '초기화됨'(A6), 초기화 시각이 있으면 남은 시간 눈금(A4) (STA-22, #105 #115)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "waiting" } }, { wait: 300 },
       { invoke: "usage_seen", args: { key: "claude", five_hour: { pct: 42, resets_at: 4102444800 }, seven_day: { pct: 18, resets_at: 4102444800 } } },
+      { invoke: "usage_seen", args: { key: "codex", five_hour: { pct: 70, resets_at: LIM_PAST }, seven_day: { pct: 40, resets_at: LIM_HALF_WEEK } } },
       { invoke: "popover_test", args: { open: true }, log: true }, { wait: 1500 }, { invoke: "popover_read_test", log: true },
       { invoke: "popover_click_test", args: { sel: ".pop-tab" }, log: true }, { wait: 800 }, { invoke: "popover_test", log: true }, { probe: "after" }],
     check: ({ log, probe }) => {
@@ -509,7 +543,8 @@ module.exports = [
       const first = r?.tabs?.[0] || "";
       return [
         ok(opens[0] === true && /^popover open$/m.test(log), `열림 ${JSON.stringify(opens)}`),
-        ok(/오늘 완료/.test(r?.text || "") && /사용 한도/.test(r?.text || "") && /Claude\s+5h[\s\S]*42%[\s\S]*7d[\s\S]*18%/.test(r?.text || ""), `오늘·한도 ${JSON.stringify(r?.text?.slice(0, 300))}`),
+        ok(/오늘 완료/.test(r?.text || "") && /사용 한도/.test(r?.text || "") && /Claude\s+5시간 세션\s+58% 남음[\s\S]*주간\s+82% 남음/.test(r?.text || ""), `오늘·한도(남은 만큼) ${JSON.stringify(r?.text?.match(/사용 한도[\s\S]{0,200}/)?.[0])}`),
+        ok(/Codex\s+5시간 세션\s+100% 남음\s+초기화됨 — 다음 요청부터 새 창\s+주간\s+60% 남음\s+3일 12시간/.test(r?.text || "") && r?.look?.ticks?.length === 1 && Math.abs(r.look.ticks[0] - 50) < 1.5, `Codex 5시간은 초기화됨, 주간은 60% 남음·3일 12시간·눈금 50% ${JSON.stringify([r?.text?.match(/Codex[\s\S]{0,120}/)?.[0], r?.look?.ticks])}`),
         ok(r?.tabs?.length === 2 && /입력 필요/.test(first), `탭 2개, 입력 필요가 맨 위 ${JSON.stringify(r?.tabs)}`),
         ok(/^lab-invoke popover_click_test true$/m.test(log) && opens[1] === false && probe.after?.active && first.startsWith(probe.after.active), `탭을 누르면 닫히고 그 탭으로 ${JSON.stringify(opens)} 지금 탭 ${probe.after?.active}`),
       ];
@@ -647,6 +682,36 @@ module.exports = [
         ok(/알 넣기 가방 2/.test(a?.text || "") && /부화기가 비어 있어요/.test(a?.text || "") && /\bempty\b/.test(a?.look?.egg || "") && /⭐ 스탬프/.test(a?.text || ""), `처음: [알 넣기 가방 2], 빈 알 자리, 스탬프는 보임(탭이 없어도) ${JSON.stringify([a?.text?.match(/진행[\s\S]{0,60}/)?.[0], a?.look?.egg])}`),
         ok(/^lab-invoke popover_click_test true$/m.test(log) && inc?.active?.need === 10 && /알 0\/10/.test(b?.text || "") && /작업 10번 남음/.test(b?.text || "") && /pk-egg mid/.test(b?.look?.egg || "") && !/empty/.test(b?.look?.egg || ""), `넣은 뒤 부화기 알 그림·알 0/10·작업 10번 남음 ${JSON.stringify(inc?.active)} ${JSON.stringify([b?.text?.match(/진행[\s\S]{0,60}/)?.[0], b?.look?.egg])}`),
         ok((st.bag?.egg || 0) === 1, `가방 알 2 → 1 ${JSON.stringify(st.bag)}`),
+      ];
+    },
+  },
+  {
+    id: "outside-spend", tags: ["smoke", "poke"], what: "오늘 사용량(STA-23 규칙 9, #115 A5): 밖 작업을 켜면 오늘 바뀐 기록을 처음부터 읽어 Claude 토큰(같은 메시지 한 번, 어제 줄 제외)·Codex 토큰(세션 합계의 오늘 늘어난 만큼)·≈$(가격표) — 대시보드 한도 칸 에이전트 제목 줄 · 기록 본문은 앱 기록·데이터에 없음",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_OUTSIDE_CONSENT: "yes", CVIM_PRICES_JSON: (box) => path.join(box.dir, "prices-litellm.json") },
+    files: {
+      "prices-litellm.json": JSON.stringify({ "claude-opus-4-5": { litellm_provider: "anthropic", input_cost_per_token: 1e-6, cache_creation_input_token_cost: 2e-6, cache_creation_input_token_cost_above_1hr: 3e-6, cache_read_input_token_cost: 1e-7, output_cost_per_token: 5e-6, max_input_tokens: 200000 },
+        "gpt-5-codex": { litellm_provider: "openai", input_cost_per_token: 1e-6, cache_read_input_token_cost: 1e-7, output_cost_per_token: 1e-5, max_input_tokens: 272000 } }),
+      // written today before Tamer started: its lines of today count (rule 9 — the finishes don't, rule 4)
+      "claudecfg/projects/-elsewhere/today.jsonl": [[SPEND_NOW, "m1", { input_tokens: 10000, cache_creation_input_tokens: 100000, cache_creation: { ephemeral_1h_input_tokens: 40000 }, cache_read_input_tokens: 1000000, output_tokens: 5000 }],
+        [SPEND_NOW, "m1", { input_tokens: 10000, cache_creation_input_tokens: 100000, cache_read_input_tokens: 1000000, output_tokens: 5000 }], [SPEND_OLD, "m0", { input_tokens: 999999 }], [SPEND_NOW, "m2", { input_tokens: 1000, output_tokens: 2000 }]]
+        .map(([ts, id, usage]) => JSON.stringify({ type: "assistant", timestamp: ts, message: { id, model: "claude-opus-4-5-20251101", content: [{ type: "text", text: "LAB-PRIVATE-115" }], usage } })).join("\n") + "\n",
+    },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 }, { invoke: "spend_test", log: true },
+      { invoke: "outside_append_test", args: { agent: "codex", rel: "2026/10/21/rollout-spend.jsonl", lines: [
+        { timestamp: SPEND_OLD, type: "session_meta", payload: { originator: "codex-tui", source: "cli", cwd: "/tmp/tamer-lab-outside" } },
+        { timestamp: SPEND_OLD, type: "turn_context", payload: { model: "gpt-5-codex" } },
+        { timestamp: SPEND_OLD, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 1000000, cached_input_tokens: 500000, output_tokens: 100000, total_tokens: 1100000 } } } },
+        { timestamp: SPEND_NOW, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 1600000, cached_input_tokens: 800000, output_tokens: 150000, total_tokens: 1750000 } } } }] } },
+      { wait: 1500 }, { invoke: "spend_test", log: true },
+      { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_read_test", log: true }, { invoke: "popover_test" }],
+    check: ({ log, box }) => {
+      const [a, b] = [...log.matchAll(/^lab-invoke spend_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
+      return [
+        ok(a?.claude?.tokens === 1118000 && !a?.codex, `시작 때 오늘 Claude 1,118,000 토큰(같은 메시지 한 번·어제 줄 빼고) ${JSON.stringify(a)}`),
+        ok(b?.codex?.tokens === 650000 && Math.abs((b?.codex?.usd ?? 0) - 0.83) < 0.001 && Math.abs((b?.claude?.usd ?? 0) - 0.386) < 0.001, `Codex 오늘 늘어난 650,000 · ≈$ (Claude 0.386, Codex 0.83) ${JSON.stringify(b)}`),
+        ok(/Claude\s*오늘 1\.1M 토큰 · ≈\$0\.39/.test(r?.text || "") && /Codex\s*오늘 650K 토큰 · ≈\$0\.83/.test(r?.text || ""), `대시보드 제목 줄 ${JSON.stringify(r?.text?.match(/사용 한도[\s\S]{0,160}/)?.[0])}`),
+        ok(!log.includes("LAB-PRIVATE-115") && !filesWith(box.data, "LAB-PRIVATE-115").length, "기록 본문이 앱 기록·데이터에 없음"),
       ];
     },
   },

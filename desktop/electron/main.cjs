@@ -19,6 +19,7 @@ const legends = require("./core/legends.cjs"); // 전설의 길 (#86)
 const research = require("./core/research.cjs"); // 환상 스페셜 리서치 (#86)
 const limits = require("./core/limits.cjs"); // 채팅 없이 한도 (#104)
 const outside = require("./core/outside.cjs"); // Tamer 밖에서 끝낸 작업 (#107)
+const spend = require("./core/spend.cjs"); // 오늘 사용량 (#115 A5)
 const { RustCore } = require("./core/rust.cjs");
 
 const ptys = new Map(); // pane id "<ws>:<agent|shell>" -> IPty
@@ -1052,9 +1053,10 @@ function trayUpdate() {
   tray.setTitle(trayNow().title, { fontType: "monospacedDigit" });
 }
 // ── 채팅 없이 한도 (STA-21, #104 — POL-AGENT-02 rules 1 … 1-6) ──────────────────────────────────
-// Codex: its app server, on a timer too. Claude: only when turned on (asked once); the Keychain only when
-// it's turned on or the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d), the timer uses the
-// token kept in memory. Results go to the windows as "limits" — they merge them like an agent's report
+// Codex: its app server, on a timer too. Claude: only when turned on (asked once); the login read by the core
+// when it's turned on, when the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d · the dashboard),
+// and by itself at the start and when the token expires — not after a "no" (limits.cjs, #115 A1). The timer
+// uses the token kept in memory. Results go to the windows as "limits" — they merge them like an agent's report
 const limitsState = { claude: { at: 0, error: null }, codex: { at: 0, error: null } };
 let limitsBusy = null, limitsLast = 0, limitsResetTimer = null;
 const codexCmd = () => (TEST ? process.env.CVIM_LIMITS_CODEX_CMD || null : agents.where("codex"));
@@ -1096,7 +1098,7 @@ async function limitsConsent() {
       + "· 보내는 것: 로그인 토큰(Anthropic에만). 대화·폴더·파일은 보내지 않아요\n"
       + "· 토큰은 메모리에만 두고 저장하지 않아요\n"
       + "· 공개되지 않은 주소라 언제든 바뀌거나 막힐 수 있어요. Anthropic 약관상 허용되는지 Tamer는 확인하지 못했어요\n"
-      + "· 켤 때와 '한도 새로 고침'을 누를 때 macOS가 키체인 확인 창을 띄울 수 있어요\n"
+      + "· 켤 때·Tamer가 뜰 때·로그인이 만료됐을 때·'한도 새로 고침'을 누를 때 macOS가 키체인 확인 창을 띄울 수 있어요(요청한 프로그램: Tamer의 cvim-core). '항상 허용'을 누르면 다음부터 안 떠요 — 그 허용은 Tamer의 cvim-core에만 붙어요. '거부'하면 이번 실행 동안은 다시 묻지 않아요(누를 때만)\n"
       + "· 켜지 않으면 지금처럼 Claude가 응답할 때 받은 값을 써요. 설정 › 일반 › 한도에서 언제든 바꿀 수 있어요",
   });
   return r.response === 0;
@@ -1122,6 +1124,7 @@ const tabHas = (agent, cwd) => {
 };
 function outsidePoll() {
   if (!outsideWatch) return;
+  spendPoll();
   for (const d of outsideWatch.poll()) {
     if (tabHas(d.agent, d.cwd)) { logLine(`outside skip ${d.agent}: a tab runs it there`); continue; }
     logLine(`outside done ${d.agent} took=${d.took ?? "-"}`);
@@ -1132,9 +1135,26 @@ function outsideSync() {
   const on = settings.outside === true;
   if (on && !outsideWatch) {
     outsideWatch = outside.createWatch(agents.processEnv()); // from the logs' size now: nothing before counts (rule 4)
+    spendWatch = spend.createSpend(agents.processEnv()); // today's tokens: today's lines (rule 9)
     outsideTimer = setInterval(outsidePoll, TEST ? 700 : 3000);
     logLine(`outside on: ${outsideWatch.size()} logs`);
-  } else if (!on && outsideWatch) { clearInterval(outsideTimer); outsideWatch = null; logLine("outside off"); }
+  } else if (!on && outsideWatch) { clearInterval(outsideTimer); outsideWatch = null; spendWatch = null; spendSeen = ""; logLine("outside off"); }
+}
+// 오늘 사용량 (STA-23 rule 9, #115 A5): per agent, the tokens and ≈$ (API prices, STA-10 — not a bill); memory only
+let spendWatch = null, spendSeen = "", spendPrices = null, spendPricesAt = 0;
+function spendNow() {
+  if (!spendWatch) return null;
+  const t = spendWatch.totals(), out = {};
+  for (const [k, v] of Object.entries(t)) out[k] = { tokens: v.tokens, usd: spend.costOf(v.models, spendPrices) };
+  return out;
+}
+function spendPoll() {
+  if (!spendWatch) return;
+  spendWatch.poll();
+  const t = spendWatch.totals(), key = Object.entries(t).map(([k, v]) => `${k}:${v.tokens}`).join(",");
+  // the price list (fetched at most once a day, prices.cjs) once there are tokens
+  if (key && Date.now() - spendPricesAt > 3600000) { spendPricesAt = Date.now(); prices.get().then((p) => { spendPrices = p?.models || spendPrices; popoverUpdate(); }).catch(() => {}); }
+  if (key !== spendSeen) { spendSeen = key; popoverUpdate(); }
 }
 // rule 6: what's read, what isn't, what's kept — before anything is opened; closing it = off
 async function outsideConsent() {
@@ -1169,6 +1189,7 @@ function popoverModel() {
     today: (() => { try { return stats.summary(); } catch { return null; } })(), coins: coinsNow(), prog: progressNow(),
     usage: usageSeen, limits: limitsView(), tabs: trayTabs(), wild: wild.current(), balls: ballsOwned(),
     party: partyLite(), recent: recentDone.slice(0, 3), outside: settings.outside, // #107
+    spend: settings.outside === true ? spendNow() : null, // 오늘 토큰 · ≈$ (#115 A5)
     eggs: (() => { try { const b = economy.bag(); return { egg: b.egg || 0, egg2: b.egg2 || 0 }; } catch { return { egg: 0, egg2: 0 }; } })(), // 🥚 in the bag (#116)
   };
 }
@@ -1438,7 +1459,7 @@ const commands = {
     if ("outside" in p) outsideSync();
     return s;
   },
-  // 한도 새로 고침 (#104): user = pressed by the user (the only time the Keychain is read, besides turning it on)
+  // 한도 새로 고침 (#104): user = pressed by the user (reads the login again, even after a "no" — #115 A1)
   limits_refresh: ({ user } = {}) => limitsRefresh({ user: !!user }),
   limits_state: () => limitsView(),
   // 파티 (PKM-31, #107): the list and its changes (checked by partner.partySet); everyone showing it hears
@@ -1950,13 +1971,15 @@ const testCommands = {
     const r = { text: document.querySelector("#pop").innerText,
       tabs: [...document.querySelectorAll(".pop-tab")].map((b) => b.innerText.replace(/\\s+/g, " ").trim()),
       wild: !document.querySelector("#pop-wild .wild-card")?.hidden, height: innerHeight, content: se.scrollHeight,
-      look: { partner: w(".pop-sprite img"), party: w(".pop-mon img"), egg: document.querySelector("#pop-prog .pk-egg")?.className || null } };
+      look: { partner: w(".pop-sprite img"), party: w(".pop-mon img"), egg: document.querySelector("#pop-prog .pk-egg")?.className || null,
+        ticks: [...document.querySelectorAll(".pop-win .tick")].map((t) => parseFloat(t.style.left)) } };
     if (${!!scroll}) { se.scrollTop = se.scrollHeight; const f = document.querySelector("#pop-foot").getBoundingClientRect(); r.footInView = f.top >= 0 && f.bottom <= innerHeight + 1; }
     return r; })()`) : null),
   popover_click_test: ({ sel }) => popover.webContents.executeJavaScript(`(() => { const b = document.querySelector(${JSON.stringify(String(sel))}); if (b) b.click(); return !!b; })()`),
   // 한도 (#104): what was read and how often the token was — counts only, never a value; status = the stand-in's answer
   // Tamer 밖 작업 (#107): a line appended to a log as an agent would write it — only under the test's own
   // CLAUDE_CONFIG_DIR / CODEX_HOME — and the watcher's next look right away
+  spend_test: () => { spendPoll(); return spendNow(); }, // 오늘 사용량 (#115 A5): the sums now (counts, never text)
   outside_append_test({ agent, rel, lines }) {
     const root = outside.roots(agents.processEnv())[agent === "codex" ? "codex" : "claude"], f = path.join(root, String(rel));
     if (!f.startsWith(root + path.sep)) return false;
@@ -1980,7 +2003,8 @@ const testCommands = {
     if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, "overlay-evolve.png"), (await overlay.webContents.capturePage()).toPNG());
     return true;
   },
-  // auto: the timer's read now (as if a minute had passed — the Keychain must not be touched)
+  // auto: the timer's read now (as if a minute had passed — the login only as limits.cjs allows by itself)
+  limits_deny_test({ on }) { limits.test.denied = !!on; return true; }, // the Keychain prompt answered "no" (#115 A1)
   async limits_test({ status, auto } = {}) {
     if (status != null) limits.setTestStatus(status);
     if (auto) { limitsLast = 0; await limitsRefresh(); }
@@ -2229,6 +2253,7 @@ app.whenReady().then(() => {
   // the core starts at once (tabs and shells don't wait for the shell environment, #35); the
   // agents' log folders follow when the environment has been read
   core = new RustCore({ onEvent: onCoreEvent, log: logLine });
+  limits.useKeychain((services, read) => core.request("claude_login", { services, read })); // the core reads the Keychain (#115 A1)
   titlesToCore(); // 세션 제목 (#99): the core reads no title until told it's on
   const envT0 = since();
   ready = agents.prepareEnv().then((env) => {

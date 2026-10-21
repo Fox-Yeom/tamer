@@ -5,6 +5,8 @@
 // (unchanged). Runs after the fuses (they reset the signature).
 //   node scripts/sign.cjs <path/to/Tamer.app>
 const { execFileSync } = require("node:child_process");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const LOCAL = "Tamer Local Signing";
 const app = process.argv[2];
@@ -14,6 +16,11 @@ if (!ids.includes(`"${LOCAL}"`)) {
   console.log(`sign: no "${LOCAL}" identity — ad hoc`);
   process.exit(0);
 }
+// the core (Contents/Resources/cvim-core) first, with a fixed identifier: --deep leaves a program among the
+// resources with the linker's ad hoc signature, and the Keychain's "Always Allow" for it (#115 A1 — it reads
+// Claude Code's login) would then go with every build
+const core = path.join(app, "Contents", "Resources", "cvim-core");
+if (fs.existsSync(core)) execFileSync("codesign", ["--force", "--sign", LOCAL, "--identifier", "dev.tamer.core", "--timestamp=none", core], { stdio: "inherit" });
 execFileSync("codesign", ["--force", "--deep", "--sign", LOCAL, "--timestamp=none", app], { stdio: "inherit" });
 execFileSync("codesign", ["--verify", "--deep", "--strict", app], { stdio: "inherit" });
 console.log(`sign: ${LOCAL} → ${app}`);

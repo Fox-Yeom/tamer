@@ -2,20 +2,24 @@
 //   Codex  — its own app server (`codex app-server`, account/rateLimits/read): the official way, no
 //            model turn, Codex reads its own login (POL-AGENT-02 rule 1)
 //   Claude — only when the user turned it on (asked once, POL-AGENT-02 rules 1-1 … 1-6): Claude Code's
-//            OAuth token, read from the macOS Keychain (or <config>/.credentials.json) when it's turned
-//            on and when the user presses 새로 고침 — never by the timer, so no Keychain prompt comes
-//            unannounced — kept in memory only, sent to Anthropic's usage address (unofficial) and
-//            nowhere else. Never refreshed, never written back, never logged
+//            OAuth token, from <config>/.credentials.json or the macOS Keychain — the Keychain read by the
+//            core (cvim-core, keychain.rs — rule 1-3, #115 A1: macOS's prompt names it, never /usr/bin/security),
+//            which hands over the access token and its expiry only. Read when it's turned on, when the user
+//            presses 새로 고침, and by itself once at the app's start and once when the token in memory
+//            expires — not again by itself after a "no" or a token that came back already expired. Kept in
+//            memory only, sent to Anthropic's usage address (unofficial) and nowhere else. Never refreshed,
+//            never written back, never logged
 // Each window comes back as { pct, resets_at (unix s), at (ms, when read) } — the renderer merges it with
 // what the agents report by STA-09 rule 5 (same window: the later one received).
 // Tests (CVIM_DESKTOP_TEST=1) never touch the Keychain or the network: CVIM_TEST_LIMITS=<dir> stands in
-// (claude-cred.json · claude-usage.json), CVIM_LIMITS_CODEX_CMD a stand-in app server.
+// (claude-cred.json · claude-usage.json; test.denied = the prompt answered "no"), CVIM_LIMITS_CODEX_CMD a
+// stand-in app server.
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
 const crypto = require("node:crypto");
 const https = require("node:https");
-const { execFile, spawn } = require("node:child_process");
+const { spawn } = require("node:child_process");
 
 const TEST = process.env.CVIM_DESKTOP_TEST === "1";
 const TEST_DIR = TEST ? process.env.CVIM_TEST_LIMITS || null : null;
@@ -23,7 +27,11 @@ const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const SERVICE = "Claude Code-credentials";
 
 let token = null; // { value, exp (ms | null) } — memory only (rule 1-4)
-const test = { keychainReads: 0, fetches: 0, status: 200 }; // what a test can see (counts, never values)
+let auto = true; // may the timer read the login by itself (the app's start · an expired token) — not after a "no"
+let denied = false; // the last read: the Keychain prompt said no
+let keychain = null; // (services, read) → the core's answer (main.cjs: cvim-core's claude_login)
+const KEYCHAIN_WAIT = 120000; // a prompt nobody answers: given up after 2 minutes (the core keeps waiting alone)
+const test = { keychainReads: 0, fetches: 0, status: 200, denied: false }; // what a test can see (counts, never values) and set
 
 // Claude Code keeps its login under "Claude Code-credentials", or with CLAUDE_CONFIG_DIR set, that name
 // plus the first 8 hex of the folder's SHA-256 (as PokeTokenBar reads it — 2026-10-20)
@@ -34,14 +42,13 @@ function services(env) {
   return [d, `${d}/`].map((p) => `${SERVICE}-${crypto.createHash("sha256").update(p).digest("hex").slice(0, 8)}`);
 }
 const credFile = (env) => path.join(claudeDir(env), ".credentials.json");
-const run = (args, timeout) => new Promise((resolve) => execFile("/usr/bin/security", args, { timeout, maxBuffer: 1 << 20 }, (err, out) => resolve(err ? null : out)));
+const ask = (env, read) => (keychain ? Promise.race([keychain(services(env), read), new Promise((r) => setTimeout(() => r({ timeout: true }), read ? KEYCHAIN_WAIT : 10000))]).catch(() => null) : Promise.resolve(null));
 
 // is there a Claude Code login at all? (asked only then) — the item's attributes, no secret: no prompt
 async function claudeHasLogin(env) {
   if (TEST) return !!TEST_DIR && fs.existsSync(path.join(TEST_DIR, "claude-cred.json"));
   if (fs.existsSync(credFile(env))) return true;
-  for (const s of services(env)) if ((await run(["find-generic-password", "-s", s], 5000)) != null) return true;
-  return false;
+  return !!(await ask(env, false))?.found;
 }
 
 const parseCred = (text) => {
@@ -50,17 +57,18 @@ const parseCred = (text) => {
     return o?.accessToken ? { value: String(o.accessToken), exp: Number.isFinite(Number(o.expiresAt)) ? Number(o.expiresAt) : null } : null;
   } catch { return null; }
 };
-// the token, read now (turning on · 새로 고침 only — macOS may ask about the Keychain: up to a minute to answer)
+// the token, read now → { token } | { error: "login" | "denied" | "asking" } (macOS may ask about the Keychain first)
 async function readToken(env) {
   test.keychainReads++;
-  if (TEST) return TEST_DIR ? parseCred(fs.readFileSync(path.join(TEST_DIR, "claude-cred.json"), "utf8")) : null;
-  try { const t = parseCred(fs.readFileSync(credFile(env), "utf8")); if (t) return t; } catch {}
-  for (const s of services(env)) {
-    const out = await run(["find-generic-password", "-s", s, "-w"], 60000);
-    const t = out && parseCred(out.trim());
-    if (t) return t;
+  if (TEST) {
+    if (test.denied) return { error: "denied" };
+    let t = null; try { t = TEST_DIR && parseCred(fs.readFileSync(path.join(TEST_DIR, "claude-cred.json"), "utf8")); } catch {}
+    return t ? { token: t } : { error: "login" };
   }
-  return null;
+  try { const t = parseCred(fs.readFileSync(credFile(env), "utf8")); if (t) return { token: t }; } catch {}
+  const r = await ask(env, true);
+  if (typeof r?.token === "string" && r.token) return { token: { value: r.token, exp: Number.isFinite(r.exp) ? r.exp : null } };
+  return { error: r?.denied ? "denied" : r?.busy || r?.timeout ? "asking" : "login" };
 }
 
 const isoSec = (s) => { const t = Date.parse(s); return Number.isFinite(t) ? Math.floor(t / 1000) : null; };
@@ -90,23 +98,32 @@ function get(value) {
   });
 }
 
-// Claude: { five_hour, seven_day } or { error } — error "token" (none in memory: press 새로 고침),
-// "expired" (Anthropic said no: dropped, press 새로 고침), "busy" (429), "net", "shape" (the answer changed)
+// Claude: { five_hour, seven_day } or { error } — error "token" (none in memory and not read by itself: press
+// 새로 고침), "login" (no login found), "denied" (the Keychain prompt said no), "asking" (a prompt is open),
+// "expired" (dropped; read once more by itself, then press 새로 고침), "busy" (429), "net", "shape" (the answer changed)
 async function claude(env, { user = false } = {}) {
-  if (user || !token) {
-    if (!user) return { error: "token" };
-    token = await readToken(env);
-    if (!token) return { error: "login" };
+  if (user) { token = null; auto = true; } // a press reads again, and lets the timer read by itself again
+  let fresh = false; // read from the login in this call
+  for (;;) {
+    if (!token) {
+      if (!auto) return { error: denied ? "denied" : "token" };
+      const r = await readToken(env);
+      fresh = true;
+      if (!r.token) { if (r.error !== "asking") { auto = false; denied = r.error === "denied"; } return { error: r.error }; }
+      token = r.token; denied = false;
+    }
+    // expired: read once more (Claude Code may have renewed it) — one that comes back expired stops the timer's reads
+    if (token.exp && token.exp < Date.now()) { token = null; if (fresh) { auto = false; return { error: "expired" }; } continue; }
+    const r = await get(token.value);
+    if (r.status === 401 || r.status === 403) { token = null; if (fresh) { auto = false; return { error: "expired" }; } continue; }
+    if (r.status === 429) return { error: "busy" };
+    if (r.status !== 200) return { error: "net" };
+    let o = null; try { o = JSON.parse(r.body); } catch {}
+    return parseUsage(o, Date.now()) || { error: "shape" };
   }
-  if (token.exp && token.exp < Date.now()) { token = null; return { error: "expired" }; }
-  const r = await get(token.value);
-  if (r.status === 401 || r.status === 403) { token = null; return { error: "expired" }; }
-  if (r.status === 429) return { error: "busy" };
-  if (r.status !== 200) return { error: "net" };
-  let o = null; try { o = JSON.parse(r.body); } catch {}
-  return parseUsage(o, Date.now()) || { error: "shape" };
 }
-function forget() { token = null; }
+// turned off: the token goes, and the next turning on starts over
+function forget() { token = null; auto = true; denied = false; }
 
 // Codex: the app server, asked once and closed — the windows by their length (300 min → 5h,
 // 10080 → 7d), else primary → 5h, secondary → 7d (as in its session logs)
@@ -142,4 +159,4 @@ function codex(cmd, env, { timeout = 10000 } = {}) {
   });
 }
 
-module.exports = { claude, claudeHasLogin, forget, codex, parseUsage, hasToken: () => !!token, test, setTestStatus: (s) => { if (TEST) test.status = Number(s) || 200; } };
+module.exports = { claude, claudeHasLogin, forget, codex, parseUsage, hasToken: () => !!token, useKeychain: (fn) => { keychain = fn; }, test, setTestStatus: (s) => { if (TEST) test.status = Number(s) || 200; } };

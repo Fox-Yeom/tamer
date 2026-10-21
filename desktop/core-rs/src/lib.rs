@@ -4,6 +4,7 @@
 
 pub mod claude;
 pub mod codex;
+pub mod keychain;
 pub mod policy;
 pub mod state;
 pub mod tail;
