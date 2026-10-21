@@ -8,12 +8,19 @@
         "party"
       ]
     },
+    "wild-catch": {
+      "what": "야생 잡기 창 — 바탕화면 오버레이의 야생 알림을 누르면 알림 옆 작은 패널: 야생 카드(볼 고르기·던지기·결과), ✕ (PKM-08, #119)",
+      "entry": "catchOpen",
+      "scenes": [
+        "wild-catch"
+      ]
+    },
     "menubar-dashboard": {
-      "what": "메뉴바 미니 대시보드 — 메뉴바 아이콘 왼쪽 클릭: 위쪽 탭 홈(오늘·사용 한도 에이전트 칩·Tamer 탭) / 포켓몬(야생 — 그 자리에서 잡기·파트너·파티·부화기), Tamer 열기 (STA-22, #105 #118)",
+      "what": "메뉴바 미니 대시보드 — 메뉴바 아이콘 왼쪽 클릭: 위쪽 탭 홈(야생 — 그 자리에서 잡기·파트너·파티·사용 한도 에이전트 칩) / 작업(오늘·부화기·Tamer 탭), Tamer 열기 (STA-22, #105 #118)",
       "entry": "draw",
       "scenes": [
         "menubar-dashboard",
-        "menubar-dashboard-poke"
+        "menubar-dashboard-work"
       ]
     },
     "choose": {
@@ -145,8 +152,15 @@
       "functions": ["partyRender", "partyChange"],
       "screens": ["party"]
     },
+    "wild-catch-win": {
+      "what": "야생 잡기 창 페이지 — 야생 카드를 창 가득, 닫기 ✕, 카드가 끝나면 창도 닫힘 (#119)",
+      "files": ["catch.html", "src/catch.js", "src/catch.css"],
+      "selectors": ["#catch"],
+      "functions": ["catchOpen", "catchPlace", "catchClose", "noteRect"],
+      "screens": ["wild-catch"]
+    },
     "pop-dash": {
-      "what": "메뉴바 대시보드 창 그리기 — 위쪽 탭(홈·포켓몬, 점, #118)·파트너 줄·파티 칸(그림 72px, #117)·작은 부화기(알 그림, #117)·오늘 칸 3개·한도 에이전트 칩(#118)·막대 줄·탭 줄·아래 버튼(⏻ ⚙ Tamer 열기), 화면보다 길면 스크롤 (#105 #117 #118)",
+      "what": "메뉴바 대시보드 창 그리기 — 위쪽 탭(홈·작업, 점, #118)·파트너 줄·파티 칸(그림 72px, #117)·작은 부화기(알 그림, #117)·오늘 칸 3개·한도 에이전트 칩(#118)·막대 줄·탭 줄·아래 버튼(⏻ ⚙ Tamer 열기), 화면보다 길면 스크롤 (#105 #117 #118)",
       "files": ["popover.html", "src/popover.js", "src/popover.css"],
       "selectors": ["#pop", ".pop-", "#pg-"],
       "functions": ["draw", "drawPartner", "drawParty", "drawProg", "drawToday", "drawLimits", "drawTabs", "showPage", "drawDot", "popoverModel"],
@@ -495,9 +509,7 @@
         "createWild",
         "drawBalls"
       ],
-      "screens": [
-        "wild"
-      ]
+      "screens": ["wild", "menubar-dashboard", "wild-catch"]
     },
     "dlg": {
       "what": "가운데 대화 상자 (에이전트 연결)",
@@ -725,7 +737,11 @@
         "src/overlay.css",
         "src/overlay-cards.css"
       ],
-      "menu bar dashboard (popover.html)": [
+      "wild catch window (catch.html)": [
+      "src/catch.css",
+      "src/wild.css"
+    ],
+    "menu bar dashboard (popover.html)": [
         "src/popover.css",
         "src/wild.css",
         "src/poke/egg.css"

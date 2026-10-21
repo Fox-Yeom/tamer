@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 야생 잡기 창 (PKM-08 rule 3, #119): the overlay's wild notice clicked — our own files only (POLICY.md 11) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+    <title>Tamer</title>
+    <link rel="stylesheet" href="/src/catch.css" />
+  </head>
+  <body>
+    <main id="catch">
+      <section id="catch-wild"></section>
+      <button id="catch-close" title="닫기 (Esc)" aria-label="닫기">✕</button>
+    </main>
+    <script type="module" src="/src/catch.js"></script>
+  </body>
+</html>

@@ -6,5 +6,5 @@ export default defineConfig({
   clearScreen: false,
   server: { port: 1420, strictPort: true },
   // three pages: the main window, the desktop overlay and the menu bar dashboard (#105)
-  build: { target: "safari16", outDir: "dist", rollupOptions: { input: { main: "index.html", overlay: "overlay.html", popover: "popover.html" } } },
+  build: { target: "safari16", outDir: "dist", rollupOptions: { input: { main: "index.html", overlay: "overlay.html", popover: "popover.html", catch: "catch.html" } } },
 });

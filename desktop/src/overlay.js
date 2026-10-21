@@ -149,11 +149,16 @@ document.addEventListener("mousedown", (e) => {
   drag = { x: e.screenX, y: e.screenY, moved: false, ws: e.target.closest("[data-ws]")?.dataset.ws, act: e.target.closest("[data-act]")?.dataset.act };
   invoke("overlay_drag", { phase: "start", x: e.screenX, y: e.screenY });
 });
+// the wild notice's place in this page — the catch window sits beside it (#119)
+function noteRect() {
+  const r = document.querySelector("#wild .wild-note")?.getBoundingClientRect();
+  return r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null;
+}
 function endDrag(e, click) {
   const d = drag;
   drag = null;
   if (d.moved) invoke("overlay_drag", { phase: "end", x: e.screenX, y: e.screenY });
-  else if (click && d.act === "wild") invoke("wild_open");
+  else if (click && d.act === "wild") invoke("wild_open", { rect: noteRect() }); // the catch window beside it (#119)
   else if (click && d.act === "hatch") invoke("hatch_open");
   else if (click && d.act === "party") invoke("overlay_click", { ws: "" }); // 파티 card (#107): Tamer opens
   else if (click && d.ws) invoke("overlay_click", { ws: d.ws });

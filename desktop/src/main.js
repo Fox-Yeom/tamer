@@ -3919,19 +3919,25 @@ async function uiScenes(set) {
       // ⭐ 파티 (#107, PKM-31): three of the box in the party, the next in turn marked
       await invoke("party_test", { n: 3 });
       await openDex(); await dexView("party"); await wait(700); await shot("party"); closeDex();
-      // 메뉴바 미니 대시보드 (#105, STA-22): 홈 — this tab needing you, Claude's limits behind the agent chips (no reset time:
-      // the picture doesn't move with the clock; #118); 포켓몬 — the party of three with its pictures and the incubator's egg (#117)
+      // 메뉴바 미니 대시보드 (#105, STA-22): 홈 — the party of three with its pictures (#117), Claude's limits behind the agent
+      // chips (no reset time: the picture doesn't move with the clock; #118); 작업 — the incubator's egg, this tab needing you
       await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "waiting", hold: true });
       await invoke("usage_seen", { key: "claude", five_hour: { pct: 42 }, seven_day: { pct: 86 } });
       await invoke("usage_seen", { key: "codex", five_hour: { pct: 70, resets_at: 1000000000 } }); // #115: reset long ago → 초기화됨, no 주간 → —
       await invoke("popover_test", { open: true }); await wait(1500);
-      for (const [name, pg] of [["menubar-dashboard", "home"], ["menubar-dashboard-poke", "poke"]]) {
+      for (const [name, pg] of [["menubar-dashboard", "home"], ["menubar-dashboard-work", "work"]]) {
         await invoke("popover_click_test", { sel: `#pop-nav [data-page='${pg}']` }); await wait(700);
         const r = await invoke("ui_shot", { name, target: "popover" });
         await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
       }
       await invoke("popover_click_test", { sel: "#pop-nav [data-page='home']" });
       await invoke("popover_test", { open: false });
+      // 야생 잡기 창 (#119, PKM-08): the card the overlay's notice opens beside it — a seeded sprite stands in, no timer
+      { const m = (await invoke("box_list", { ws: tab.id }))[0];
+        await invoke("catch_test", { open: true, scene: { token: "scene", id: m.id, name: m.name, gif: m.gif, shiny: false } }); await wait(1800);
+        const r = await invoke("ui_shot", { name: "wild-catch", target: "catch" });
+        await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
+        await invoke("catch_test", { open: false }); }
       await invoke("usage_seen", { key: "codex" });
       await invoke("party_set", { uids: [] });
       await invoke("agent_state_test", { ws: tab.id, from: "waiting", to: "idle" });

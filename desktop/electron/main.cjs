@@ -62,6 +62,7 @@ const KINDS = ["agent", "shell"];
 let win;
 let overlay; // desktop overlay (overlay.html): partners while you're in another app
 let popover = null; // 메뉴바 미니 대시보드 (popover.html, STA-22 #105): the menu bar icon's left click
+let catchWin = null; // 야생 잡기 창 (catch.html, PKM-08 rule 3 #119): the overlay's wild notice clicked
 let activeWs = null; // the tab on screen in the main window
 let core; // cvim-core process (started when the app is ready)
 const workspaces = new Map(); // ws id -> { id, cwd, agent, opened, partnerReady, partner, sessions }
@@ -80,6 +81,7 @@ function broadcast(event, payload) {
   send(event, payload);
   if (overlay && !overlay.isDestroyed()) overlay.webContents.send("host-event", { event, payload });
   if (popover && !popover.isDestroyed()) popover.webContents.send("host-event", { event, payload });
+  if (catchWin && !catchWin.isDestroyed()) catchWin.webContents.send("host-event", { event, payload });
 }
 
 // the app's own log: a file only with CVIM_DESKTOP_LOG (tests, diagnosis); the last lines are also
@@ -1237,6 +1239,49 @@ function popoverUpdate() {
   if (popover && !popover.isDestroyed() && popover.isVisible()) popover.webContents.send("host-event", { event: "popover", payload: popoverModel() });
 }
 
+// ── 야생 잡기 창 (PKM-08 rule 3, #119): the overlay's wild notice clicked — a panel beside the notice with the wild
+// card, so it's caught without Tamer's window (made or brought forward). Gone when the card is (the page says so),
+// on ✕ / Esc, or another place clicked (blur). A new one each time: nothing of the last encounter stays ─────
+const CATCH_W = 284;
+let catchAt = null; // where it sits beside (DIP): the overlay's span across, the notice's top
+let catchScene = null; // ui:shots: an encounter to draw while none is out (tests only)
+function catchOpen(rect) {
+  if (!wild.current() && !catchScene) return;
+  const ob = overlay && !overlay.isDestroyed() ? overlay.getBounds() : null;
+  catchAt = ob && { x: ob.x, width: ob.width, y: ob.y + (rect && Number.isFinite(rect.top) ? rect.top : 0) }; // beside the whole overlay: its cards stay in sight
+  if (catchWin && !catchWin.isDestroyed()) { catchPlace(catchWin.getBounds().height); if (!TEST) { catchWin.show(); catchWin.focus(); } return; }
+  catchWin = new BrowserWindow({
+    // panel (as the overlay and the dashboard): opening it doesn't bring Tamer's main window forward
+    type: "panel", width: CATCH_W, height: 300, show: false, frame: false, resizable: false, movable: false, minimizable: false,
+    maximizable: false, fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: true, roundedCorners: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#24242c" : "#f0f0f4",
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false },
+  });
+  catchWin.setAlwaysOnTop(true, "pop-up-menu");
+  catchWin.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
+  catchWin.on("blur", () => { if (!TEST) catchClose(); });
+  catchWin.on("closed", () => { catchWin = null; });
+  catchWin.webContents.on("will-navigate", (e) => e.preventDefault());
+  catchWin.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  catchWin.once("ready-to-show", () => { if (!catchWin) return; if (TEST) catchWin.showInactive(); else { catchWin.show(); catchWin.focus(); } });
+  catchWin.loadFile(path.join(DIST, "catch.html"));
+  catchPlace(300);
+  logLine("catch open");
+}
+// left of the overlay (no room: right of it), its top at the notice's, kept on that screen
+function catchPlace(h) {
+  const a = catchAt || screen.getPrimaryDisplay().workArea, area = screen.getDisplayMatching({ ...a, height: 1 }).workArea;
+  let x = a.x - CATCH_W - 8;
+  if (x < area.x + 8) x = a.x + a.width + 8;
+  x = Math.min(Math.max(x, area.x + 8), area.x + area.width - CATCH_W - 8);
+  const y = Math.max(area.y + 8, Math.min(a.y, area.y + area.height - h - 8));
+  catchWin.setBounds({ x: Math.round(x), y: Math.round(y), width: CATCH_W, height: Math.round(h) });
+}
+function catchClose() {
+  if (catchWin && !catchWin.isDestroyed()) { catchWin.destroy(); logLine("catch closed"); }
+  catchWin = null; catchScene = null;
+}
+
 function trayUpdateSoon() {
   if (trayTimer) return;
   trayTimer = setTimeout(() => { trayTimer = null; trayUpdate(); popoverUpdate(); }, 100);
@@ -1396,12 +1441,22 @@ const popoverCommands = {
   sprite_b64: (args) => commands.sprite_b64(args),
   wild_throw: (args) => commands.wild_throw(args),
 };
+// the catch window (catch.html, #119) may call only these (POL-SEC-02)
+const catchCommands = {
+  catch_state: () => { const c = wild.current() || catchScene; return c ? { ...c, balls: ballsOwned() } : null; },
+  catch_fit({ height }) { if (catchWin && !catchWin.isDestroyed()) catchPlace(Math.min(Math.max(Number(height) || 0, 80), 600)); },
+  catch_close: () => catchClose(),
+  catch_log({ line }) { logLine(`catch ${String(line).slice(0, 120)}`); },
+  sprite_b64: (args) => commands.sprite_b64(args),
+  wild_throw: (args) => commands.wild_throw(args),
+};
 
 const overlayCommands = {
   overlay_state: () => overlayPayload(),
   overlay_click({ ws }) { focusMain(String(ws)); },
-  // the wild notice (#66): Tamer in front (keyboard included) — its own wild card shows there, to catch
-  wild_open() { if (!settings.side) setSettings({ side: true }); focusMain(); logLine("wild open from overlay"); }, // the wild card is in the right column (#97)
+  // the wild notice (#66): the catch window beside it (#119) — not Tamer's window, which (closed, #106) would
+  // come back with its tabs and terminals. rect: the notice in the overlay's page
+  wild_open({ rect } = {}) { catchOpen(rect && { left: Number(rect.left), top: Number(rect.top), width: Number(rect.width) || 0, height: Number(rect.height) || 0 }); logLine("wild open from overlay"); },
   // the hatch notice (#88): Tamer, on 🎒 내 포켓몬 where the hatchling is
   hatch_open() { focusMain(); send("open-dex", { view: "box" }); logLine("hatch open from overlay"); },
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
@@ -1879,6 +1934,15 @@ const commands = {
 };
 
 let backgroundTested = false;
+// tests (#119): the overlay's wild notice in its page · what the catch window shows, where, and whether Tamer's window is there
+const NOTE_RECT = `(() => { const r = document.querySelector("#wild .wild-note")?.getBoundingClientRect(); return r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null; })()`;
+async function catchRead() {
+  if (!catchWin || catchWin.isDestroyed()) return { open: false, win: !!win && !win.isDestroyed() };
+  const page = await catchWin.webContents.executeJavaScript(`(() => ({ wild: !document.querySelector("#catch-wild .wild-card")?.hidden, text: document.querySelector("#catch").innerText,
+    balls: [...document.querySelectorAll("#catch-wild .wild-balls [data-ball]")].map((b) => b.dataset.ball), dex: !document.querySelector("#catch-wild .wild-dex")?.hidden }))()`);
+  const b = catchWin.getBounds(), o = overlay && !overlay.isDestroyed() ? overlay.getBounds() : null;
+  return { open: true, ...page, beside: !!o && (b.x + b.width <= o.x || b.x >= o.x + o.width), win: !!win && !win.isDestroyed(), bounds: b, overlay: o };
+}
 const testCommands = {
   // put the focused element into IME composition (as if typing Hangul) via DevTools protocol
   async ime_compose({ text }) {
@@ -1899,7 +1963,7 @@ const testCommands = {
   // from $CVIM_UI_BASELINE/<name>.png (share of pixels whose colour moved more than a little)
   async ui_shot({ name, target }) {
     const n = String(name).replace(/[^\w-]/g, "");
-    const wc = (target === "overlay" && overlay ? overlay : target === "popover" && popover ? popover : win).webContents; // the overlay's own page (STA-20) · the dashboard's (#105)
+    const wc = (target === "overlay" && overlay ? overlay : target === "popover" && popover ? popover : target === "catch" && catchWin ? catchWin : win).webContents; // the overlay's own page (STA-20) · the dashboard's (#105) · the catch window's (#119)
     wc.invalidate(); await new Promise((r) => setTimeout(r, 120)); // paint the current scene first, not a stale frame
     const img = await wc.capturePage();
     if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${n}.png`), img.toPNG());
@@ -1923,7 +1987,11 @@ const testCommands = {
   },
   // the Pokédex on a species, as the wild card's "도감에서 보기" (#25) asks
   wild_dex_test({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); },
-  wild_open_test: () => overlayCommands.wild_open(),
+  // the overlay's wild notice clicked where it is (#119): the catch window beside it
+  async wild_open_test() { return overlayCommands.wild_open({ rect: await overlay.webContents.executeJavaScript(NOTE_RECT) }); },
+  // the catch window (#119): open / close; scene: an encounter to draw while none is out (ui:shots)
+  catch_test({ open, scene }) { if (scene) catchScene = scene; if (open) catchOpen(null); else catchClose(); return { open: !!catchWin }; },
+  catch_read_test: () => catchRead(),
   hatch_open_test: () => overlayCommands.hatch_open(), // #88
   charm_test: () => ({ charm: economy.charmOn(), odds: shinyOdds() }), // ✨ (#93)
   // the pointer over the current tab's partner / gone (scenes, #68)
@@ -1956,6 +2024,12 @@ const testCommands = {
           return { win: [innerWidth, innerHeight], stack: [Math.round(r.width), Math.round(r.height)], note: nr ? [Math.round(nr.left), Math.round(nr.top), Math.round(nr.width), Math.round(nr.height)] : null, text: t ? [t.scrollWidth, t.clientWidth, t.innerText] : null }; })()`);
         logLine(`bg overlay wild ${JSON.stringify(fit2)} bounds=${JSON.stringify(overlay.getBounds())}`);
         if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, "bg-overlay-wild.png"), (await overlay.webContents.capturePage()).toPNG());
+        // the notice clicked (#119): the catch window beside it, Tamer's window not made — a Master Ball (if bought) thrown there
+        overlayCommands.wild_open({ rect: await overlay.webContents.executeJavaScript(NOTE_RECT) }); await T(2000);
+        logLine(`bg catch ${JSON.stringify(await catchRead())}`);
+        const thrown = await catchWin?.webContents.executeJavaScript(`(() => { const m = document.querySelector("[data-ball='master']"); if (m) m.click(); const t = document.querySelector(".wild-throw"); if (t) t.click(); return !!m && !!t; })()`);
+        await T(10000);
+        logLine(`bg catch after thrown=${!!thrown} open=${!!catchWin} win=${!!win}`);
       }
       overlayForced = false; overlaySync();
       popoverShow({ x: 900, y: 0, width: 24, height: 24 }); await T(1500);
@@ -2236,7 +2310,8 @@ ipcMain.handle("host-invoke", async (e, cmd, args) => {
   const page = url.startsWith("file://") ? decodeURIComponent(url.slice(7)).split(/[?#]/)[0] : "";
   const table = page === path.join(DIST, "index.html") && e.sender === win?.webContents ? commands
     : page === path.join(DIST, "overlay.html") && e.sender === overlay?.webContents ? overlayCommands
-    : page === path.join(DIST, "popover.html") && e.sender === popover?.webContents ? popoverCommands : null;
+    : page === path.join(DIST, "popover.html") && e.sender === popover?.webContents ? popoverCommands
+    : page === path.join(DIST, "catch.html") && e.sender === catchWin?.webContents ? catchCommands : null;
   if (!table) throw new Error("unexpected sender");
   const fn = Object.hasOwn(table, cmd) && table[cmd];
   if (!fn) throw new Error(`unknown command ${cmd}`);
@@ -2330,6 +2405,7 @@ app.on("browser-window-created", (_e, w) => w.on("closed", () => {
   if (!quitting && backgroundOn()) return toBackground(); // the overlay stays: the party shows there (#107)
   if (overlay && !overlay.isDestroyed()) overlay.destroy();
   if (popover && !popover.isDestroyed()) popover.destroy();
+  catchClose();
 }));
 function toBackground() {
   sessionKept = true; // closing the tabs below mustn't empty the saved ones

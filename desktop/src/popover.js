@@ -37,21 +37,21 @@ let model = null;
 // 위쪽 탭 · 에이전트 칩 (#118, rule 13): the page and the agent last looked at — this page's own storage, a
 // convenience only (gone: 홈, the first agent)
 const keep = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
-let page = keep.get("pop.page") === "poke" ? "poke" : "home";
+let page = keep.get("pop.page") === "work" ? "work" : "home";
 let agentPick = keep.get("pop.agent");
 const wildOut = () => !$("#pop-wild .wild-card")?.hidden;
 function showPage(p) {
   if (p !== page) document.scrollingElement.scrollTop = 0;
   page = p; keep.set("pop.page", p);
   for (const b of document.querySelectorAll("#pop-nav [data-page]")) { b.classList.toggle("on", b.dataset.page === p); b.setAttribute("aria-selected", String(b.dataset.page === p)); }
-  $("#pg-home").hidden = p !== "home"; $("#pg-poke").hidden = p !== "poke";
+  $("#pg-home").hidden = p !== "home"; $("#pg-work").hidden = p !== "work";
   drawDot();
 }
-// 포켓몬 탭의 점: a wild one out, or an evolution since the page was last seen — never a switch by itself
+// 홈 탭의 점 (looking at 작업): a wild one out, or an evolution since 홈 was last seen — never a switch by itself
 function drawDot() {
-  if (page === "poke") keep.set("pop.pokeSeen", String(Date.now()));
-  const r = model?.recent?.[0], seen = Number(keep.get("pop.pokeSeen")) || 0;
-  $("#pop-nav .pop-dot").hidden = page === "poke" || !(wildOut() || (r?.evolved && r.at > seen));
+  if (page === "home") keep.set("pop.homeSeen", String(Date.now()));
+  const r = model?.recent?.[0], seen = Number(keep.get("pop.homeSeen")) || 0;
+  $("#pop-nav .pop-dot").hidden = page === "home" || !(wildOut() || (r?.evolved && r.at > seen));
 }
 
 async function drawPartner(m) {
@@ -206,7 +206,7 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") invoke("popover_hide");
-  else if (e.metaKey && e.key.toLowerCase() === "b") { e.preventDefault(); if (wildOut()) showPage("poke"); wild.throwBall(); } // the throw shown where the card is
+  else if (e.metaKey && e.key.toLowerCase() === "b") { e.preventDefault(); if (wildOut()) showPage("home"); wild.throwBall(); } // the throw shown where the card is
 });
 
 // the window follows the content's height
