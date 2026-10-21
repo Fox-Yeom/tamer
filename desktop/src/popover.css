@@ -13,6 +13,15 @@ html { overflow-y: auto; }
 .pop-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; font-weight: 600; color: var(--dim); }
 button { font: inherit; color: var(--fg); background: var(--raised); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
 button:hover { background: var(--hover); }
+.pop-page[hidden] { display: none; }
+
+/* 위쪽 탭 (#118): a segmented control as PokeTokenBar's — 홈 · 포켓몬, a dot on 포켓몬 for a wild one / an evolution */
+#pop-nav { display: flex; gap: 2px; margin: 10px 12px 0; padding: 2px; border-radius: 8px; background: var(--sunken); }
+#pop-nav button { flex: 1; border: 0; background: transparent; padding: 5px 0; border-radius: 6px; color: var(--dim); font-weight: 600; }
+#pop-nav button:hover:not(.on) { color: var(--fg); }
+#pop-nav button.on { background: var(--raised-hi); color: var(--fg); }
+.pop-dot { display: inline-block; width: 6px; height: 6px; margin-left: 5px; border-radius: 3px; vertical-align: 2px; background: var(--bad); }
+.pop-dot[hidden] { display: none; }
 
 /* 파트너 */
 #pop-partner { display: flex; gap: 12px; align-items: center; }
@@ -56,10 +65,15 @@ button:hover { background: var(--hover); }
 .pop-stat b { font: 500 17px "Fira Code", ui-monospace, monospace; }
 .pop-coin { color: var(--pk-coin, #f2c14e); }
 
-/* 한도 (#115): per agent — rows of label · bar (what's left) with a tick (time left) · "n% 남음", then when it resets */
-.pop-ag + .pop-ag { margin-top: 10px; }
-.pop-ag-h { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; margin-bottom: 4px; font-size: 12px; }
-.pop-ag-h span { color: var(--dim); font-size: 11px; font-family: "Fira Code", ui-monospace, monospace; }
+/* 한도 (#115): per agent — rows of label · bar (what's left) with a tick (time left) · "n% 남음", then when it resets.
+   Two agents or more: chips, one at a time (#118) — a chip's dot is its most used window's level */
+.pop-ag-h { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 4px; font-size: 12px; }
+.pop-ag-h .spent { color: var(--dim); font-size: 11px; font-family: "Fira Code", ui-monospace, monospace; }
+.pop-agents { display: flex; gap: 4px; }
+.pop-chip { display: flex; align-items: center; gap: 5px; padding: 2px 9px; border-radius: 11px; font-size: 12px; color: var(--dim); background: transparent; }
+.pop-chip.on { color: var(--fg); background: var(--raised-hi); border-color: var(--border-hi); font-weight: 600; }
+.pop-chip > i { width: 6px; height: 6px; border-radius: 3px; }
+.pop-chip > i:not(.lv-ok, .lv-warn, .lv-bad) { background: var(--faint); } /* nothing known yet */
 .pop-win { display: grid; grid-template-columns: 64px minmax(0, 1fr) 70px; column-gap: 8px; row-gap: 2px; align-items: center; padding: 3px 0; font-size: 12px; }
 .pop-win .k { color: var(--dim); }
 .pop-win .pct { text-align: right; font-family: "Fira Code", ui-monospace, monospace; }
@@ -94,5 +108,5 @@ button:hover { background: var(--hover); }
 /* 아래 버튼 */
 #pop-foot { display: flex; gap: 8px; padding: 10px 12px; }
 #pop-foot button { flex: 1; padding: 8px; }
-#pop-foot #pop-quit { flex: 0 0 auto; color: var(--dim); } /* 종료: small, at the side */
+#pop-foot #pop-quit, #pop-foot #pop-settings { flex: 0 0 36px; padding: 6px 0; color: var(--dim); font-size: 15px; } /* ⏻ ⚙: icons at the side, the name on hover (#118) */
 #pop-foot .pop-primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); font-weight: 600; }

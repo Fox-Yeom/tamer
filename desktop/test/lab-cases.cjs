@@ -529,22 +529,24 @@ module.exports = [
     },
   },
   {
-    id: "popover-dashboard", tags: ["smoke", "app"], what: "메뉴바 미니 대시보드: 왼쪽 클릭(시험 명령)으로 열면 오늘 완료·사용 한도(Claude 5시간 세션 58% 남음·주간 82% 남음 — 남은 만큼, #115 A2)·Tamer 탭(입력 필요가 맨 위) — 탭을 누르면 대시보드가 닫히고 그 탭으로 · 초기화가 지난 창은 '초기화됨'(A6), 초기화 시각이 있으면 남은 시간 눈금(A4) (STA-22, #105 #115)",
+    id: "popover-dashboard", tags: ["smoke", "app"], what: "메뉴바 미니 대시보드: 왼쪽 클릭(시험 명령)으로 열면 홈 탭 — 오늘 완료·사용 한도(Claude 5시간 세션 58% 남음·주간 82% 남음 — 남은 만큼, #115 A2)·Tamer 탭(입력 필요가 맨 위) — 탭을 누르면 대시보드가 닫히고 그 탭으로 · 에이전트가 둘이면 칩으로 하나씩, 칩 점 = 가장 많이 쓴 창의 색(Codex 주간 85% → 빨강, #118) · 초기화가 지난 창은 '초기화됨'(A6), 초기화 시각이 있으면 남은 시간 눈금(A4) (STA-22, #105 #115 #118)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "waiting" } }, { wait: 300 },
       { invoke: "usage_seen", args: { key: "claude", five_hour: { pct: 42, resets_at: 4102444800 }, seven_day: { pct: 18, resets_at: 4102444800 } } },
-      { invoke: "usage_seen", args: { key: "codex", five_hour: { pct: 70, resets_at: LIM_PAST }, seven_day: { pct: 40, resets_at: LIM_HALF_WEEK } } },
+      { invoke: "usage_seen", args: { key: "codex", five_hour: { pct: 70, resets_at: LIM_PAST }, seven_day: { pct: 85, resets_at: LIM_HALF_WEEK } } },
       { invoke: "popover_test", args: { open: true }, log: true }, { wait: 1500 }, { invoke: "popover_read_test", log: true },
+      { invoke: "popover_click_test", args: { sel: ".pop-chip[data-agent='codex']" } }, { wait: 300 }, { invoke: "popover_read_test", log: true },
       { invoke: "popover_click_test", args: { sel: ".pop-tab" }, log: true }, { wait: 800 }, { invoke: "popover_test", log: true }, { probe: "after" }],
     check: ({ log, probe }) => {
       const opens = [...log.matchAll(/^lab-invoke popover_test (.*)$/gm)].map((m) => JSON.parse(m[1]).open);
-      const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
+      const [r, c] = [...log.matchAll(/^lab-invoke popover_read_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const first = r?.tabs?.[0] || "";
       return [
         ok(opens[0] === true && /^popover open$/m.test(log), `열림 ${JSON.stringify(opens)}`),
-        ok(/오늘 완료/.test(r?.text || "") && /사용 한도/.test(r?.text || "") && /Claude\s+5시간 세션\s+58% 남음[\s\S]*주간\s+82% 남음/.test(r?.text || ""), `오늘·한도(남은 만큼) ${JSON.stringify(r?.text?.match(/사용 한도[\s\S]{0,200}/)?.[0])}`),
-        ok(/Codex\s+5시간 세션\s+100% 남음\s+초기화됨 — 다음 요청부터 새 창\s+주간\s+60% 남음\s+3일 12시간/.test(r?.text || "") && r?.look?.ticks?.length === 1 && Math.abs(r.look.ticks[0] - 50) < 1.5, `Codex 5시간은 초기화됨, 주간은 60% 남음·3일 12시간·눈금 50% ${JSON.stringify([r?.text?.match(/Codex[\s\S]{0,120}/)?.[0], r?.look?.ticks])}`),
+        ok(r?.page === "home" && r?.dot === false && /오늘 완료/.test(r?.text || "") && /사용 한도/.test(r?.text || "") && /Claude\s*Codex\s*5시간 세션\s+58% 남음[\s\S]*주간\s+82% 남음/.test(r?.text || "") && !/Codex\s*5시간 세션\s+100%/.test(r?.text || ""), `홈 탭·점 없음, 오늘·한도(남은 만큼) — Claude 칩만 보임 ${JSON.stringify([r?.page, r?.dot, r?.text?.match(/사용 한도[\s\S]{0,200}/)?.[0]])}`),
+        ok(JSON.stringify(r?.chips) === '["claude*:lv-ok","codex:lv-bad"]' && JSON.stringify(c?.chips) === '["claude:lv-ok","codex*:lv-bad"]', `칩: 처음 Claude, 누르면 Codex · Codex 점 빨강(주간 85%) ${JSON.stringify([r?.chips, c?.chips])}`),
+        ok(/5시간 세션\s+100% 남음\s+초기화됨 — 다음 요청부터 새 창\s+주간\s+15% 남음\s+3일 12시간/.test(c?.text || "") && !/58% 남음/.test(c?.text || "") && c?.look?.ticks?.length === 1 && Math.abs(c.look.ticks[0] - 50) < 1.5, `Codex 5시간은 초기화됨, 주간은 15% 남음·3일 12시간·눈금 50% ${JSON.stringify([c?.text?.match(/사용 한도[\s\S]{0,160}/)?.[0], c?.look?.ticks])}`),
         ok(r?.tabs?.length === 2 && /입력 필요/.test(first), `탭 2개, 입력 필요가 맨 위 ${JSON.stringify(r?.tabs)}`),
         ok(/^lab-invoke popover_click_test true$/m.test(log) && opens[1] === false && probe.after?.active && first.startsWith(probe.after.active), `탭을 누르면 닫히고 그 탭으로 ${JSON.stringify(opens)} 지금 탭 ${probe.after?.active}`),
       ];
@@ -591,7 +593,7 @@ module.exports = [
     check: ({ log }) => [ok(/^user quit: next launch starts clean$/m.test(log) && !/stays in the menu bar/.test(log), "메인 창을 닫으면 끝나야")], // not quitting = no line, and the run times out
   },
   {
-    id: "popover-wild", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 야생 잡기: 야생이 나와 있으면 대시보드에 야생 카드 — 마스터볼을 골라 던지면 잡히고 가방에서 한 개 줄어듦 (STA-22 규칙 3, #105)",
+    id: "popover-wild", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 야생 잡기: 야생이 나와 있으면 홈 탭에선 포켓몬 탭에 점(#118), 포켓몬 탭 맨 위에 야생 카드 — 마스터볼을 골라 던지면 잡히고 가방에서 한 개 줄어듦 (STA-22 규칙 3·13, #105 #118)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     setup: (box) => {
       const d = todayLocal();
@@ -600,14 +602,16 @@ module.exports = [
     },
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 },
       { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_read_test", log: true },
+      { invoke: "popover_click_test", args: { sel: "#pop-nav [data-page='poke']" } }, { wait: 300 }, { invoke: "popover_read_test", log: true },
       { invoke: "popover_click_test", args: { sel: "#pop-wild .wild-balls [data-ball='master']" }, log: true }, { wait: 200 },
       { invoke: "popover_click_test", args: { sel: "#pop-wild .wild-throw" }, log: true }, { wait: 4500 }, { invoke: "shop_state", log: true }],
     check: ({ log }) => {
-      const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
+      const [h, r] = [...log.matchAll(/^lab-invoke popover_read_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
       const clicks = [...log.matchAll(/^lab-invoke popover_click_test (\w+)$/gm)].map((m) => m[1]);
       return [
-        ok(r?.wild === true, `대시보드에 야생 카드 ${JSON.stringify(r && { wild: r.wild })}`),
+        ok(h?.page === "home" && h?.dot === true && !/야생/.test(h?.text || ""), `홈 탭이면 포켓몬 탭에 점(저절로 넘어가지 않음, #118) ${JSON.stringify(h && { page: h.page, dot: h.dot })}`),
+        ok(r?.page === "poke" && r?.dot === false && r?.wild === true, `포켓몬 탭에 야생 카드, 점은 꺼짐 ${JSON.stringify(r && { page: r.page, dot: r.dot, wild: r.wild })}`),
         ok(JSON.stringify(clicks) === '["true","true"]' && /^wild throw caught/m.test(log), `마스터볼로 던져 잡힘 ${JSON.stringify(clicks)} ${log.match(/^wild throw .*$/m)?.[0]}`),
         ok((st.bag?.master || 0) === 0, `마스터볼 한 개 줄어듦 ${JSON.stringify(st.bag)}`),
       ];
@@ -673,6 +677,7 @@ module.exports = [
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 1000 }, { day: d, kind: "buy", item: "egg", n: 2, amount: -100 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
     },
     steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "popover_test", args: { open: true } }, { wait: 1500 },
+      { invoke: "popover_click_test", args: { sel: "#pop-nav [data-page='poke']" } }, { wait: 300 },
       { invoke: "popover_read_test", log: true }, { invoke: "popover_click_test", args: { sel: "#pop-egg-in" }, log: true }, { wait: 1000 },
       { invoke: "popover_read_test", log: true }, { invoke: "incubator_state", log: true }, { invoke: "shop_state", log: true }],
     check: ({ log }) => {
@@ -686,7 +691,7 @@ module.exports = [
     },
   },
   {
-    id: "outside-spend", tags: ["smoke", "poke"], what: "오늘 사용량(STA-23 규칙 9, #115 A5): 밖 작업을 켜면 오늘 바뀐 기록을 처음부터 읽어 Claude 토큰(같은 메시지 한 번, 어제 줄 제외)·Codex 토큰(세션 합계의 오늘 늘어난 만큼)·≈$(가격표) — 대시보드 한도 칸 에이전트 제목 줄 · 기록 본문은 앱 기록·데이터에 없음",
+    id: "outside-spend", tags: ["smoke", "poke"], what: "오늘 사용량(STA-23 규칙 9, #115 A5): 밖 작업을 켜면 오늘 바뀐 기록을 처음부터 읽어 Claude 토큰(같은 메시지 한 번, 어제 줄 제외)·Codex 토큰(세션 합계의 오늘 늘어난 만큼)·≈$(가격표) — 대시보드 한도 칸 칩 줄(고른 에이전트, #118) · 기록 본문은 앱 기록·데이터에 없음",
     data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_OUTSIDE_CONSENT: "yes", CVIM_PRICES_JSON: (box) => path.join(box.dir, "prices-litellm.json") },
     files: {
       "prices-litellm.json": JSON.stringify({ "claude-opus-4-5": { litellm_provider: "anthropic", input_cost_per_token: 1e-6, cache_creation_input_token_cost: 2e-6, cache_creation_input_token_cost_above_1hr: 3e-6, cache_read_input_token_cost: 1e-7, output_cost_per_token: 5e-6, max_input_tokens: 200000 },
@@ -703,14 +708,15 @@ module.exports = [
         { timestamp: SPEND_OLD, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 1000000, cached_input_tokens: 500000, output_tokens: 100000, total_tokens: 1100000 } } } },
         { timestamp: SPEND_NOW, type: "event_msg", payload: { type: "token_count", info: { total_token_usage: { input_tokens: 1600000, cached_input_tokens: 800000, output_tokens: 150000, total_tokens: 1750000 } } } }] } },
       { wait: 1500 }, { invoke: "spend_test", log: true },
-      { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_read_test", log: true }, { invoke: "popover_test" }],
+      { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_read_test", log: true },
+      { invoke: "popover_click_test", args: { sel: ".pop-chip[data-agent='codex']" } }, { wait: 300 }, { invoke: "popover_read_test", log: true }, { invoke: "popover_test" }],
     check: ({ log, box }) => {
       const [a, b] = [...log.matchAll(/^lab-invoke spend_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
-      const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
+      const [r, c] = [...log.matchAll(/^lab-invoke popover_read_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       return [
         ok(a?.claude?.tokens === 1118000 && !a?.codex, `시작 때 오늘 Claude 1,118,000 토큰(같은 메시지 한 번·어제 줄 빼고) ${JSON.stringify(a)}`),
         ok(b?.codex?.tokens === 650000 && Math.abs((b?.codex?.usd ?? 0) - 0.83) < 0.001 && Math.abs((b?.claude?.usd ?? 0) - 0.386) < 0.001, `Codex 오늘 늘어난 650,000 · ≈$ (Claude 0.386, Codex 0.83) ${JSON.stringify(b)}`),
-        ok(/Claude\s*오늘 1\.1M 토큰 · ≈\$0\.39/.test(r?.text || "") && /Codex\s*오늘 650K 토큰 · ≈\$0\.83/.test(r?.text || ""), `대시보드 제목 줄 ${JSON.stringify(r?.text?.match(/사용 한도[\s\S]{0,160}/)?.[0])}`),
+        ok(/Claude\s*Codex\s*오늘 1\.1M 토큰 · ≈\$0\.39/.test(r?.text || "") && /Claude\s*Codex\s*오늘 650K 토큰 · ≈\$0\.83/.test(c?.text || ""), `대시보드 칩 줄 — Claude, 칩을 누르면 Codex (#118) ${JSON.stringify([r?.text?.match(/사용 한도[\s\S]{0,100}/)?.[0], c?.text?.match(/사용 한도[\s\S]{0,100}/)?.[0]])}`),
         ok(!log.includes("LAB-PRIVATE-115") && !filesWith(box.data, "LAB-PRIVATE-115").length, "기록 본문이 앱 기록·데이터에 없음"),
       ];
     },
@@ -761,32 +767,35 @@ module.exports = [
     },
   },
   {
-    id: "popover-tall", tags: ["smoke", "poke"], what: "메뉴바 대시보드가 화면보다 길면(시험: 높이 420으로 줄인 화면) 창은 화면 끝까지만, 나머지는 스크롤 — 끝까지 내리면 [종료]·[설정]·[Tamer 열기]가 보임 · 파티 그림 72px·부화기 알 그림 (#117)",
+    id: "popover-tall", tags: ["smoke", "poke"], what: "메뉴바 대시보드 포켓몬 탭이 화면보다 길면(시험: 높이 420으로 줄인 화면) 창은 화면 끝까지만, 나머지는 스크롤 — 끝까지 내리면 ⏻·⚙·[Tamer 열기]가 보임 · 파티 그림 72px·부화기 알 그림 (#117 #118)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 6 }, log: true },
-      { invoke: "popover_test", args: { open: true, maxH: 420 } }, { wait: 1500 }, { invoke: "popover_read_test", args: { scroll: true }, log: true }, { invoke: "popover_test" }],
+      { invoke: "popover_test", args: { open: true, maxH: 420 } }, { wait: 1500 }, { invoke: "popover_click_test", args: { sel: "#pop-nav [data-page='poke']" } }, { wait: 500 },
+      { invoke: "popover_read_test", args: { scroll: true }, log: true }, { invoke: "popover_test" }],
     check: ({ log }) => {
       const n = JSON.parse(log.match(/^lab-invoke party_test (.*)$/m)?.[1] || "{}").list?.length || 0;
       const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
       return [
-        ok(r?.height === 420 && r?.content > 420 && r?.footInView === true, `창 420에 내용 ${r?.content} — 끝까지 내리면 아래 버튼 보임 ${JSON.stringify(r && { height: r.height, content: r.content, foot: r.footInView })}`),
+        ok(r?.page === "poke" && r?.height === 420 && r?.content > 420 && r?.footInView === true, `포켓몬 탭: 창 420에 내용 ${r?.content} — 끝까지 내리면 아래 버튼 보임 ${JSON.stringify(r && { page: r.page, height: r.height, content: r.content, foot: r.footInView })}`),
         ok(n === 6 && r?.look?.party === 72 && /pk-egg mid/.test(r?.look?.egg || ""), `파티 6마리 그림 72px · 부화기 알 그림 ${JSON.stringify([n, r?.look])}`),
       ];
     },
   },
   {
-    id: "popover-party-lead", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 파티 선두 바꾸기: 둘째 칸 그림을 누르면 선두가 됨 — Tamer 창을 열지 않음 (#112)",
+    id: "popover-party-lead", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 파티 선두 바꾸기: 포켓몬 탭의 둘째 칸 그림을 누르면 선두가 됨 — Tamer 창을 열지 않음 (#112) · 닫았다 다시 열면 포켓몬 탭 그대로(마지막 탭 기억, #118)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 3 }, log: true },
-      { invoke: "popover_test", args: { open: true } }, { wait: 1500 },
-      { invoke: "popover_click_test", args: { sel: ".pop-mon:not(.lead)" }, log: true }, { wait: 800 }, { invoke: "party_state", log: true }, { invoke: "popover_read_test", log: true }],
+      { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_click_test", args: { sel: "#pop-nav [data-page='poke']" } }, { wait: 300 },
+      { invoke: "popover_click_test", args: { sel: ".pop-mon:not(.lead)" }, log: true }, { wait: 800 }, { invoke: "party_state", log: true }, { invoke: "popover_read_test", log: true },
+      { invoke: "popover_test" }, { wait: 500 }, { invoke: "popover_test", args: { open: true } }, { wait: 800 }, { invoke: "popover_read_test", log: true }],
     check: ({ log }) => {
       const before = JSON.parse(log.match(/^lab-invoke party_test (.*)$/m)?.[1] || "{}").list?.map((m) => m.uid) || [];
       const after = JSON.parse(log.match(/^lab-invoke party_state (.*)$/m)?.[1] || "{}").list?.map((m) => m.uid) || [];
-      const open = !!JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null"); // read only while it's open
+      const [r, again] = [...log.matchAll(/^lab-invoke popover_read_test (.*)$/gm)].map((m) => JSON.parse(m[1])), open = !!r; // read only while it's open
       return [
         ok(before.length === 3 && after.length === 3 && after[0] === before[1] && after.slice(1).join() === [before[0], before[2]].join(), `둘째가 선두로 ${JSON.stringify(before)} → ${JSON.stringify(after)}`),
         ok(open === true && !/^popover .*open-dex/m.test(log), "대시보드는 그대로 열려 있음"),
+        ok(r?.page === "poke" && again?.page === "poke" && again?.look?.party === 72, `다시 열어도 포켓몬 탭 ${JSON.stringify([r?.page, again?.page])}`),
       ];
     },
   },

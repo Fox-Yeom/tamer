@@ -9,14 +9,20 @@
   </head>
   <body>
     <main id="pop">
-      <section id="pop-partner" class="pop-sec"></section>
-      <section id="pop-party" class="pop-sec"></section>
-      <section id="pop-prog" class="pop-sec"></section>
-      <section id="pop-today" class="pop-sec"></section>
-      <section id="pop-wild" class="pop-sec"></section>
-      <section id="pop-limits" class="pop-sec"></section>
-      <section id="pop-tabs" class="pop-sec"></section>
-      <footer id="pop-foot"><button id="pop-quit" title="Tamer를 완전히 끔 — 열린 터미널·에이전트도 끝나요 (⌘Q와 같음)">종료</button><button id="pop-settings">설정</button><button id="pop-open" class="pop-primary">Tamer 열기</button></footer>
+      <!-- 위쪽 탭 (#118, rule 13): 홈 · 포켓몬 — PokeTokenBar's Home / Shop / Bag / Collection, the shop · bag · dex later in the Pokémon window (#113) -->
+      <nav id="pop-nav" role="tablist"><button role="tab" data-page="home">홈</button><button role="tab" data-page="poke">포켓몬<i class="pop-dot" hidden></i></button></nav>
+      <div id="pg-home" class="pop-page" role="tabpanel">
+        <section id="pop-today" class="pop-sec"></section>
+        <section id="pop-limits" class="pop-sec"></section>
+        <section id="pop-tabs" class="pop-sec"></section>
+      </div>
+      <div id="pg-poke" class="pop-page" role="tabpanel">
+        <section id="pop-wild" class="pop-sec"></section>
+        <section id="pop-partner" class="pop-sec"></section>
+        <section id="pop-party" class="pop-sec"></section>
+        <section id="pop-prog" class="pop-sec"></section>
+      </div>
+      <footer id="pop-foot"><button id="pop-quit" title="종료 — Tamer를 완전히 끔, 열린 터미널·에이전트도 끝나요 (⌘Q와 같음)" aria-label="종료">⏻</button><button id="pop-settings" title="설정" aria-label="설정">⚙</button><button id="pop-open" class="pop-primary">Tamer 열기</button></footer>
     </main>
     <script type="module" src="/src/popover.js"></script>
   </body>

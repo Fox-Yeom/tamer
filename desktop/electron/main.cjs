@@ -1971,6 +1971,8 @@ const testCommands = {
     const r = { text: document.querySelector("#pop").innerText,
       tabs: [...document.querySelectorAll(".pop-tab")].map((b) => b.innerText.replace(/\\s+/g, " ").trim()),
       wild: !document.querySelector("#pop-wild .wild-card")?.hidden, height: innerHeight, content: se.scrollHeight,
+      page: document.querySelector("#pop-nav .on")?.dataset.page || null, dot: !document.querySelector("#pop-nav .pop-dot")?.hidden, // #118
+      chips: [...document.querySelectorAll(".pop-chip")].map((b) => b.dataset.agent + (b.classList.contains("on") ? "*" : "") + (b.querySelector("i")?.className ? ":" + b.querySelector("i").className : "")),
       look: { partner: w(".pop-sprite img"), party: w(".pop-mon img"), egg: document.querySelector("#pop-prog .pk-egg")?.className || null,
         ticks: [...document.querySelectorAll(".pop-win .tick")].map((t) => parseFloat(t.style.left)) } };
     if (${!!scroll}) { se.scrollTop = se.scrollHeight; const f = document.querySelector("#pop-foot").getBoundingClientRect(); r.footInView = f.top >= 0 && f.bottom <= innerHeight + 1; }

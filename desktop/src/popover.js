@@ -34,6 +34,26 @@ const ago = (t, now) => { const m = Math.round((now - t) / 60000); return m < 1 
 
 let model = null;
 
+// 위쪽 탭 · 에이전트 칩 (#118, rule 13): the page and the agent last looked at — this page's own storage, a
+// convenience only (gone: 홈, the first agent)
+const keep = { get: (k) => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { localStorage.setItem(k, v); } catch {} } };
+let page = keep.get("pop.page") === "poke" ? "poke" : "home";
+let agentPick = keep.get("pop.agent");
+const wildOut = () => !$("#pop-wild .wild-card")?.hidden;
+function showPage(p) {
+  if (p !== page) document.scrollingElement.scrollTop = 0;
+  page = p; keep.set("pop.page", p);
+  for (const b of document.querySelectorAll("#pop-nav [data-page]")) { b.classList.toggle("on", b.dataset.page === p); b.setAttribute("aria-selected", String(b.dataset.page === p)); }
+  $("#pg-home").hidden = p !== "home"; $("#pg-poke").hidden = p !== "poke";
+  drawDot();
+}
+// 포켓몬 탭의 점: a wild one out, or an evolution since the page was last seen — never a switch by itself
+function drawDot() {
+  if (page === "poke") keep.set("pop.pokeSeen", String(Date.now()));
+  const r = model?.recent?.[0], seen = Number(keep.get("pop.pokeSeen")) || 0;
+  $("#pop-nav .pop-dot").hidden = page === "poke" || !(wildOut() || (r?.evolved && r.at > seen));
+}
+
 async function drawPartner(m) {
   const p = m.partner, root = $("#pop-partner");
   if (!p) { root.innerHTML = `<div class="pop-none">${m.folder ? `${esc(m.folder)} — 이 탭엔 파트너가 없어요` : "열린 탭이 없어요"}</div>`; return; }
@@ -102,13 +122,23 @@ function limitRow(label, w, span, now) {
   return `<div class="pop-win"><span class="k">${label}</span><span class="gauge" ${tick != null ? `title="눈금: 남은 시간 ${Math.round(tick)}% — 막대가 눈금보다 짧으면 시간보다 빨리 쓰는 중"` : ""}><i class="${level(used)}" style="width:${left}%"></i>${tick != null ? `<b class="tick" style="left:${tick}%"></b>` : ""}</span>
     <span class="pct">${Math.round(left)}% 남음</span>${w.resets_at ? `<span class="when">${esc(resetAt(w.resets_at, now))}</span>` : ""}</div>`;
 }
+// the most used window still running → its level's colour (a chip's dot: the agent not shown nearing its limit is seen)
+const worst = (u, now) => {
+  const ps = WINS.map(([key]) => u?.[key]).filter((w) => w && Number.isFinite(w.pct) && !(w.resets_at && w.resets_at * 1000 <= now)).map((w) => w.pct);
+  return ps.length ? level(Math.max(...ps)) : "";
+};
 function drawLimits(m, now) {
+  // the agents with limits or today's use — two or more: one at a time behind chips (#118, rule 13)
+  const shown = AGENTS.filter(([k]) => WINS.some(([key]) => m.usage?.[k]?.[key]) || m.spend?.[k]);
+  const pick = shown.find(([k]) => k === agentPick) || shown[0];
   const blocks = [];
-  for (const [k, name] of AGENTS) {
-    const u = m.usage?.[k] || {};
+  if (pick) {
+    const [k, name] = pick, u = m.usage?.[k] || {};
     const t = m.spend?.[k]; // A5: today's tokens · ≈$ (with STA-23's yes)
-    if (!WINS.some(([key]) => u[key]) && !t) continue;
-    blocks.push(`<div class="pop-ag"><div class="pop-ag-h"><b>${name}</b>${t ? `<span title="오늘 이 맥의 ${name} 기록에 쓰인 토큰 수 — ≈$는 API 가격으로 계산한 추정치, 실제 청구 금액이 아니에요">오늘 ${esc(tokens(t.tokens))}${t.usd != null ? ` · ≈$${t.usd.toFixed(2)}` : ""}</span>` : ""}</div>
+    const who = shown.length > 1
+      ? `<span class="pop-agents" role="tablist">${shown.map(([key, nm]) => `<button role="tab" class="pop-chip${key === k ? " on" : ""}" data-agent="${key}" aria-selected="${key === k}"><i class="${worst(m.usage?.[key], now)}"></i>${nm}</button>`).join("")}</span>`
+      : `<b>${name}</b>`;
+    blocks.push(`<div class="pop-ag"><div class="pop-ag-h">${who}${t ? `<span class="spent" title="오늘 이 맥의 ${name} 기록에 쓰인 토큰 수 — ≈$는 API 가격으로 계산한 추정치, 실제 청구 금액이 아니에요">오늘 ${esc(tokens(t.tokens))}${t.usd != null ? ` · ≈$${t.usd.toFixed(2)}` : ""}</span>` : ""}</div>
       ${WINS.map(([key, label, span]) => limitRow(label, u[key], span, now)).join("")}</div>`);
   }
   const L = m.limits || {}, st = L.state || {};
@@ -143,6 +173,7 @@ function draw(m) {
   drawToday(m);
   drawLimits(m, now);
   drawTabs(m);
+  drawDot();
 }
 
 // 야생 (rule 3): the wild card as in the main window — throw here (click / ⌘B); "도감에서 보기" opens Tamer
@@ -151,9 +182,9 @@ const wild = createWild($("#pop-wild"), {
   log: (line) => invoke("popover_log", { line }).catch(() => {}),
   dexButton: (e) => invoke("popover_dex", { id: e.id }),
 });
-listen("wild", (e) => wild.show(e.payload));
+listen("wild", (e) => { wild.show(e.payload); drawDot(); });
 listen("wild-throw", (e) => wild.play(e.payload));
-listen("wild-end", (e) => wild.end(e.payload));
+listen("wild-end", (e) => { wild.end(e.payload); drawDot(); });
 listen("popover", (e) => draw(e.payload));
 listen("party", () => invoke("popover_state").then(draw).catch(() => {}));
 
@@ -169,14 +200,17 @@ document.addEventListener("click", (e) => {
   else if (t.id === "pop-quit") invoke("popover_quit");
   else if (t.id === "pop-party-go") invoke("popover_party"); // 포켓몬 창의 ⭐ 파티 (#107)
   else if (t.id === "pop-egg-in") invoke("egg_in", { kind: t.dataset.kind }).then(() => invoke("popover_state")).then(draw).catch(() => {}); // 🥚 (#116) // 완전히 끄기 (#106 — the right-click menu's "Tamer 종료" too)
+  else if (t.dataset.page) showPage(t.dataset.page); // 위쪽 탭 (#118)
+  else if (t.dataset.agent) { agentPick = t.dataset.agent; keep.set("pop.agent", agentPick); drawLimits(model, Date.now()); } // 에이전트 칩
   else if (t.dataset.ws) invoke("popover_tab", { ws: t.dataset.ws });
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") invoke("popover_hide");
-  else if (e.metaKey && e.key.toLowerCase() === "b") { e.preventDefault(); wild.throwBall(); }
+  else if (e.metaKey && e.key.toLowerCase() === "b") { e.preventDefault(); if (wildOut()) showPage("poke"); wild.throwBall(); } // the throw shown where the card is
 });
 
 // the window follows the content's height
 new ResizeObserver(() => invoke("popover_fit", { height: $("#pop").offsetHeight })).observe($("#pop"));
-invoke("popover_state").then((m) => { draw(m); if (m.wild) wild.show({ ...m.wild, balls: m.balls }); }).catch(() => {});
-setInterval(() => { if (model && !document.hidden) drawLimits(model, Date.now()); }, 30000); // 초기화까지 · n분 전
+showPage(page);
+invoke("popover_state").then((m) => { draw(m); if (m.wild) { wild.show({ ...m.wild, balls: m.balls }); drawDot(); } }).catch(() => {});
+setInterval(() => { if (model && !document.hidden) { drawLimits(model, Date.now()); drawDot(); } }, 30000); // 초기화까지 · n분 전 · a wild one gone by itself
