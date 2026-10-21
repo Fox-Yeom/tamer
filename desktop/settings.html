@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 설정 창 (APP-19 · APP-22 rule 9, #113 P1): a window of its own — our own files only (POLICY.md 11) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+    <title>설정</title>
+    <link rel="stylesheet" href="/src/settings.css" />
+  </head>
+  <body>
+    <main id="settings">
+      <!-- #101: a sidebar of 3 kinds, one shown. Rows: a short label left, its control right — in rounded groups (PokeTokenBar's settings) -->
+      <nav class="set-nav"><button data-page="general">⚙︎ 일반</button><button data-page="overlay">◰ 오버레이</button><button data-page="menubar">◓ 메뉴바</button></nav>
+      <div class="set-page" data-page="general" hidden>
+        <h4>화면</h4>
+        <div class="set-box">
+          <div class="set-row"><span>테마<small>에이전트 화면 색은 각 에이전트 설정에서</small></span><span class="seg" data-set="theme"><button data-v="system">시스템</button><button data-v="dark">다크</button><button data-v="light">라이트</button></span></div>
+          <label class="set-row" title="⌘\ 또는 상단 바 오른쪽 끝 버튼 · 접으면 파트너는 바탕화면 오버레이로"><span>오른쪽 칸<small>파트너 · 변경 사항 · 셸</small></span><input class="set-sw" type="checkbox" data-set="side" /></label>
+          <label class="set-row" title="에이전트가 일하는 동안 탭 테두리에 색이 돌아요"><span>일하는 탭 테두리</span><input class="set-sw" type="checkbox" data-set="tabGlow" /></label>
+          <label class="set-row" title="Claude Code·Codex가 붙인 대화 제목을 셸 이름으로 보여요 — 끄면 읽지도 않아요(직접 붙인 이름은 보임). 화면을 공유할 때"><span>세션 제목<small>에이전트가 붙인 대화 제목</small></span><input class="set-sw" type="checkbox" data-set="titles" /></label>
+        </div>
+        <h4>포켓몬</h4>
+        <div class="set-box">
+          <label class="set-row" title="다른 터미널·Claude 앱의 Code·Codex 앱에서 끝낸 Claude Code·Codex 작업도 레벨·코인·야생에 — 에이전트 기록에서 '끝남' 줄의 폴더·걸린 시간·출처만 읽어요(대화 내용 안 읽음, 저장 안 함). 켜면 설명 창"><span>Tamer 밖 작업도 포켓몬에<small>기록의 '끝남'만 · 켜면 설명 창</small></span><input class="set-sw" type="checkbox" data-set="outside" /></label>
+        </div>
+        <h4>한도</h4>
+        <div class="set-box">
+          <label class="set-row" title="Codex에 딸린 앱 서버에 계정 한도만 물어봐요 — 대화를 시작하지 않아요"><span>Codex 한도 바로 읽기<small>대화 없이 · 15분마다</small></span><input class="set-sw" type="checkbox" data-set="limits.codex" /></label>
+          <label class="set-row" title="켜면 Claude Code 로그인 정보를 키체인에서 읽어 Anthropic에 이 계정의 사용률만 물어봐요(공개되지 않은 주소). 토큰은 메모리에만 — 켤 때 설명 창이 떠요"><span>Claude 한도를 Anthropic에서 읽기<small>비공식 주소 · 켜면 설명 창</small></span><input class="set-sw" type="checkbox" data-set="limits.claude" /></label>
+          <div class="set-row set-presets"><span>한도 새로 고침<small id="set-limits-state">상단 바 5h·7d를 눌러도 돼요</small></span><span><button id="set-limits-refresh">새로 고침</button></span></div>
+        </div>
+      </div>
+      <div class="set-page set-ov" data-page="overlay" hidden>
+        <div class="set-ov-controls">
+          <div class="set-box">
+            <label class="set-row"><span>오버레이<small>바탕화면 구석의 파트너와 알림</small></span><input class="set-sw" type="checkbox" data-set="overlay.on" /></label>
+          </div>
+          <div class="set-group">
+            <div class="set-box">
+              <div class="set-row" title="오른쪽 칸을 접으면 늘 보여요"><span>보일 때</span><span class="seg" data-set="overlay.when"><button data-v="away">다른 앱 쓸 때</button><button data-v="always">늘</button></span></div>
+            </div>
+            <h4>보일 것</h4>
+            <div class="set-box">
+              <label class="set-row"><span>파트너</span><input class="set-sw" type="checkbox" data-set="overlay.partner" /></label>
+              <label class="set-row" title="입력 필요·완료 말풍선, 나를 기다리는 다른 탭, 아이콘 줄"><span>알림<small>입력 필요 · 완료</small></span><input class="set-sw" type="checkbox" data-set="overlay.alerts" /></label>
+              <label class="set-row" title="끄면 Tamer 창에서만 나와요"><span>야생 포켓몬</span><input class="set-sw" type="checkbox" data-set="overlay.wild" /></label>
+              <label class="set-row" title="부화기 알 n/10은 늘, 대발견·리서치는 한 번 남았을 때 · 부화 알림"><span>진행<small>부화 · 스탬프가 곧일 때</small></span><input class="set-sw" type="checkbox" data-set="overlay.progress" /></label>
+              <div class="set-row set-presets"><span>빠른 선택</span><span><button data-preset="all">전부</button><button data-preset="pokemon">포켓몬만</button><button data-preset="wild">야생만</button><button data-preset="off">끄기</button></span></div>
+            </div>
+            <h4>모양</h4>
+            <div class="set-box">
+              <label class="set-row"><span>카드 배경</span><span><input type="range" min="0" max="100" step="5" data-set="overlay.alpha" /> <span class="set-val" data-val="overlay.alpha"></span></span></label>
+              <details class="set-more"><summary>모양 더 보기</summary>
+                <div class="set-row" title="최소 모드: 글자 없이 파트너와 몬스터볼만"><span>최소 모드</span><span class="seg" data-set="overlay.minimal"><button data-v="auto">30% 이하</button><button data-v="always">항상</button><button data-v="never">안 씀</button></span></div>
+                <label class="set-row" title="배경을 옅게 할수록 그림자도 옅어져요"><span>그림자</span><input class="set-sw" type="checkbox" data-set="overlay.shadow" /></label>
+              </details>
+            </div>
+          </div>
+        </div>
+        <figure class="set-preview" aria-label="미리보기"><figcaption class="dim">미리보기</figcaption><div class="set-preview-desk"><div class="ov"><div class="ov-wild"></div><div class="ov-cards"></div></div></div><div class="set-preview-off dim" hidden>오버레이가 뜨지 않아요</div></figure>
+      </div>
+      <div class="set-page" data-page="menubar" hidden>
+        <div class="set-box">
+          <label class="set-row"><span>메뉴바 아이콘<small>화면 맨 위 몬스터볼 — 탭 상태 · 한도 · 빠른 설정</small></span><input class="set-sw" type="checkbox" data-set="menubar.on" /></label>
+        </div>
+        <div class="set-mb">
+          <div class="set-box">
+            <div class="set-row"><span>아이콘 옆</span><span class="seg" data-set="menubar.text"><button data-v="waiting">기다리는 탭 수</button><button data-v="limit">5시간 한도</button><button data-v="none">아이콘만</button></span></div>
+          </div>
+          <h4>창</h4>
+          <div class="set-box">
+            <label class="set-row" title="창을 닫으면 터미널은 끝나고, 메뉴바에서 대시보드·한도·야생을 계속 봐요. 창을 다시 열면 지난 탭이 돌아와요. 완전히 끄기는 ⌘Q"><span>창을 닫아도 메뉴바에 남기<small>완전히 끄기는 ⌘Q · 메뉴의 종료</small></span><input class="set-sw" type="checkbox" data-set="background" /></label>
+            <label class="set-row" title="macOS 로그인 항목에 Tamer를 넣어요 — 창 없이 메뉴바로 시작"><span>로그인할 때 열기<small>창 없이 메뉴바로</small></span><input class="set-sw" type="checkbox" data-set="loginOpen" /></label>
+          </div>
+        </div>
+      </div>
+      <footer class="dim">바로 적용돼요 · Esc 닫기</footer>
+    </main>
+    <script type="module" src="/src/settings.js"></script>
+  </body>
+</html>

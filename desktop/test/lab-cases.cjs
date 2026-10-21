@@ -554,13 +554,14 @@ module.exports = [
     },
   },
   {
-    id: "background-close", tags: ["smoke", "app"], what: "백그라운드: 메인 창을 닫으면 앱은 메뉴바에 남음 — 터미널은 끝나고 탭 기록은 그대로, 처음 한 번 안내, 대시보드는 계속 · 대시보드 [Tamer 열기]로 창이 다시 열리고 탭이 돌아옴 (APP-21, #106)",
+    id: "background-close", tags: ["smoke", "app"], what: "백그라운드: 메인 창을 닫으면 앱은 메뉴바에 남음 — 터미널은 끝나고 탭 기록은 그대로, 처음 한 번 안내, 대시보드는 계속 · 대시보드 ⚙는 설정 창만(터미널 창 없이, #113 P1) · 대시보드 [Tamer 열기]로 창이 다시 열리고 탭이 돌아옴 (APP-21, APP-22 규칙 8, #106)",
     data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 40000,
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 2 } }, { invoke: "background_test" }, { wait: 15000 }],
     check: ({ log }) => {
       const closed = log.match(/^bg closed (.*)$/m)?.[1] || "", back = log.match(/^bg reopened (.*)$/m)?.[1] || "";
       return [
         ok(/^window closed: Tamer stays in the menu bar$/m.test(log) && !/^user quit/m.test(log), "창을 닫아도 끝나지 않아야"),
+        ok(/^bg settings open=true movable=true win=false$/m.test(log), `창이 없을 때 대시보드 ⚙ → 설정 창만(터미널 창 안 생김, #113 P1 APP-22 규칙 8) ${log.match(/^bg settings .*$/m)?.[0]}`),
         ok(/win=false tabs=0 popover=\w+ saved=1 quit=false/.test(closed), `닫은 뒤: 창 없음·터미널 끝·탭 기록 1개 그대로(끝냄 표시 없음) — ${closed}`),
         ok((log.match(/^background notice$/gm) || []).length === 1, "처음 한 번 안내"),
         ok(/^bg overlay alive=true wants=true party=2$/m.test(log), `탭이 없을 때 오버레이에 파티 2마리(#107) — ${log.match(/^bg overlay .*$/m)?.[0]}`),
@@ -852,7 +853,7 @@ module.exports = [
     steps: [{ until: "tabs.0" }, { invoke: "settings_set", args: { patch: { theme: "dark" } } }, { resize: [1100, 640] }, { wait: 1500 }, { call: "closeDex" }, { key: "\\", code: "Backslash", mods: 4 }, { wait: 2500 },
       { key: "g", mods: 4 }, { wait: 700 }, { shot: "tour-picker" }, { key: "Escape" }, { wait: 400 },
       { key: "t", mods: 12 }, { wait: 3000 }, { call: "railOver" }, { wait: 700 }, { probe: "open" }, { shot: "tour-shells" }, { call: "railOut" }, { wait: 500 },
-      { call: "openSettings" }, { call: "settingsGeneral" }, { wait: 700 }, { shot: "tour-settings" }],
+      { call: "settingsGeneral" }, { wait: 1500 }, { shot: "tour-settings", target: "settings" }],
     check: ({ probe, box }) => [
       ok(probe.open?.railOpen === true && probe.open?.rail?.[0] === "로그인 오류 고치기" && probe.open?.rail?.[1] === "테스트 정리", `레일 ${JSON.stringify(probe.open?.rail)} 펼침 ${probe.open?.railOpen}`),
       ...["tour-picker", "tour-shells", "tour-settings"].map((n) => ok(fs.existsSync(path.join(box.dir, "shots", `${n}.png`)), `${n}.png 없음`)),
@@ -1860,30 +1861,39 @@ sleep 40
     ],
   },
   {
-    id: "settings-overlay", tags: ["smoke", "app"], what: "설정 창: 처음엔 일반, 왼쪽 사이드바로 오버레이·일반 범주 바꾸기(#101) · 오버레이 켜기·보일 것·빠른 선택·투명도, 탭 효과 — 바로 적용되고 settings.json에 남음, Esc 닫기 (APP-19, #59)",
+    id: "settings-overlay", tags: ["smoke", "app"], what: "설정 창(따로 창, #113 P1 — 제목 줄로 옮김, 터미널 창 덮개 아님): 처음엔 일반, 왼쪽 사이드바로 오버레이·일반 범주 바꾸기(#101) · 오버레이 켜기·보일 것·빠른 선택, 탭 효과, 세그먼트 단추(테마) — 바로 적용되고 settings.json에 남음, Esc 닫기 · 닫았다 열면 지난 범주 (APP-19, APP-22 규칙 7·9, #59)",
     data: "owner", mode: "direct", folders: ["proj"],
     steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 },
       { invoke: "overlay_show_test", args: { on: true } }, { wait: 600 }, { invoke: "overlay_visible_test", log: true },
-      { call: "openSettings" }, { wait: 400 }, { probe: "open" },
-      { click: "#settings .set-nav [data-page='overlay']" }, { wait: 300 }, { probe: "ovPage" },
-      { click: "#settings [data-set='overlay.alerts']" }, { wait: 400 }, { invoke: "overlay_payload_test", log: true },
-      { click: "#settings [data-preset='off']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
-      { click: "#settings [data-preset='wild']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
-      { click: "#settings [data-preset='all']" }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
-      { click: "#settings .set-nav [data-page='general']" }, { wait: 300 },
-      { click: "#settings [data-set='tabGlow']" }, { wait: 300 }, { probe: "glow" },
-      { key: "Escape" }, { wait: 300 }, { probe: "closed" }, { invoke: "overlay_show_test", args: { on: false } }],
+      { invoke: "own_open_test", args: { name: "settings" } }, { wait: 1500 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
+      { invoke: "own_click_test", args: { name: "settings", sel: ".set-nav [data-page='overlay']" } }, { wait: 400 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
+      { invoke: "own_click_test", args: { name: "settings", sel: "[data-set='overlay.alerts']" } }, { wait: 500 }, { invoke: "overlay_payload_test", log: true },
+      { invoke: "own_click_test", args: { name: "settings", sel: "[data-preset='off']" } }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
+      { invoke: "own_click_test", args: { name: "settings", sel: "[data-preset='wild']" } }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
+      { invoke: "own_click_test", args: { name: "settings", sel: "[data-preset='all']" } }, { wait: 500 }, { invoke: "overlay_visible_test", log: true },
+      { invoke: "own_click_test", args: { name: "settings", sel: ".set-nav [data-page='general']" } }, { wait: 400 },
+      { invoke: "own_click_test", args: { name: "settings", sel: "[data-set='tabGlow']" } }, { wait: 400 }, { probe: "glow" },
+      { invoke: "own_click_test", args: { name: "settings", sel: ".seg[data-set='theme'] [data-v='light']" } }, { wait: 500 }, { invoke: "settings_get", log: true },
+      { invoke: "own_click_test", args: { name: "settings", sel: ".seg[data-set='theme'] [data-v='system']" } }, { wait: 300 },
+      { invoke: "own_click_test", args: { name: "settings", sel: ".set-nav [data-page='overlay']" } }, { wait: 300 },
+      { invoke: "own_key_test", args: { name: "settings", key: "Escape" } }, { wait: 500 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
+      { invoke: "own_open_test", args: { name: "settings" } }, { wait: 1500 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
+      { invoke: "own_key_test", args: { name: "settings", key: "w", meta: true } }, { wait: 500 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
+      { probe: "closed" }, { invoke: "overlay_show_test", args: { on: false } }],
     check: ({ probe, log, box }) => {
       const vis = [...log.matchAll(/^lab-invoke overlay_visible_test (\w+)$/gm)].map((m) => m[1]);
       const pay = JSON.parse(log.match(/^lab-invoke overlay_payload_test (.*)$/m)?.[1] || "{}");
+      const [open, ov, esc, again, cmdW] = [...log.matchAll(/^lab-invoke own_read_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const theme = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}").theme;
       let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
       return [
-        ok(probe.open?.settings === true && probe.open?.top !== "main", `설정 창 열림 ${probe.open?.settings}`),
-        ok(probe.open?.setPage === "general" && probe.ovPage?.setPage === "overlay" && probe.glow?.setPage === "general", `범주: 처음 ${probe.open?.setPage} → ${probe.ovPage?.setPage} → ${probe.glow?.setPage} (#101)`),
+        ok(open?.open && open.movable && open.title === "설정" && open.win === true && probe.glow?.top === "main", `설정 창은 따로 창(제목 줄로 옮김), 메인 창 위 덮개 아님 ${JSON.stringify(open && { open: open.open, movable: open.movable, title: open.title, top: probe.glow?.top })}`),
+        ok(open?.page === "general" && ov?.page === "overlay" && /미리보기/.test(ov?.text || ""), `범주: 처음 ${open?.page} → ${ov?.page} (#101), 오버레이 범주에 미리보기`),
         ok(pay.show?.alerts === false && pay.show?.partner === true, `알림 끈 뒤 오버레이 ${JSON.stringify(pay.show)}`),
         ok(JSON.stringify(vis) === '["true","false","false","true"]', `오버레이 보임 처음·끄기·야생만(야생 없음)·전부 ${JSON.stringify(vis)} (true,false,false,true여야)`),
-        ok(probe.glow?.noTabGlow === true, "탭 효과를 꺼도 화면에 반영 안 됨"),
-        ok(probe.closed?.settings === false, "Esc로 안 닫힘"),
+        ok(probe.glow?.noTabGlow === true, "탭 효과를 끄면 메인 창에 바로 반영"),
+        ok(theme === "light" && saved?.theme === "system", `테마 세그먼트 단추: 라이트 → 시스템 ${theme} → ${saved?.theme}`),
+        ok(esc?.open === false && again?.open && again.page === "overlay" && cmdW?.open === false && /^settings closed$/m.test(log), `Esc로 닫힘, 다시 열면 지난 범주(오버레이), ⌘W로 닫힘 ${JSON.stringify([esc?.open, again?.page, cmdW?.open])}`),
         ok(saved?.overlay?.on === true && saved?.overlay?.partner === true && saved?.tabGlow === false, `settings.json ${JSON.stringify(saved)}`),
       ];
     },
@@ -1930,7 +1940,7 @@ sleep 40
     },
   },
   {
-    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 기본 배경 0%라 처음부터 최소 모드(#100), 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 알림 옆 잡기 창(#119), 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
+    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 기본 배경 0%라 처음부터 최소 모드(#100), 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 알림 옆 잡기 창(#119, 끌어서 옮김), 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: true, next: { id: 16, shiny: false } })),
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
@@ -1945,7 +1955,7 @@ sleep 40
       { invoke: "overlay_dom_test", log: true },
       { invoke: "settings_set", args: { patch: { overlay: { alpha: 0 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true }, // #92
       { invoke: "settings_set", args: { patch: { overlay: { alpha: 82 } } } },
-      { invoke: "wild_open_test" }, { wait: 1500 }, { invoke: "catch_read_test", log: true }, { invoke: "catch_test", args: { open: false } },
+      { invoke: "wild_open_test" }, { wait: 1500 }, { invoke: "catch_read_test", log: true }, { invoke: "catch_move_test", args: { dx: -60, dy: -40 }, log: true }, { invoke: "catch_test", args: { open: false } },
       { invoke: "settings_set", args: { patch: { overlay: { minimal: "bogus" } } } }, { invoke: "settings_get", log: true },
       { invoke: "overlay_show_test", args: { on: false } }],
     check: ({ probe, log, box }) => {
@@ -1970,6 +1980,8 @@ sleep 40
         ok(/^wild appeared 16 /m.test(log) && wild?.note && /야생의/.test(wild.note) && /등장/.test(wild.note) && none(wild.noteShadow), `야생 알림(글·그림자 없음)이 떠야 ${JSON.stringify(wild?.note)} ${wild?.noteShadow}`),
         (() => { const c = JSON.parse(log.match(/^lab-invoke catch_read_test (.*)$/m)?.[1] || "null");
           return ok(/^wild open from overlay$/m.test(log) && /^catch open$/m.test(log) && c?.open && c.wild && c.beside && c.dex === false && /야생의/.test(c.text || ""), `알림 누르면 알림 옆 잡기 창의 야생 카드여야(#119) ${JSON.stringify(c && { open: c.open, wild: c.wild, beside: c.beside, dex: c.dex, text: c.text?.slice(0, 40) })}`); })(),
+        (() => { const m = JSON.parse(log.match(/^lab-invoke catch_move_test (.*)$/m)?.[1] || "null");
+          return ok(m?.movable && m.region?.[0] === "drag" && m.region?.[1] === "no-drag" && m.after?.x === m.moved?.x && m.after?.y === m.moved?.y && m.after?.height === m.moved?.height + 20, `잡기 창은 카드를 끌어 옮김(단추는 단추), 옮긴 뒤 높이가 바뀌어도 그 자리 (APP-22 규칙 7) ${JSON.stringify(m)}`); })(),
         ok(got.overlay?.minimal === "auto" && got.overlay?.shadow === false, `모르는 최소 모드 값은 기본값(auto)이어야 ${JSON.stringify(got.overlay)}`),
         ok(saved?.overlay?.minimal === "auto" && saved?.overlay?.shadow === false && saved?.overlay?.alpha === 82, `settings.json ${JSON.stringify(saved?.overlay)}`),
       ];
@@ -1989,7 +2001,7 @@ sleep 40
       { invoke: "tray_click_test", args: { path: ["최소 모드", "항상"] }, log: true },
       { invoke: "tray_click_test", args: { path: ["메뉴바 아이콘 숨기기"] }, log: true }, { wait: 300 },
       { invoke: "settings_get", log: true },
-      { call: "openSettings" }, { wait: 400 }, { click: "#settings .set-nav [data-page='menubar']" }, { wait: 300 }, { click: "#settings [data-set='menubar.on']" }, { wait: 400 }, { key: "Escape" }, // #101: on the 메뉴바 page
+      { invoke: "own_open_test", args: { name: "settings", page: "menubar" } }, { wait: 1500 }, { invoke: "own_click_test", args: { name: "settings", sel: "[data-set='menubar.on']" } }, { wait: 400 }, { invoke: "own_close_test", args: { name: "settings" } }, // #101: on the 메뉴바 page — its own window (#113 P1)
       { invoke: "settings_set", args: { patch: { menubar: { text: "bogus" } } } }, { invoke: "tray_test", log: true }],
     check: ({ log, box }) => {
       const t = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => JSON.parse(m[1]));

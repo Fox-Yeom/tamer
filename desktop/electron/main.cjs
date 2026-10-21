@@ -63,6 +63,7 @@ let win;
 let overlay; // desktop overlay (overlay.html): partners while you're in another app
 let popover = null; // 메뉴바 미니 대시보드 (popover.html, STA-22 #105): the menu bar icon's left click
 let catchWin = null; // 야생 잡기 창 (catch.html, PKM-08 rule 3 #119): the overlay's wild notice clicked
+let settingsWin = null; // 설정 창 (settings.html, APP-19 · APP-22 rule 9 #113 P1): ⌘, · the menus · the dashboard
 let activeWs = null; // the tab on screen in the main window
 let core; // cvim-core process (started when the app is ready)
 const workspaces = new Map(); // ws id -> { id, cwd, agent, opened, partnerReady, partner, sessions }
@@ -82,6 +83,7 @@ function broadcast(event, payload) {
   if (overlay && !overlay.isDestroyed()) overlay.webContents.send("host-event", { event, payload });
   if (popover && !popover.isDestroyed()) popover.webContents.send("host-event", { event, payload });
   if (catchWin && !catchWin.isDestroyed()) catchWin.webContents.send("host-event", { event, payload });
+  if (settingsWin && !settingsWin.isDestroyed()) settingsWin.webContents.send("host-event", { event, payload });
 }
 
 // the app's own log: a file only with CVIM_DESKTOP_LOG (tests, diagnosis); the last lines are also
@@ -1033,7 +1035,7 @@ const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, 
 function trayAct(act) {
   if (act?.tab) focusMain(String(act.tab));
   else if (act?.set) setSettings(act.set);
-  else if (act === "settings") { focusMain(); whenUi(() => send("open-settings", {})); }
+  else if (act === "settings") settingsOpen(); // its own window — no terminal window (APP-22 rule 8)
   else if (act === "open") focusMain();
   else if (act === "hide") setSettings({ menubar: { on: false } });
   else if (act === "quit") app.quit();
@@ -1079,7 +1081,7 @@ async function limitsRefresh({ user = false } = {}) {
     }
   })();
   try { await limitsBusy; } finally { limitsBusy = null; }
-  send("limits-state", limitsView());
+  broadcast("limits-state", limitsView()); // the 설정 창 shows when each was read
   trayUpdateSoon();
   return limitsView();
 }
@@ -1093,7 +1095,7 @@ function limitsResetSoon() {
 // rule 1-2: what turning it on means, before anything is read — closing it without an answer = off
 async function limitsConsent() {
   if (TEST) { logLine("limits ask"); return process.env.CVIM_TEST_LIMITS_CONSENT === "yes"; }
-  const r = await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+  const r = await dialog.showMessageBox(dialogParent(), {
     type: "question", buttons: ["켜기", "켜지 않음"], defaultId: 0, cancelId: 1,
     message: "Claude 한도를 대화 없이 볼까요?",
     detail: "켜면 Tamer가 Claude Code의 로그인 정보를 macOS 키체인에서 읽어, Anthropic에 이 계정의 5시간·주간 사용률만 물어봐요.\n\n"
@@ -1161,7 +1163,7 @@ function spendPoll() {
 // rule 6: what's read, what isn't, what's kept — before anything is opened; closing it = off
 async function outsideConsent() {
   if (TEST) { logLine("outside ask"); return process.env.CVIM_TEST_OUTSIDE_CONSENT === "yes"; }
-  const r = await dialog.showMessageBox(win && !win.isDestroyed() ? win : undefined, {
+  const r = await dialog.showMessageBox(dialogParent(), {
     type: "question", buttons: ["켜기", "켜지 않음"], defaultId: 0, cancelId: 1,
     message: "Tamer 밖에서 한 작업도 포켓몬에 반영할까요?",
     detail: "다른 터미널(iTerm 등)·Claude 앱의 Code·Codex 앱에서 끝낸 Claude Code·Codex 작업도 레벨·코인·야생에 반영해요. 탭에서 끝낸 것과 같은 규칙이에요(하루 상한도 함께).\n\n"
@@ -1245,6 +1247,7 @@ function popoverUpdate() {
 const CATCH_W = 284;
 let catchAt = null; // where it sits beside (DIP): the overlay's span across, the notice's top
 let catchScene = null; // ui:shots: an encounter to draw while none is out (tests only)
+let catchPut = null; // where it was last put — a different place now: the user dragged it there, and it stays (APP-22 rule 7)
 function catchOpen(rect) {
   if (!wild.current() && !catchScene) return;
   const ob = overlay && !overlay.isDestroyed() ? overlay.getBounds() : null;
@@ -1252,7 +1255,8 @@ function catchOpen(rect) {
   if (catchWin && !catchWin.isDestroyed()) { catchPlace(catchWin.getBounds().height); if (!TEST) { catchWin.show(); catchWin.focus(); } return; }
   catchWin = new BrowserWindow({
     // panel (as the overlay and the dashboard): opening it doesn't bring Tamer's main window forward
-    type: "panel", width: CATCH_W, height: 300, show: false, frame: false, resizable: false, movable: false, minimizable: false,
+    // movable: dragged by the card (catch.css -webkit-app-region), as every window of its own (APP-22 rule 7)
+    type: "panel", width: CATCH_W, height: 300, show: false, frame: false, resizable: false, movable: true, minimizable: false,
     maximizable: false, fullscreenable: false, skipTaskbar: true, alwaysOnTop: true, hasShadow: true, roundedCorners: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? "#24242c" : "#f0f0f4",
     webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false },
@@ -1276,11 +1280,52 @@ function catchPlace(h) {
   x = Math.min(Math.max(x, area.x + 8), area.x + area.width - CATCH_W - 8);
   const y = Math.max(area.y + 8, Math.min(a.y, area.y + area.height - h - 8));
   catchWin.setBounds({ x: Math.round(x), y: Math.round(y), width: CATCH_W, height: Math.round(h) });
+  const b = catchWin.getBounds(); catchPut = { x: b.x, y: b.y };
+}
+// the card's height changed: beside the overlay again — unless the user moved it, then only taller / shorter where it is (kept on screen)
+function catchFit(h) {
+  const b = catchWin.getBounds();
+  if (!catchPut || (b.x === catchPut.x && b.y === catchPut.y)) return catchPlace(h);
+  const area = screen.getDisplayMatching(b).workArea;
+  catchWin.setBounds({ ...b, y: Math.max(area.y, Math.min(b.y, area.y + area.height - h)), height: Math.round(h) });
 }
 function catchClose() {
   if (catchWin && !catchWin.isDestroyed()) { catchWin.destroy(); logLine("catch closed"); }
-  catchWin = null; catchScene = null;
+  catchWin = null; catchScene = null; catchPut = null;
 }
+
+// ── 설정 창 (APP-19 · APP-22 rule 9, #113 P1): a titled window — macOS's title bar moves it (APP-22 rule 7) — that
+// opens by itself, never with the terminal window (rule 8). Closed = gone (rule 5); the kind shown last is kept
+// while the app runs (#101) ─────
+const SETTINGS_W = 760, SETTINGS_H = 580, SETTINGS_PAGES = ["general", "overlay", "menubar"];
+let settingsLastPage = "general";
+function settingsOpen(page) {
+  if (SETTINGS_PAGES.includes(page)) settingsLastPage = page;
+  if (settingsWin && !settingsWin.isDestroyed()) {
+    if (page) settingsWin.webContents.send("host-event", { event: "settings-page", payload: { page: settingsLastPage } });
+    if (!TEST) { settingsWin.show(); settingsWin.focus(); }
+    return;
+  }
+  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  settingsWin = new BrowserWindow({
+    title: "설정", width: SETTINGS_W, height: SETTINGS_H, x: Math.round(area.x + (area.width - SETTINGS_W) / 2), y: Math.round(area.y + Math.max(0, (area.height - SETTINGS_H) / 3)),
+    show: false, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, movable: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1b1b22" : "#ffffff",
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false },
+  });
+  settingsWin.on("closed", () => { settingsWin = null; });
+  settingsWin.webContents.on("will-navigate", (e) => e.preventDefault());
+  settingsWin.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  settingsWin.once("ready-to-show", () => { if (!settingsWin) return; if (TEST) settingsWin.showInactive(); else { settingsWin.show(); settingsWin.focus(); } });
+  settingsWin.loadFile(path.join(DIST, "settings.html"));
+  logLine(`settings open ${settingsLastPage}`);
+}
+function settingsClose() {
+  if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.destroy(); logLine("settings closed"); }
+  settingsWin = null;
+}
+// the consent dialogs (limits · outside): over the 설정 창 when it's there, else the main window, else on their own (APP-22 rule 4)
+const dialogParent = () => (settingsWin && !settingsWin.isDestroyed() ? settingsWin : win && !win.isDestroyed() ? win : undefined);
 
 function trayUpdateSoon() {
   if (trayTimer) return;
@@ -1434,7 +1479,7 @@ const popoverCommands = {
     popoverUpdate(); overlayUpdate();
     return { ok: !!r?.ok, incubator: r?.incubator || null };
   },
-  popover_settings() { popoverHide(); focusMain(); whenUi(() => send("open-settings", {})); },
+  popover_settings() { popoverHide(); settingsOpen(); }, // ⚙: the 설정 창 by itself (APP-22 rule 8)
   popover_dex({ id }) { popoverHide(); focusMain(); whenUi(() => send("open-dex", { id: Number(id) || null })); },
   popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },
   limits_refresh: () => limitsRefresh({ user: true }), // pressed in the dashboard = the user's 새로 고침 (STA-21)
@@ -1444,11 +1489,29 @@ const popoverCommands = {
 // the catch window (catch.html, #119) may call only these (POL-SEC-02)
 const catchCommands = {
   catch_state: () => { const c = wild.current() || catchScene; return c ? { ...c, balls: ballsOwned() } : null; },
-  catch_fit({ height }) { if (catchWin && !catchWin.isDestroyed()) catchPlace(Math.min(Math.max(Number(height) || 0, 80), 600)); },
+  catch_fit({ height }) { if (catchWin && !catchWin.isDestroyed()) catchFit(Math.min(Math.max(Number(height) || 0, 80), 600)); },
   catch_close: () => catchClose(),
   catch_log({ line }) { logLine(`catch ${String(line).slice(0, 120)}`); },
   sprite_b64: (args) => commands.sprite_b64(args),
   wild_throw: (args) => commands.wild_throw(args),
+};
+
+// the 설정 창 (settings.html, #113 P1) may call only these (POL-SEC-02)
+const settingsCommands = {
+  settings_state: () => ({ settings, page: settingsLastPage, limits: limitsView() }),
+  settings_get: () => settings,
+  settings_set: (args) => commands.settings_set(args), // the same checks · consent dialogs
+  settings_page({ page }) { if (SETTINGS_PAGES.includes(page)) settingsLastPage = page; },
+  // 미리보기 (#67): the tab in front's folder and partner, the other tabs' partners — names and pictures only (APP-22 rule 2)
+  settings_preview() {
+    const cur = workspaces.get(activeWs), lite = (p) => p && { name: p.name, shiny: p.shiny, gif: p.gif, types: p.types };
+    return { folder: cur ? path.basename(cur.cwd) : null, partner: lite(cur?.partner) || null,
+      others: [...workspaces.values()].filter((w) => w.id !== activeWs && w.partner?.gif).map((w) => lite(w.partner)) };
+  },
+  settings_close: () => settingsClose(),
+  limits_refresh: () => limitsRefresh({ user: true }), // pressed here = the user's 새로 고침 (STA-21)
+  limits_state: () => limitsView(),
+  sprite_b64: (args) => commands.sprite_b64(args),
 };
 
 const overlayCommands = {
@@ -1934,6 +1997,11 @@ const commands = {
 };
 
 let backgroundTested = false;
+// 따로 뜨는 창 (APP-22): tests reach each by name — the same few commands for every window of its own, now and later
+const OWN = { catch: { win: () => catchWin, open: () => catchOpen(null), close: () => catchClose() },
+  settings: { win: () => settingsWin, open: (a) => settingsOpen(a.page), close: () => settingsClose() } };
+function ownWin(name) { const w = Object.hasOwn(OWN, name) ? OWN[name].win() : null; return w && !w.isDestroyed() ? w : null; }
+const ownJs = (name, js) => { const w = ownWin(name); return w ? w.webContents.executeJavaScript(js) : null; };
 // tests (#119): the overlay's wild notice in its page · what the catch window shows, where, and whether Tamer's window is there
 const NOTE_RECT = `(() => { const r = document.querySelector("#wild .wild-note")?.getBoundingClientRect(); return r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null; })()`;
 async function catchRead() {
@@ -1963,7 +2031,7 @@ const testCommands = {
   // from $CVIM_UI_BASELINE/<name>.png (share of pixels whose colour moved more than a little)
   async ui_shot({ name, target }) {
     const n = String(name).replace(/[^\w-]/g, "");
-    const wc = (target === "overlay" && overlay ? overlay : target === "popover" && popover ? popover : target === "catch" && catchWin ? catchWin : win).webContents; // the overlay's own page (STA-20) · the dashboard's (#105) · the catch window's (#119)
+    const wc = (target === "overlay" && overlay ? overlay : target === "popover" && popover ? popover : ownWin(target) || win).webContents; // the overlay's own page (STA-20) · the dashboard's (#105) · a window of its own (APP-22)
     wc.invalidate(); await new Promise((r) => setTimeout(r, 120)); // paint the current scene first, not a stale frame
     const img = await wc.capturePage();
     if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${n}.png`), img.toPNG());
@@ -1992,6 +2060,29 @@ const testCommands = {
   // the catch window (#119): open / close; scene: an encounter to draw while none is out (ui:shots)
   catch_test({ open, scene }) { if (scene) catchScene = scene; if (open) catchOpen(null); else catchClose(); return { open: !!catchWin }; },
   catch_read_test: () => catchRead(),
+  // a window of its own (APP-22): open / close / click / a key / what it shows — and whether it can be moved, and
+  // whether the terminal window is there (rule 8: opening it never makes one)
+  own_open_test(a = {}) { if (Object.hasOwn(OWN, a.name)) OWN[a.name].open(a); return { open: !!ownWin(a.name) }; },
+  own_close_test({ name }) { if (Object.hasOwn(OWN, name)) OWN[name].close(); return { open: !!ownWin(name) }; },
+  own_click_test: ({ name, sel }) => ownJs(name, `(() => { const b = document.querySelector(${JSON.stringify(String(sel))}); if (b) b.click(); return !!b; })()`),
+  own_key_test: ({ name, key, meta }) => ownJs(name, `(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(String(key))}, metaKey: ${!!meta}, bubbles: true })); return true; })()`),
+  async own_read_test({ name }) {
+    const w = ownWin(name), main = !!win && !win.isDestroyed();
+    if (!w) return { open: false, win: main };
+    const page = await w.webContents.executeJavaScript(`(() => ({ text: document.body.innerText, page: document.querySelector(".set-nav .on")?.dataset.page || null,
+      region: getComputedStyle(document.body).getPropertyValue("-webkit-app-region") || null }))()`);
+    return { open: true, movable: w.isMovable(), title: w.getTitle(), bounds: w.getBounds(), win: main, winVisible: main && win.isVisible(), ...page };
+  },
+  // dragged by the user (APP-22 rule 7): moved by dx, dy, then the card grows — it stays where it was put
+  async catch_move_test({ dx = -60, dy = -40 } = {}) {
+    if (!catchWin) return null;
+    const a = catchWin.getBounds();
+    catchWin.setPosition(a.x + dx, a.y + dy);
+    const moved = catchWin.getBounds();
+    catchCommands.catch_fit({ height: moved.height + 20 });
+    const region = await catchWin.webContents.executeJavaScript(`[getComputedStyle(document.querySelector("#catch")).webkitAppRegion || getComputedStyle(document.querySelector("#catch")).getPropertyValue("-webkit-app-region"), getComputedStyle(document.querySelector("#catch .wild-throw")).webkitAppRegion || getComputedStyle(document.querySelector("#catch .wild-throw")).getPropertyValue("-webkit-app-region")]`);
+    return { movable: catchWin.isMovable(), moved, after: catchWin.getBounds(), region };
+  },
   hatch_open_test: () => overlayCommands.hatch_open(), // #88
   charm_test: () => ({ charm: economy.charmOn(), odds: shinyOdds() }), // ✨ (#93)
   // the pointer over the current tab's partner / gone (scenes, #68)
@@ -2032,6 +2123,10 @@ const testCommands = {
         logLine(`bg catch after thrown=${!!thrown} open=${!!catchWin} win=${!!win}`);
       }
       overlayForced = false; overlaySync();
+      // the dashboard's ⚙ with no window (#113 P1, APP-22 rule 8): the 설정 창 by itself — no terminal window made
+      popoverCommands.popover_settings(); await T(1800);
+      logLine(`bg settings open=${!!settingsWin} movable=${!!settingsWin?.isMovable()} win=${!!win && !win.isDestroyed()}`);
+      settingsClose(); await T(300);
       popoverShow({ x: 900, y: 0, width: 24, height: 24 }); await T(1500);
       const ok = await popover.webContents.executeJavaScript(`(() => { const b = document.querySelector("#pop-open"); if (b) b.click(); return !!b; })()`);
       await T(6000);
@@ -2182,9 +2277,9 @@ const testCommands = {
   // the workspace ids the core knows about (tabs test: closed tabs must be gone)
   workspaces_test() { return [...workspaces.keys(), ...[...sessions.keys()].filter((k) => !workspaces.has(k))]; },
   // capture this window to $CVIM_DESKTOP_SHOTS/<name>.png (tests look at the result)
-  async shot_test({ name }) {
+  async shot_test({ name, target }) {
     if (!process.env.CVIM_DESKTOP_SHOTS) return;
-    const img = await win.webContents.capturePage();
+    const img = await (ownWin(target) || win).webContents.capturePage(); // target: a window of its own (APP-22)
     fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${String(name).replace(/[^\w-]/g, "")}.png`), img.toPNG());
   },
   // a task finished (as if the agent said Stop) — EXP / evolution without a real agent
@@ -2311,7 +2406,8 @@ ipcMain.handle("host-invoke", async (e, cmd, args) => {
   const table = page === path.join(DIST, "index.html") && e.sender === win?.webContents ? commands
     : page === path.join(DIST, "overlay.html") && e.sender === overlay?.webContents ? overlayCommands
     : page === path.join(DIST, "popover.html") && e.sender === popover?.webContents ? popoverCommands
-    : page === path.join(DIST, "catch.html") && e.sender === catchWin?.webContents ? catchCommands : null;
+    : page === path.join(DIST, "catch.html") && e.sender === catchWin?.webContents ? catchCommands
+    : page === path.join(DIST, "settings.html") && e.sender === settingsWin?.webContents ? settingsCommands : null;
   if (!table) throw new Error("unexpected sender");
   const fn = Object.hasOwn(table, cmd) && table[cmd];
   if (!fn) throw new Error(`unknown command ${cmd}`);
@@ -2406,6 +2502,7 @@ app.on("browser-window-created", (_e, w) => w.on("closed", () => {
   if (overlay && !overlay.isDestroyed()) overlay.destroy();
   if (popover && !popover.isDestroyed()) popover.destroy();
   catchClose();
+  settingsClose();
 }));
 function toBackground() {
   sessionKept = true; // closing the tabs below mustn't empty the saved ones
@@ -2438,7 +2535,7 @@ function appMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate([
     { label: app.name, submenu: [{ role: "about" }, { type: "separator" },
       // 설정 창 (APP-19) — ⌘, as in every Mac app; the overlay on/off right here too (#59)
-      { label: "설정…", accelerator: "Cmd+,", click: () => send("open-settings", {}) },
+      { label: "설정…", accelerator: "Cmd+,", click: () => settingsOpen() }, // its own window (APP-22 rule 9)
       { label: "바탕화면 오버레이", type: "checkbox", checked: settings.overlay.on, click: (m) => setSettings({ overlay: { on: m.checked } }) },
       { label: "오른쪽 칸 보이기 (⌘\\)", type: "checkbox", checked: settings.side, click: (m) => setSettings({ side: m.checked }) }, // #97 — the key is the window's (⌘\)
       { type: "separator" }, ...helpItems, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] },

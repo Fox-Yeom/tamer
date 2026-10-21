@@ -1485,93 +1485,16 @@ async function refreshChanges(tab) {
 }
 setInterval(() => { if (active && document.hasFocus()) refreshChanges(active); }, 10000);
 
-// ── 설정 창 (APP-19, #59) ─────────────────────────────────────────────────────────────────────
-// the main process keeps ui/settings.json; this window shows it and sends changes (it answers with
-// the checked settings, broadcast to the overlay too)
+// ── 설정 (APP-19): the 설정 창 is a window of its own now (settings.html, APP-22 rule 9 #113 P1) — this window only
+// follows the settings it uses: theme, the working-tab border, the right column, the session titles
 let settingsNow = null;
-const settingsOpen = () => !$("#settings").hidden;
-const getPath = (o, k) => k.split(".").reduce((x, p) => x?.[p], o);
 function applySettings(s) {
   settingsNow = s;
   applyTheme();
   document.body.classList.toggle("no-tab-glow", !s.tabGlow);
   sideShow(s.side !== false);
   if (typeof renderRail === "function") for (const t of tabs) renderRail(t); // 세션 제목 on / off (#99)
-  for (const el of document.querySelectorAll("#settings [data-set]")) {
-    const v = getPath(s, el.dataset.set);
-    if (el.type === "checkbox") el.checked = !!v; else el.value = v;
-  }
-  for (const el of document.querySelectorAll("#settings [data-val]")) el.textContent = `${getPath(s, el.dataset.val)}%`;
-  $("#settings .set-group").classList.toggle("off", !s.overlay.on);
-  $("#settings .set-mb").classList.toggle("off", !s.menubar.on);
-  if (settingsOpen() && setPage === "overlay") renderPreview(s.overlay);
 }
-// 미리보기 (#67): the overlay as these settings would draw it — this tab's partner, a tab that needs
-// you, three sample tabs and a wild notice, with the overlay's own drawing code (src/overlay-view.js)
-let previewSeq = 0;
-async function renderPreview(show) {
-  const seq = ++previewSeq, now = Date.now(), root = $("#settings .set-preview-desk .ov");
-  const others = tabs.filter((t) => t !== active && t.partner?.gif).map((t) => t.partner);
-  const tab = (ws, name, state, partner, extra = {}) => ({ ws, name, state, partner: partner || null, sessions: 1, times: {}, ...extra });
-  const current = tab("pv-now", active ? base(active.cwd) : "my-project", "coding", active?.partner, { active: true, times: { turn_at: now - 12 * MINUTE } });
-  const p = {
-    show, current, urgent: tab("pv-wait", "api-server", "waiting", others[0]),
-    minis: [tab("pv-1", "web", "coding", others[1]), tab("pv-2", "docs", "idle", others[2], { ended: "done" }), tab("pv-3", "notes", "sleep", others[3])],
-    more: 0, counts: { waiting: 1, working: 2, done: 1, error: 0 },
-    prog: { inc: { name: "알", have: 9, need: 10, soon: true }, stamps: { n: 6, need: 7, soon: true } }, // 진행 견본 (#88 #90): "🥚 곧 9/10 · ⭐ 곧 6/7"
-  };
-  const off = !show.on || !(show.partner || show.alerts || show.wild || show.progress);
-  const html = off ? "" : await cardsHtml(p, { spriteUrl: (gif) => (gif ? spriteUrl(gif) : null) });
-  if (seq !== previewSeq) return; // a newer change drew meanwhile
-  applyShow(root, show);
-  root.querySelector(".ov-cards").innerHTML = html;
-  root.querySelector(".ov-wild").innerHTML = !off && show.wild ? wildNoteHtml({ name: "피카츄" }, null) : "";
-  root.querySelector(".wild-note-timer")?.replaceChildren("· 24초");
-  sizePokes(root);
-  $("#settings .set-preview-off").hidden = !off;
-}
-const PRESETS = { // 빠른 선택
-  all: { on: true, partner: true, alerts: true, wild: true, progress: true }, pokemon: { on: true, partner: true, alerts: false, wild: true, progress: true },
-  wild: { on: true, partner: false, alerts: false, wild: true, progress: false }, off: { on: false }, // 진행 (#88)
-};
-async function setSetting(key, value) {
-  const [a, b] = key.split(".");
-  applySettings(await invoke("settings_set", { patch: b ? { [a]: { [b]: value } } : { [a]: value } }));
-}
-// one of the sidebar's kinds at a time (#101) — the last one again while the app runs (일반 after a launch)
-let setPage = "general";
-function settingsPage(page) {
-  setPage = page;
-  for (const b of document.querySelectorAll("#settings .set-nav button")) b.classList.toggle("on", b.dataset.page === page);
-  for (const el of document.querySelectorAll("#settings .set-page")) el.hidden = el.dataset.page !== page;
-  if (page === "overlay" && settingsNow) renderPreview(settingsNow.overlay); // the 미리보기 lives on this page only
-}
-async function openSettings(page = setPage) { const s = await invoke("settings_get"); $("#settings").hidden = false; settingsPage(page); applySettings(s); $("#settings").focus(); invoke("limits_state").then(limitsStateShow).catch(() => {}); }
-function closeSettings() { $("#settings").hidden = true; focusBig(active); }
-$("#settings").addEventListener("change", (e) => {
-  const k = e.target.dataset?.set, t = e.target.type;
-  if (k) setSetting(k, t === "checkbox" ? e.target.checked : t === "range" ? Number(e.target.value) : e.target.value);
-});
-$("#settings").addEventListener("input", (e) => { const k = e.target.dataset?.set; if (k && e.target.type === "range") $(`#settings [data-val="${k}"]`).textContent = `${e.target.value}%`; });
-$("#settings").addEventListener("click", async (e) => {
-  const pg = e.target.closest(".set-nav button")?.dataset.page;
-  if (pg) return settingsPage(pg);
-  const p = e.target.dataset?.preset;
-  if (p) applySettings(await invoke("settings_set", { patch: { overlay: PRESETS[p] } }));
-});
-$("#settings").addEventListener("mousedown", (e) => { if (e.target.id === "settings") closeSettings(); });
-$("#settings-close").addEventListener("click", closeSettings);
-// 한도 (#104): when each was last read · Claude needs a press when the login wasn't read by itself (a "no", none, expired — #115 A1)
-const agoText = (t) => { const m = Math.round((Date.now() - t) / MINUTE); return m < 1 ? "방금" : m < 60 ? `${m}분 전` : `${Math.round(m / 60)}시간 전`; };
-function limitsStateShow(v) {
-  if (!v) return;
-  const part = (name, on, s, needs) => (!on ? null : needs ? `${name} 눌러야 읽어요` : s?.error && !s.at ? `${name} 못 읽음` : s?.at ? `${name} ${agoText(s.at)}` : null);
-  const t = [part("Codex", v.codex, v.state?.codex), part("Claude", v.claude, v.state?.claude, !v.token || v.state?.claude?.error === "expired")].filter(Boolean).join(" · ");
-  $("#set-limits-state").textContent = t || "상단 바 5h·7d를 눌러도 돼요";
-}
-listen("limits-state", (e) => limitsStateShow(e.payload));
-$("#set-limits-refresh").addEventListener("click", () => invoke("limits_refresh", { user: true }).then(limitsStateShow).catch(() => {}));
-listen("open-settings", () => openSettings());
 listen("settings", (e) => applySettings(e.payload));
 invoke("settings_get").then(applySettings).catch(() => {});
 
@@ -2976,7 +2899,7 @@ function startKey(e) {
 window.addEventListener("keydown", (e) => {
   // the keys belong to the top layer: the Pokémon window (z 20) only when no dialog / menu is over it
   // (first launch: 에이전트 연결 opens over 파트너 고르기 — Esc there must close that one)
-  const pokeOnTop = dexOpen() && !agentsOpen() && !settingsOpen() && !diffOpen() && $("#menu").hidden;
+  const pokeOnTop = dexOpen() && !agentsOpen() && !diffOpen() && $("#menu").hidden;
   if (pokeOnTop && e.metaKey && e.code === "KeyF") { e.preventDefault(); $("#dex-search").focus(); return; }
   if (pokeOnTop && e.target === $("#dex-search") && !e.metaKey) {
     if (dexSearchKey(e)) { e.preventDefault(); e.stopPropagation(); }
@@ -2998,7 +2921,6 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (agentsOpen() && !e.metaKey) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeAgents(); } return; }
-  if (settingsOpen() && !e.metaKey) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeSettings(); } return; } // the keys are the 설정 창's
   if (diffOpen() && !e.metaKey) { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeDiff(); } return; }
   if (startOpen() && !e.metaKey) {
     if (startKey(e)) { e.preventDefault(); e.stopPropagation(); }
@@ -3550,12 +3472,12 @@ async function wildTest() {
 //   { click: "css selector" } · { probe: "name" } · { shot: "name" } · { call: "openDex" | … }
 function labState() {
   const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
-  const top = el?.closest("#menu") ? "menu" : el?.closest("#agents") ? "agents" : el?.closest("#settings") ? "settings" : el?.closest("#diffview") ? "diff"
+  const top = el?.closest("#menu") ? "menu" : el?.closest("#agents") ? "agents" : el?.closest("#diffview") ? "diff"
     : el?.closest("#dex") ? "poke" : el?.closest("#start") ? "start" : "main";
   const st = dexState?.chooseOpts?.starter;
   return {
     tabs: tabs.map((t) => base(t.cwd)), active: active ? base(active.cwd) : null, start: startOpen(),
-    poke: dexOpen() ? dexState?.view || "dex" : null, choose: chooseOpen(), agents: agentsOpen(), settings: settingsOpen(), menu: !$("#menu").hidden, diff: diffOpen(), top,
+    poke: dexOpen() ? dexState?.view || "dex" : null, choose: chooseOpen(), agents: agentsOpen(), menu: !$("#menu").hidden, diff: diffOpen(), top,
     starters: st ? { ready: !!st.ready, n: st.set.length } : null, cards: document.querySelectorAll("#box-grid .pk-card[data-i]").length,
     partner: active?.partner?.name || null, choosePending: !!active && !active.partner?.uid, wild: wild.active(),
     toast: $("#toast")?.classList.contains("show") ? $("#toast").textContent : null,
@@ -3587,7 +3509,6 @@ function labState() {
     rail: active ? [...$(".rail", active.view).querySelectorAll(".sess .nm b")].map((b) => b.textContent) : null, // #99
     railOpen: active ? $(".rail", active.view).classList.contains("open") : null,
     agentTitle: active ? $(".agent-name", active.view)?.textContent || null : null,
-    setPage: settingsOpen() ? $("#settings .set-page:not([hidden])")?.dataset.page || null : null, // #101
     focusPane: document.activeElement?.closest?.(".pane-shell") ? "shell" : document.activeElement?.closest?.(".pane-agent") ? "agent" : null,
     paneW: active ? Math.round($(".pane-agent", active.view)?.getBoundingClientRect().width || 0) : null,
     tabWorking: active ? !!$(`#tabs .tab[data-ws="${active.id}"]`)?.classList.contains("working") : null, // #61
@@ -3651,7 +3572,7 @@ function fakeUsage(tab) {
     usage: { model: "Opus 5.5", ctx: 42, five_hour: { pct: 12, resets_at: Math.floor(Date.now() / 1000) + 7230 }, seven_day: { pct: 2 }, cost: 1.23 } };
   renderBar(tab); renderTab(tab); // the tab too: else the 15 s redraw (STA-20) decides when it changes
 }
-const LAB_CALLS = { railOver: () => $(".rail", active?.view)?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })), railOut: () => $(".rail", active?.view)?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })), openSettings: () => openSettings(), settingsOverlay: () => settingsPage("overlay"), settingsGeneral: () => settingsPage("general"), home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
+const LAB_CALLS = { railOver: () => $(".rail", active?.view)?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })), railOut: () => $(".rail", active?.view)?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })), openSettings: () => invoke("own_open_test", { name: "settings" }), settingsOverlay: () => invoke("own_open_test", { name: "settings", page: "overlay" }), settingsGeneral: () => invoke("own_open_test", { name: "settings", page: "general" }), home: () => (dexOpen() ? dexView("home") : openDex(null, "home")), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(), openDex: () => openDex(), closeDex: () => closeDex(), openChoose: () => openChoose(active), box: () => dexView("box"), escape: () => dexEsc() };
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
@@ -3694,7 +3615,7 @@ async function labRun(steps) {
         if (s.select != null) await invoke("drag_test", { x1: scr.left + (at.x + 0.2) * cw, y1: cy, x2: scr.left + (at.x + want.length - 0.2) * cw, y2: cy });
         else { await invoke("click_test", { x: scr.left + (at.x + want.length / 2) * cw, y: cy, modifiers: s.mods || 0 }); await wait(400); }
       } else if (s.probe) await log(`lab-probe ${s.probe} +${Math.round(performance.now())}ms ${JSON.stringify(labState())}`); // ms since the page began
-      else if (s.shot) await invoke("shot_test", { name: s.shot });
+      else if (s.shot) await invoke("shot_test", { name: s.shot, target: s.target }); // target: a window of its own (APP-22)
       else if (s.ime != null) await invoke("ime_compose", { text: s.ime }); // Hangul being composed
       else if (s.text != null) await invoke("ime_commit", { text: s.text }); // text committed (typed / IME done)
       else if (s.invoke) { // a command (test commands too); "$ws" = the current tab; log: its answer into the log
@@ -3766,6 +3687,13 @@ async function uiScenes(set) {
   // the fake usage's reset time counts down while the scenes run (2h00m → 1h59m): set it again each picture
   const fresh = () => { const f = active?.state?.usage?.five_hour; if (f?.resets_at) { f.resets_at = Math.floor(Date.now() / 1000) + 7230; renderBar(active); } };
   const shot = async (name) => { await invoke("mouse_park_test"); fresh(); await wait(700); await frame(); const r = await invoke("ui_shot", { name }); await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`); };
+  // the 설정 창 (#113 P1): its own window, opened on a kind, captured, closed
+  const settingsShot = async (name, page) => {
+    await invoke("own_open_test", { name: "settings", page }); await wait(1400);
+    const r = await invoke("ui_shot", { name, target: "settings" });
+    await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
+    await invoke("own_close_test", { name: "settings" }); await wait(200);
+  };
   const search = async (q) => { const b = $("#dex-search"); b.value = q; b.dispatchEvent(new Event("input", { bubbles: true })); await wait(200); };
   try {
     const tab = active;
@@ -3824,9 +3752,9 @@ async function uiScenes(set) {
       startSel = 1; markStart();
       await shot("start-screen"); hideStart();
       // 설정 창 (APP-19, #59): the defaults
-      await openSettings("overlay"); await shot("settings-window"); closeSettings(); // #101: the overlay page (and its 미리보기)
-      await openSettings("general"); await shot("settings-general"); closeSettings();
-      await openSettings("menubar"); await shot("settings-menubar"); closeSettings();
+      await settingsShot("settings-window", "overlay"); // #101: the overlay page (and its 미리보기) — its own window (#113 P1)
+      await settingsShot("settings-general", "general");
+      await settingsShot("settings-menubar", "menubar");
       await invoke("settings_set", { patch: { overlay: { alpha: 82 } } }); // the scenes after: the full cards, as before the 0 % default (#100)
       // a working tab (#61): the gradient border (still in scenes — body.ui-test stops animations)
       { const kept = tab.state; tab.state = { ...tab.state, state: "coding", detail: "src/app.ts", turn_at: null, event_at: null, state_at: null }; renderTab(tab); renderBar(tab);
@@ -3877,10 +3805,10 @@ async function uiScenes(set) {
       await invoke("overlay_show_test", { on: false });
       // the 설정 창's 미리보기 with 최소 모드 always (#63 #67): the partner and the sample tabs' balls
       await invoke("settings_set", { patch: { overlay: { minimal: "always" } } }); await wait(300);
-      await openSettings("overlay"); await wait(300); await shot("settings-minimal"); closeSettings();
+      await settingsShot("settings-minimal", "overlay");
       // the cards' background at 0 % (#92): the notice keeps a 75 % background, the partner stays see-through
       await invoke("settings_set", { patch: { overlay: { alpha: 0 } } }); await wait(300);
-      await openSettings("overlay"); await wait(300); await shot("settings-clear"); closeSettings();
+      await settingsShot("settings-clear", "overlay");
       await invoke("settings_set", { patch: { overlay: { alpha: 82 } } });
       await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
       // 라이트 테마 (APP-20, #60): the main window, the 설정 창, the Pokémon window, the overlay
@@ -3888,7 +3816,7 @@ async function uiScenes(set) {
       await invoke("win_resize_test", { w: 1400, h: 600 });
       fakeUsage(tab); await shot("light-main");
       await invoke("win_resize_test", { w: 1100, h: 700 });
-      await openSettings("overlay"); await shot("light-settings"); closeSettings();
+      await settingsShot("light-settings", "overlay");
       await openDex(); await shot("light-dex"); closeDex();
       await invoke("overlay_show_test", { on: true }); await wait(800);
       await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "coding", times, hold: true }); await wait(500);

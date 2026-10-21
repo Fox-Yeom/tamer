@@ -5,7 +5,8 @@
    the window to #catch's height (catch_fit) */
 html, body { margin: 0; background: var(--raised); color: var(--fg); overflow: hidden; user-select: none;
   font: 13px -apple-system, "Apple SD Gothic Neo", sans-serif; }
-#catch { position: relative; }
+#catch { position: relative; -webkit-app-region: drag; } /* the card moves the window (APP-22 rule 7) — its buttons stay buttons */
+#catch button, #catch .wild-balls { -webkit-app-region: no-drag; }
 #catch .wild-card { width: auto; border: 0; border-radius: 0; box-shadow: none; }
 #catch-close { position: absolute; top: 6px; right: 8px; z-index: 5; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 11px;
   font: inherit; font-size: 12px; color: var(--dim); background: transparent; cursor: pointer; }

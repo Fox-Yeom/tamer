@@ -65,8 +65,8 @@
       ]
     },
     "settings": {
-      "what": "설정 창 (⌘, · 메뉴 Tamer → 설정… · 메뉴바 → 설정…) — 왼쪽 사이드바 일반(테마·오른쪽 칸·탭 테두리) · 오버레이(켜기·보일 때·보일 것·빠른 선택·모양 + 미리보기) · 메뉴바(아이콘·글자) (APP-19, #59 #63 #64 #65 #67 #101)",
-      "entry": "openSettings",
+      "what": "설정 창 — 따로 창(settings.html, 제목 줄로 옮김, 터미널 창 없이 — APP-22 규칙 7·8·9, #113 P1) (⌘, · 메뉴 Tamer → 설정… · 메뉴바 → 설정… · 대시보드 ⚙) — 왼쪽 사이드바 일반(테마 세그먼트·오른쪽 칸·탭 테두리·포켓몬·한도) · 오버레이(켜기·보일 때·보일 것·빠른 선택·모양 + 미리보기) · 메뉴바(아이콘·글자·창) — 묶음 상자 (APP-19, #59 #63 #64 #65 #67 #101)",
+      "entry": "settingsOpen",
       "scenes": [
         "settings-window",
         "settings-general",
@@ -648,10 +648,10 @@
       "screens": ["main"]
     },
     "settings-nav": {
-      "what": "설정 창 왼쪽 사이드바와 줄 형식 — 범주 버튼, 짧은 라벨 왼쪽·컨트롤 오른쪽, 스위치, 모양 더 보기 (APP-19 규칙 8·9, #101)",
-      "files": ["index.html", "src/style.css", "src/main.js"],
-      "selectors": ["#settings .set-nav", "#settings .set-page", "#settings .set-row", "#settings .set-sw", "#settings .set-more"],
-      "functions": ["settingsPage", "openSettings", "applySettings"],
+      "what": "설정 창 사이드바와 줄 형식 — 범주 버튼, 묶음 상자(PokeTokenBar), 짧은 라벨 왼쪽·컨트롤 오른쪽, 스위치, 세그먼트 단추, 모양 더 보기 (APP-19 규칙 8·9, APP-22 규칙 9, #101 #113)",
+      "files": ["settings.html", "src/settings.css", "src/settings.js"],
+      "selectors": ["#settings", ".set-nav", ".set-page", ".set-box", ".set-row", ".set-sw", ".seg", ".set-more", ".set-preview"],
+      "functions": ["settingsPage", "settingsOpen", "settingsClose", "applySettings", "renderPreview", "settingsCommands"],
       "screens": ["settings"]
     },
     "side-fold": {
@@ -659,7 +659,7 @@
       "files": ["index.html", "src/style.css", "src/main.js"],
       "selectors": ["#side-toggle", "body.side-closed"],
       "functions": ["sideShow", "sideToggle", "sideUnfold"],
-      "screens": ["main", "settings"]
+      "screens": ["main"]
     },
     "side-split": {
       "what": "큰 칸과 오른쪽 칸 사이 경계 — 끌어서 너비, 두 번 눌러 40% (#58)",
@@ -740,6 +740,10 @@
       "wild catch window (catch.html)": [
       "src/catch.css",
       "src/wild.css"
+    ],
+    "settings window (settings.html)": [
+      "src/settings.css",
+      "src/overlay-cards.css"
     ],
     "menu bar dashboard (popover.html)": [
         "src/popover.css",
