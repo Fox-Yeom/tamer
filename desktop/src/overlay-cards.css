@@ -104,4 +104,8 @@
 .ov .ov-prog-mini span { padding: 0 5px; border-radius: 8px; font-size: 10px; font-weight: 700; line-height: 15px; white-space: nowrap; font-variant-numeric: tabular-nums;
   color: var(--ov-text); background: rgba(var(--ov-rgb), .72); border: 1px solid var(--ov-edge); }
 .ov .ov-prog-mini span.soon { color: var(--warn-fg); border-color: var(--warn-line); }
+.ov .wild-note.evolve { border: 2px solid var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 22%, transparent); } /* ✨ 진화 알림 (#111) */
+.ov .evo-flash { animation: ov-evo 1.4s ease-out; }
+@keyframes ov-evo { 0%, 30%, 60% { filter: brightness(4) saturate(0); } 15%, 45% { filter: brightness(1); } 100% { filter: none; } }
+.ov .bubble.seen { animation: none; } /* already shown: a redraw doesn't pop it again (#114) */
 .ov .wild-note.hatch { border: 2px solid var(--ok); box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok) 18%, transparent); } /* 🐣 부화 알림 */

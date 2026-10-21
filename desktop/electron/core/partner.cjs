@@ -674,4 +674,4 @@ async function evolveNow(uid, trade) {
   return { evolved: to, from: first, evoNew };
 }
 
-module.exports = { party, partySet, PARTY_MAX, assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, stoneOk: (uid) => stoneOk(monOf(readBox(), Number(uid))), stoneOptions, stoneEvolve, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { mon: (uid) => { const m = monOf(readBox(), Number(uid)); return m ? monView(m) : null; }, party, partySet, PARTY_MAX, assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, stoneOk: (uid) => stoneOk(monOf(readBox(), Number(uid))), stoneOptions, stoneEvolve, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

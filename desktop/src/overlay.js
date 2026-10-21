@@ -4,7 +4,7 @@
 // see-through except over the cards. The cards themselves: src/overlay-view.js (the 설정 창's
 // preview draws the same).
 import { invoke, listen } from "./host.js";
-import { cardsHtml, sizePokes, applyShow, wildNoteHtml, hatchNoteHtml } from "./overlay-view.js";
+import { cardsHtml, sizePokes, applyShow, wildNoteHtml, hatchNoteHtml, evolveNoteHtml } from "./overlay-view.js";
 
 const sprites = new Map(); // gif path -> data URL
 async function spriteUrl(gif) {
@@ -20,6 +20,7 @@ applyTheme();
 darkMedia.addEventListener("change", applyTheme);
 const stack = document.getElementById("stack");
 let last = null;
+let popped = new Set(); // the bubbles of the last drawing (#114)
 let show = {}; // what the 설정 창 lets through (#59): partner · alerts · wild, background, shadow, minimal
 async function render(p) {
   last = p;
@@ -27,6 +28,14 @@ async function render(p) {
   applyShow(stack, show);
   const box = document.getElementById("cards");
   box.innerHTML = await cardsHtml(p, { spriteUrl });
+  // a bubble already on screen keeps still: redraws come with every event, and each one popped it again (#114)
+  const keys = new Set();
+  for (const b of box.querySelectorAll(".bubble")) {
+    const k = `${b.closest("[data-ws]")?.dataset.ws || b.closest("[data-act]")?.dataset.act || ""}|${b.textContent}`;
+    if (popped.has(k)) b.classList.add("seen");
+    keys.add(k);
+  }
+  popped = keys;
   sizePokes(box);
   if (hoverTip && stack.classList.contains("ov-minimal")) showTip(hoverTip.ws, hoverTip.text); else setTip(null);
   if (!show.wild) note.hide(); // 야생 포켓몬 off (#59): in the main window only
@@ -47,6 +56,19 @@ const hatchNote = (() => {
   return { show: showNote, hide };
 })();
 listen("hatched", (e) => hatchNote.show(e.payload));
+// ✨ 진화 알림 (#111): 5 s, under the wild notice — the 진행 setting doesn't hide it (it's the partner's news)
+const evolveNote = (() => {
+  const root = document.getElementById("evolve");
+  let timer = null;
+  const hide = () => { clearTimeout(timer); root.innerHTML = ""; };
+  async function showNote(e) {
+    if (!e || show.partner === false) return;
+    root.innerHTML = evolveNoteHtml(e, await spriteUrl(e.gif));
+    clearTimeout(timer); timer = setTimeout(hide, 5000);
+  }
+  return { show: showNote, hide };
+})();
+listen("evolved", (e) => evolveNote.show(e.payload));
 
 // ── 야생 알림 (#66): the encounter's notice; ✕ closes it for this encounter only ──
 const note = (() => {

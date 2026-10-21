@@ -81,7 +81,7 @@ async function bigCard(t, { show, stallMs, spriteUrl, extra = "" }) {
   </div>`;
 }
 
-// 파티 (#107, STA-15 rule 10): no tab open (Tamer in the menu bar only) — the party's lead big, the others small,
+// 파티 (#107, STA-15 rule 11): no tab open (Tamer in the menu bar only) — the party's lead big, the others small,
 // and the last finish done outside Tamer / grown by the party as a bubble ("밖에서 +5 · 리자드 Lv 31")
 async function partyCard(party, note, { show, spriteUrl }) {
   const [lead, ...rest] = party.list, min = isMinimal(show);
@@ -120,11 +120,15 @@ export async function cardsHtml(p, { spriteUrl }) {
   return cards.join("");
 }
 
-// sprites at their pixel size: ×2 on the current tab's card
+// sprites at their pixel size: ×2 on the current tab's card — inside a box (120 × 120, small cards
+// 64 × 64): only the width was capped, so a tall one (a deer's antlers) grew to ~290 px and the window,
+// anchored at its bottom, ran out of room above and cut it off (#109)
+export const POKE_BOX = { big: [120, 120], small: [64, 64] };
 export function sizePokes(root) {
   root.querySelectorAll(".poke").forEach((img) => img.decode().then(() => {
-    const k = img.closest(".current") ? 2 : 1;
-    img.style.width = `${Math.min(img.naturalWidth * k, k === 2 ? 120 : 64)}px`;
+    const big = !!img.closest(".current"), [w, h] = POKE_BOX[big ? "big" : "small"];
+    const k = Math.min(big ? 2 : 1, w / img.naturalWidth, h / img.naturalHeight);
+    img.style.width = `${Math.round(img.naturalWidth * k)}px`;
   }).catch(() => {}));
 }
 
@@ -139,6 +143,18 @@ export function wildNoteHtml(e, url) {
 }
 
 // 🐣 부화 알림 (#88, PKM-30 rule 5): like the wild notice, green — 4 s, a click brings Tamer on 내 포켓몬
+// ✨ 진화 알림 (#111): an evolution while Tamer isn't in front (the party · work outside Tamer · any tab) —
+// the new form flashing, who it was, the coins. A click → Tamer
+export function evolveNoteHtml(e, url) {
+  return `<div class="wild-note evolve hit" data-act="party" title="클릭: Tamer 열기">
+    ${url ? `<img class="wild-note-poke evo-flash" src="${url}" alt="" />` : '<div class="pokeball"></div>'}
+    <div class="wild-note-text">✨ ${e.from ? `<b>${esc(e.from)}</b>${josaRo(e.from)} ` : ""}<b>${e.shiny ? "✨" : ""}${esc(e.to)}</b>${e.from ? josaEuro(e.to) : ""} 진화했어요!<div class="wild-note-sub">${e.outside ? "Tamer 밖 작업" : e.via === "party" ? "파티" : "작업 끝"}${e.coins ? ` · 🪙 +${e.coins}` : ""}</div></div></div>`;
+}
+// 이/가 · (으)로 after a Pokémon's name (no 받침 / ㄹ 받침 → 로)
+const finalOf = (name) => { const c = String(name).charCodeAt(String(name).length - 1); return c >= 0xac00 && c <= 0xd7a3 ? (c - 0xac00) % 28 : 0; };
+const josaRo = (name) => (finalOf(name) ? "이" : "가");
+const josaEuro = (name) => (finalOf(name) && finalOf(name) !== 8 ? "으로" : "로");
+
 export function hatchNoteHtml(h, url) {
   return `<div class="wild-note hatch hit" data-act="hatch" title="클릭: Tamer 내 포켓몬">
     ${url ? `<img class="wild-note-poke" src="${url}" alt="" />` : '<div class="pokeball"></div>'}

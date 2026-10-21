@@ -31,7 +31,10 @@ if (TEST) app.setPath("userData", process.env.CVIM_DESKTOP_USERDATA || path.join
 // 한 번만 실행 (APP-21 rule 6, #106): a second launch ends at once and the running Tamer shows its window
 // (two Tamers would write the same data — the preview app and the installed one share it). Tests skip it
 if (!TEST && !app.requestSingleInstanceLock()) { app.quit(); return; }
-app.on("second-instance", () => focusMain());
+// … but a second launch while this one is quitting (its terminals ending, a few seconds) must not bring its
+// window back — closing that one finished the quit, menu bar icon too (#110): start a fresh one when done
+let relaunchAfterQuit = false;
+app.on("second-instance", () => { if (quitting || draining) { relaunchAfterQuit = true; logLine("second launch while quitting: relaunch after"); return; } focusMain(); });
 // test instances show their window without activating it, so keys typed in the user's own apps
 // never land in a test terminal (seen 2026-10-02); CVIM_DESKTOP_TEST_FOCUS=1 for IME tests that need focus
 const QUIET_TEST = TEST && process.env.CVIM_DESKTOP_TEST_FOCUS !== "1";
@@ -563,6 +566,11 @@ function finishGame({ ws = null, cwd, agent = null, took = null, turnAt = null, 
     const gradCoins = graduated ? economy.graduated() : 0; // 🎓 300 + an egg (#84)
     if (evolved || mileCoins || gradCoins || evoCoins) send("economy", economy.summary());
     if (evolved) progressBump(); // ✦ "진화 3번"
+    // 진화 연출 off the main window (#111): with no window, or Tamer not in front, the overlay shows it
+    if (evolved && (!win || win.isDestroyed() || !win.isFocused())) {
+      broadcast("evolved", { from: from?.name || null, to: evolved.name, shiny: !!evolved.shiny, gif: evolved.gif || null, coins: evoCoins, outside, via: via || null });
+      logLine(`overlay evolved ${evolved.id}`);
+    }
     // the tabs showing this individual (the folder's own tab; a party member may be some folder's partner too)
     const grown = via === "party" ? partner.party().list.find((m) => m.uid === uid) : null;
     const tabs = [...workspaces.values()].filter((x) => (via === "folder" ? x.cwd === cwd : grown?.folder && x.cwd === grown.folder));
@@ -573,9 +581,9 @@ function finishGame({ ws = null, cwd, agent = null, took = null, turnAt = null, 
     }
     // 파티 · 밖 작업 (#107): the dashboard, the overlay and the 파티 tab hear who grew
     if (via === "party" || outside) {
-      const mon = grown || (via === "folder" ? partner.progress(cwd) : null);
+      const mon = via ? partner.mon(uid) : null; // who grew — by name, also a folder partner with no tab open (#111)
       const note = { at: Date.now(), outside, folder: path.basename(cwd), agent, via: via || null, coins: coins?.gained || 0,
-        mon: mon && via ? { uid: mon.uid ?? uid, name: grown?.name || [...workspaces.values()].find((x) => x.cwd === cwd)?.partner?.name || null, lv: mon.lv ?? null } : null, evolved: evolved ? { id: evolved.id, name: evolved.name } : null };
+        mon: mon ? { uid: mon.uid, name: mon.name, lv: mon.lv ?? null } : null, evolved: evolved ? { id: evolved.id, name: evolved.name } : null };
       recentDone.unshift(note); recentDone.length = Math.min(recentDone.length, 5);
       broadcast("party-done", note);
       popoverUpdate(); overlayUpdate();
@@ -1308,7 +1316,7 @@ function overlayWants({ focused = !!BrowserWindow.getFocusedWindow(), quiet = QU
   const o = settings.overlay, away = (!focused || o.when === "always" || !settings.side) && !quiet;
   // the 설정 창 (#59): off, or nothing chosen to show (a wild card counts only while one is out)
   const something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progShown()); // #88 #90: the progress line alone
-  // no tab (in the menu bar only, #106): the party shows instead (#107, STA-15 rule 10)
+  // no tab (in the menu bar only, #106): the party shows instead (#107, STA-15 rule 11)
   return !!((away || overlayForced) && (workspaces.size || (o.partner && partner.party().list.length)) && o.on && something);
 }
 let overlayFront = null; // tests: would it show with Tamer in front — logged when it changes (#97)
@@ -1349,6 +1357,7 @@ const popoverCommands = {
   popover_open() { popoverHide(); focusMain(); },
   popover_quit() { popoverHide(); logLine("popover quit"); app.quit(); }, // 완전히 끄기 — as ⌘Q / the menu's Tamer 종료
   popover_party() { popoverHide(); focusMain(); whenUi(() => send("open-dex", { view: "party" })); }, // ⭐ 파티 (#107)
+  party_set: (args) => commands.party_set(args), // 선두 바꾸기 right there (#112) — partner.partySet checks the list
   popover_settings() { popoverHide(); focusMain(); whenUi(() => send("open-settings", {})); },
   popover_dex({ id }) { popoverHide(); focusMain(); whenUi(() => send("open-dex", { id: Number(id) || null })); },
   popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },
@@ -1904,6 +1913,20 @@ const testCommands = {
       await T(100); win.close(); await T(1500);
       logLine(`bg closed win=${!!win} tabs=${workspaces.size} popover=${!!popover && !popover.isDestroyed()} saved=${(readJsonSafe(SESSION)?.tabs || []).length} quit=${!!readJsonSafe(SESSION)?.quit}`);
       logLine(`bg overlay alive=${!!overlay && !overlay.isDestroyed()} wants=${overlayWants({ focused: false, quiet: false })} party=${overlayPayload().party?.list.length ?? "-"}`); // #107
+      // the overlay as it looks now — the party card, no tab (#109): a picture beside the run, and its size vs the cards'
+      overlayForced = true; overlaySync(); overlayUpdate(); await T(2500);
+      const fit = await overlay.webContents.executeJavaScript(`(() => { const s = document.getElementById("stack"), r = s.getBoundingClientRect(); return { win: [innerWidth, innerHeight], stack: [Math.round(r.width), Math.round(r.height)], scroll: [document.documentElement.scrollWidth, document.documentElement.scrollHeight] }; })()`);
+      logLine(`bg overlay fit ${JSON.stringify(fit)} bounds=${JSON.stringify(overlay.getBounds())}`);
+      if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, "bg-overlay.png"), (await overlay.webContents.capturePage()).toPNG());
+      // a finish outside Tamer with a wild one out (CVIM_WILD_CHANCE=1 in the case): the notice over the party (#109)
+      if (process.env.CVIM_WILD_CHANCE === "1") {
+        finishGame({ cwd: "/tmp/tamer-lab-outside", agent: "claude", took: 60000, outside: true }); await T(3000);
+        const fit2 = await overlay.webContents.executeJavaScript(`(() => { const s = document.getElementById("stack"), r = s.getBoundingClientRect(), n = document.querySelector(".wild-note"), nr = n?.getBoundingClientRect(), t = n?.querySelector(".wild-note-text");
+          return { win: [innerWidth, innerHeight], stack: [Math.round(r.width), Math.round(r.height)], note: nr ? [Math.round(nr.left), Math.round(nr.top), Math.round(nr.width), Math.round(nr.height)] : null, text: t ? [t.scrollWidth, t.clientWidth, t.innerText] : null }; })()`);
+        logLine(`bg overlay wild ${JSON.stringify(fit2)} bounds=${JSON.stringify(overlay.getBounds())}`);
+        if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, "bg-overlay-wild.png"), (await overlay.webContents.capturePage()).toPNG());
+      }
+      overlayForced = false; overlaySync();
       popoverShow({ x: 900, y: 0, width: 24, height: 24 }); await T(1500);
       const ok = await popover.webContents.executeJavaScript(`(() => { const b = document.querySelector("#pop-open"); if (b) b.click(); return !!b; })()`);
       await T(6000);
@@ -1931,6 +1954,17 @@ const testCommands = {
   // 파티 (#107): the first n of the box as the party (a test can't pick uids)
   party_test({ n = 2 }) { const b = partner.boxList(null).filter((m) => !m.egg).slice(0, Number(n)); return partner.partySet(b.map((m) => m.uid)); },
   overlay_payload_test: () => ({ wants: overlayWants({ focused: false, quiet: false }), ...overlayPayload() }),
+  // the overlay's page as drawn: its bubbles (and whether they pop again) and the evolution notice (#111 #114)
+  overlay_pop_test: () => overlay.webContents.executeJavaScript(`({ bubbles: [...document.querySelectorAll("#cards .bubble")].map((b) => b.textContent.trim() + (b.classList.contains("seen") ? " [seen]" : "")),
+    evolve: document.querySelector("#evolve .wild-note")?.innerText.replace(/\\s+/g, " ").trim() || null })`),
+  // an evolution while Tamer isn't in front, as finishGame tells it (#111) — and the overlay's picture of it
+  async evolved_note_test({ from = "파이리", to = "리자드", gif = null } = {}) {
+    const g = gif || partner.boxList(null).find((m) => m.gif)?.gif || null;
+    broadcast("evolved", { from, to, gif: g, coins: 30, outside: true, via: "party" });
+    await new Promise((r) => setTimeout(r, 900));
+    if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, "overlay-evolve.png"), (await overlay.webContents.capturePage()).toPNG());
+    return true;
+  },
   // auto: the timer's read now (as if a minute had passed — the Keychain must not be touched)
   async limits_test({ status, auto } = {}) {
     if (status != null) limits.setTestStatus(status);
@@ -2261,7 +2295,7 @@ function toBackground() {
   win = null; uiReady = false;
   logLine("window closed: Tamer stays in the menu bar");
   trayUpdateSoon();
-  overlaySync(); overlayUpdate(); // no tab now: the party, if there is one (#107, STA-15 rule 10)
+  overlaySync(); overlayUpdate(); // no tab now: the party, if there is one (#107, STA-15 rule 11)
   const hideDock = () => { if (!TEST && !win) app.dock?.hide(); };
   if (settings.backgroundSeen) return hideDock();
   // the first time (rule 3): say where it went and how to really quit
@@ -2340,6 +2374,7 @@ app.on("before-quit", (e) => {
   drainPtys().then(({ ms, left }) => {
     logLine(`quit: terminals ended in ${ms}ms${left ? ` (${left} still running)` : ""}`);
     drained = true;
+    if (relaunchAfterQuit && !TEST) app.relaunch(); // #110
     app.quit();
   });
 });

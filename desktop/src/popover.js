@@ -57,7 +57,7 @@ async function drawParty(m) {
   const head = `<div class="pop-h"><span>파티${m.outside ? " · Tamer 밖 작업도" : ""}</span><button id="pop-party-go">${p.list.length ? "바꾸기" : "파티 고르기"}</button></div>`;
   const last = r ? `<div class="pop-recent">${r.outside ? "밖에서" : "탭"} · ${esc(r.folder)} · +${r.coins || 0}${r.mon?.name ? ` · ${esc(r.mon.name)}${r.mon.lv ? ` Lv ${r.mon.lv}` : ""}` : ""}${r.evolved ? ` · 진화!` : ""}</div>` : "";
   if (!p.list.length) { root.innerHTML = head + '<div class="pop-none">파티가 비어 있어요 — 파트너 없는 폴더와 Tamer 밖 작업은 파티가 키워요</div>' + last; return; }
-  root.innerHTML = head + `<div class="pop-party">${p.list.map((x, i) => `<span class="pop-mon${i === p.next ? " next" : ""}" title="${esc(x.name)} Lv ${x.lv ?? "?"}${i === p.next ? " · 다음 차례" : ""}"><img alt="" data-gif="${esc(x.gif || "")}" /><small>Lv ${x.lv ?? "?"}</small></span>`).join("")}</div>` + last;
+  root.innerHTML = head + `<div class="pop-party">${p.list.map((x, i) => `<span class="pop-mon${i === p.next ? " next" : ""}${i ? "" : " lead"}" data-uid="${x.uid}" title="${esc(x.name)} Lv ${x.lv ?? "?"}${i === p.next ? " · 다음 차례" : ""}${i ? " — 눌러서 선두로" : " · 선두"}"><img alt="" data-gif="${esc(x.gif || "")}" /><small>Lv ${x.lv ?? "?"}</small></span>`).join("")}</div>` + last;
   for (const img of root.querySelectorAll("img[data-gif]")) sprite(img.dataset.gif).then((u) => { if (u) img.src = u; });
 }
 
@@ -122,6 +122,9 @@ listen("popover", (e) => draw(e.payload));
 listen("party", () => invoke("popover_state").then(draw).catch(() => {}));
 
 document.addEventListener("click", (e) => {
+  // 선두 바꾸기 right here (#112): a party member's picture → first in the party
+  const mon = e.target.closest(".pop-mon[data-uid]:not(.lead)");
+  if (mon && model?.party) { const u = Number(mon.dataset.uid); return invoke("party_set", { uids: [u, ...model.party.list.map((m) => m.uid).filter((x) => x !== u)] }).then(() => invoke("popover_state")).then(draw).catch(() => {}); }
   const t = e.target.closest("button");
   if (!t) return;
   if (t.id === "pop-refresh") { t.textContent = "↻ 읽는 중…"; invoke("limits_refresh", { user: true }).catch(() => {}); }

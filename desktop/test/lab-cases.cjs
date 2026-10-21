@@ -531,6 +531,24 @@ module.exports = [
     },
   },
   {
+    id: "background-overlay-look", tags: ["explore", "app"], what: "창이 없을 때 오버레이 모습(실제 사용자 설정: 최소 모드 늘·카드 배경 0%): 파티 카드, 그 위 야생 알림 — 사진 bg-overlay.png · bg-overlay-wild.png와 크기 기록 (#109 조사)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 50000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1", CVIM_WILD_COOLDOWN: "0", CVIM_WILD_COOLDOWN_EMPTY: "0" },
+    // TAMER_TALL_GIF (a tall picture made for the run) stands in for the party lead's sprite, and the overlay sits where the user's does (#109)
+    setup: (box) => {
+      if (process.env.TAMER_TALL_GIF) fs.copyFileSync(process.env.TAMER_TALL_GIF, path.join(box.data, "pokemon", "134.gif"));
+      fs.mkdirSync(path.join(box.data, "ui"), { recursive: true });
+      fs.writeFileSync(path.join(box.data, "ui", "desktop_overlay.json"), JSON.stringify({ right: 1093, bottom: 480, collapsed: false }));
+    },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { invoke: "settings_set", args: { patch: { overlay: { minimal: "always", alpha: 0, when: "always" } } } },
+      { invoke: "party_test", args: { n: 3 } }, { invoke: "background_test" }, { wait: 25000 }],
+    check: ({ log }) => {
+      const fit = JSON.parse(log.match(/^bg overlay fit (\{.*?\}) bounds/m)?.[1] || "{}");
+      return [ok(/^bg overlay wild /m.test(log), "야생 알림까지 찍음"),
+        // with the tall picture: the card stays inside the 120 × 120 box — the window ~170 px, not ~350 (#109)
+        ...(process.env.TAMER_TALL_GIF ? [ok(fit.stack?.[1] <= 200, `키 큰 그림도 상자 안 — 오버레이 높이 ${fit.stack?.[1]}`)] : [])];
+    },
+  },
+  {
     id: "background-off-quits", tags: ["smoke", "app"], what: "백그라운드를 끄면 메인 창을 닫을 때 전처럼 앱이 끝남 — 대시보드를 한 번 열었어도(숨은 창이 앱을 붙잡지 않음) (APP-21 규칙 1, #105 미리보기에서 발견)",
     data: "owner", offline: true, mode: "direct", folders: ["a"], until: "user quit", timeoutMs: 25000,
     steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "settings_set", args: { patch: { background: false } } },
@@ -625,6 +643,39 @@ module.exports = [
     check: ({ log }) => {
       const st = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
       return [ok(/^outside ask$/m.test(log) && st.outside === false && !/^outside on/m.test(log) && !/^outside done/m.test(log), `켜지 않음 → 안 읽음 ${JSON.stringify({ outside: st.outside })}`)];
+    },
+  },
+  {
+    id: "overlay-no-repop", tags: ["smoke", "app"], what: "오버레이 말풍선은 한 번만 튀어나옴 — 완료 말풍선이 떠 있는 동안 다른 일로 오버레이를 다시 그려도 다시 튀지 않음 (#114) · 진화 알림 \"✨ 파이리가 리자드로 진화했어요!\" (#111)",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
+    steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "overlay_show_test", args: { on: true } }, { wait: 600 },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 700 }, { invoke: "overlay_pop_test", log: true },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "done", to: "thinking", hold: true } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "coding", hold: true } }, { wait: 700 },
+      { invoke: "overlay_pop_test", log: true },
+      { invoke: "evolved_note_test" }, { invoke: "overlay_pop_test", log: true }, { invoke: "overlay_show_test", args: { on: false } }],
+    check: ({ log }) => {
+      const [a, b, c] = [...log.matchAll(/^lab-invoke overlay_pop_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      return [
+        ok(a?.bubbles?.some((t) => /완료|✅/.test(t) && !/\[seen\]/.test(t)), `처음 그릴 때 완료 말풍선이 튀어나옴 ${JSON.stringify(a?.bubbles)}`),
+        ok(b?.bubbles?.some((t) => /완료|✅/.test(t) && /\[seen\]/.test(t)), `다시 그려도 같은 말풍선은 다시 안 튐 ${JSON.stringify(b?.bubbles)}`),
+        ok(/파이리가 리자드로 진화했어요!/.test(c?.evolve || "") && /Tamer 밖 작업 · 🪙 \+30/.test(c?.evolve || ""), `진화 알림 ${JSON.stringify(c?.evolve)}`),
+      ];
+    },
+  },
+  {
+    id: "popover-party-lead", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 파티 선두 바꾸기: 둘째 칸 그림을 누르면 선두가 됨 — Tamer 창을 열지 않음 (#112)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 3 }, log: true },
+      { invoke: "popover_test", args: { open: true } }, { wait: 1500 },
+      { invoke: "popover_click_test", args: { sel: ".pop-mon:not(.lead)" }, log: true }, { wait: 800 }, { invoke: "party_state", log: true }, { invoke: "popover_read_test", log: true }],
+    check: ({ log }) => {
+      const before = JSON.parse(log.match(/^lab-invoke party_test (.*)$/m)?.[1] || "{}").list?.map((m) => m.uid) || [];
+      const after = JSON.parse(log.match(/^lab-invoke party_state (.*)$/m)?.[1] || "{}").list?.map((m) => m.uid) || [];
+      const open = !!JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null"); // read only while it's open
+      return [
+        ok(before.length === 3 && after.length === 3 && after[0] === before[1] && after.slice(1).join() === [before[0], before[2]].join(), `둘째가 선두로 ${JSON.stringify(before)} → ${JSON.stringify(after)}`),
+        ok(open === true && !/^popover .*open-dex/m.test(log), "대시보드는 그대로 열려 있음"),
+      ];
     },
   },
   {
