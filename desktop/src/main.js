@@ -3919,14 +3919,15 @@ async function uiScenes(set) {
       // ⭐ 파티 (#107, PKM-31): three of the box in the party, the next in turn marked
       await invoke("party_test", { n: 3 });
       await openDex(); await dexView("party"); await wait(700); await shot("party"); closeDex();
-      await invoke("party_set", { uids: [] });
-      // 메뉴바 미니 대시보드 (#105, STA-22): this tab needing you, Claude's limits (no reset time: the picture doesn't move with the clock)
+      // 메뉴바 미니 대시보드 (#105, STA-22): this tab needing you, Claude's limits (no reset time: the picture doesn't move with the clock),
+      // the party of three with its pictures and the incubator's egg (#117)
       await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "waiting", hold: true });
       await invoke("usage_seen", { key: "claude", five_hour: { pct: 42 }, seven_day: { pct: 86 } });
       await invoke("popover_test", { open: true }); await wait(1500);
       { const r = await invoke("ui_shot", { name: "menubar-dashboard", target: "popover" });
         await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`); }
       await invoke("popover_test", { open: false });
+      await invoke("party_set", { uids: [] });
       await invoke("agent_state_test", { ws: tab.id, from: "waiting", to: "idle" });
       // the shell rail opened by the pointer (#99): one agent's own title, one shell named by hand — last, as a
       // second shell changes what the tab shows

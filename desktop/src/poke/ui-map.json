@@ -145,10 +145,10 @@
       "screens": ["party"]
     },
     "pop-dash": {
-      "what": "메뉴바 대시보드 창 그리기 — 파트너 줄·오늘 칸 3개·한도 막대 줄·탭 줄·아래 버튼 (#105)",
+      "what": "메뉴바 대시보드 창 그리기 — 파트너 줄·파티 칸(그림 72px, #117)·작은 부화기(알 그림, #117)·오늘 칸 3개·한도 막대 줄·탭 줄·아래 버튼, 화면보다 길면 스크롤 (#105 #117)",
       "files": ["popover.html", "src/popover.js", "src/popover.css"],
       "selectors": ["#pop", ".pop-"],
-      "functions": ["draw", "drawPartner", "drawParty", "drawToday", "drawLimits", "drawTabs", "popoverModel"],
+      "functions": ["draw", "drawPartner", "drawParty", "drawProg", "drawToday", "drawLimits", "drawTabs", "popoverModel"],
       "screens": ["menubar-dashboard"]
     },
     "pk-tokens": {
@@ -305,9 +305,11 @@
       ]
     },
     "pk-egg": {
-      "what": "🥚 알 그림(CSS — 흰 타원·무늬, 희귀 알은 금 무늬), 홈의 부화기 줄(#85), 카드 \"부화기/대기\" (#84, PKM-25) · 가방 안 부화기 섹션(#88)",
+      "what": "🥚 알 그림(CSS — 흰 타원·무늬, 희귀 알은 금 무늬 — src/poke/egg.css), 홈의 부화기 줄(#85), 카드 \"부화기/대기\" (#84, PKM-25) · 가방 안 부화기 섹션(#88) · 메뉴바 대시보드의 작은 부화기(#117)",
       "files": [
         "src/poke/poke.css",
+        "src/poke/egg.css",
+        "src/popover.js",
         "src/main.js",
         "src/poke/card.js"
       ],
@@ -334,7 +336,8 @@
         "home",
         "box",
         "shop",
-        "bag"
+        "bag",
+        "menubar-dashboard"
       ]
     },
     "pk-chip-prog": {
@@ -697,7 +700,7 @@
   "css": {
     "namespaces": {
       "poke": {
-        "file": "src/poke/poke.css",
+        "files": ["src/poke/poke.css", "src/poke/egg.css"],
         "prefixes": [
           "#dex",
           ".pk-",
@@ -714,7 +717,8 @@
         "src/style.css",
         "src/wild.css",
         "src/overlay-cards.css",
-        "src/poke/poke.css"
+        "src/poke/poke.css",
+        "src/poke/egg.css"
       ],
       "desktop overlay (overlay.html)": [
         "src/overlay.css",
@@ -722,7 +726,8 @@
       ],
       "menu bar dashboard (popover.html)": [
         "src/popover.css",
-        "src/wild.css"
+        "src/wild.css",
+        "src/poke/egg.css"
       ]
     }
   }

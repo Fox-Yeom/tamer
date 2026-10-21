@@ -55,19 +55,25 @@ async function drawParty(m) {
   const head = `<div class="pop-h"><span>파티${m.outside ? " · Tamer 밖 작업도" : ""}</span><button id="pop-party-go">${p.list.length ? "바꾸기" : "파티 고르기"}</button></div>`;
   const last = r ? `<div class="pop-recent">${r.outside ? "밖에서" : "탭"} · ${esc(r.folder)} · +${r.coins || 0}${r.mon?.name ? ` · ${esc(r.mon.name)}${r.mon.lv ? ` Lv ${r.mon.lv}` : ""}` : ""}${r.evolved ? ` · 진화!` : ""}</div>` : "";
   if (!p.list.length) { root.innerHTML = head + '<div class="pop-none">파티가 비어 있어요 — 파트너 없는 폴더와 Tamer 밖 작업은 파티가 키워요</div>' + last; return; }
-  root.innerHTML = head + `<div class="pop-party">${p.list.map((x, i) => `<span class="pop-mon${i === p.next ? " next" : ""}${i ? "" : " lead"}" data-uid="${x.uid}" title="${esc(x.name)} Lv ${x.lv ?? "?"}${i === p.next ? " · 다음 차례" : ""}${i ? " — 눌러서 선두로" : " · 선두"}"><img alt="" data-gif="${esc(x.gif || "")}" /><small>Lv ${x.lv ?? "?"}</small></span>`).join("")}</div>` + last;
+  // three to a row, the picture big enough to see (#117)
+  root.innerHTML = head + `<div class="pop-party">${p.list.map((x, i) => `<span class="pop-mon${i === p.next ? " next" : ""}${i ? "" : " lead"}" data-uid="${x.uid}" title="${esc(x.name)} Lv ${x.lv ?? "?"}${i === p.next ? " · 다음 차례" : ""}${i ? " — 눌러서 선두로" : " · 선두"}"><img alt="" data-gif="${esc(x.gif || "")}" /><b class="nm">${esc(x.name)}${x.shiny ? " ✨" : ""}</b><small>Lv ${x.lv ?? "?"}</small></span>`).join("")}</div>` + last;
   for (const img of root.querySelectorAll("img[data-gif]")) sprite(img.dataset.gif).then((u) => { if (u) img.src = u; });
 }
 
-// 진행 (#116, PKM-30 rule 9): the incubator · stamps · research — shown with no tab too — and 알 넣기 from the bag
+// 진행 (#116, PKM-30 rule 9): the incubator · stamps · research — shown with no tab too — and 알 넣기 from the bag.
+// The incubator is a small picture of it (#117): the drawn egg (PKM-25), its name, a bar and how many finishes are left
 function drawProg(m) {
-  const p = m.prog || {}, e = m.eggs || {}, soon = (x) => (x?.soon ? "곧 " : "");
-  const items = [p.inc && `🥚 ${soon(p.inc)}${esc(p.inc.name || "알")} ${p.inc.have}/${p.inc.need}${p.inc.waiting ? ` · 대기 ${p.inc.waiting}` : ""}`,
-    p.stamps && `⭐ ${soon(p.stamps)}스탬프 ${p.stamps.n}/${p.stamps.need}`, p.research && `✦ ${soon(p.research)}리서치 ${p.research.done}/${p.research.of}`].filter(Boolean);
+  const p = m.prog || {}, e = m.eggs || {}, a = p.inc, soon = (x) => (x?.soon ? "곧 " : "");
   const kind = e.egg > 0 ? "egg" : e.egg2 > 0 ? "egg2" : null; // an ordinary egg first
-  const put = kind ? `<button id="pop-egg-in" data-kind="${kind}" title="가방의 ${kind === "egg" ? "알" : "희귀 알"}을 부화기에 — 작업을 끝낼 때마다 부화가 가까워져요">🥚 알 넣기 <span class="dim">가방 ${e.egg + e.egg2}</span></button>` : "";
-  $("#pop-prog").innerHTML = items.length || put
-    ? `<div class="pop-h"><span>진행</span>${put}</div>${items.length ? `<div class="pop-progline">${items.join(" · ")}</div>` : '<div class="pop-none">부화기가 비어 있어요</div>'}` : "";
+  const put = kind ? `<button id="pop-egg-in" data-kind="${kind}" title="가방의 ${kind === "egg" ? "알" : "희귀 알"}을 부화기에 — 작업을 끝낼 때마다 부화가 가까워져요">알 넣기 <span class="dim">가방 ${e.egg + e.egg2}</span></button>` : "";
+  const inc = a
+    ? `<div class="pop-inc${a.soon ? " soon" : ""}"><i class="pk-egg mid${a.kind === "egg2" ? " rare" : ""}"></i><div class="pop-inc-what">
+        <b>${esc(a.name || "알")} ${a.have}/${a.need}</b><div class="pop-bar"><i style="width:${Math.round((a.have / a.need) * 100)}%"></i></div>
+        <span class="dim">${a.soon ? "곧 태어나요 — 작업 1번" : `작업 ${a.need - a.have}번 남음`}${a.waiting ? ` · 대기 ${a.waiting}` : ""}</span></div></div>`
+    : `<div class="pop-inc empty"><i class="pk-egg mid empty"></i><div class="pop-inc-what"><b>부화기가 비어 있어요</b>
+        <span class="dim">${kind ? "알을 넣으면 작업을 끝낼 때마다 자라요" : "알은 🛒 상점에서 (알 500 · 희귀 알 2,000)"}</span></div></div>`;
+  const more = [p.stamps && `⭐ ${soon(p.stamps)}스탬프 ${p.stamps.n}/${p.stamps.need}`, p.research && `✦ ${soon(p.research)}리서치 ${p.research.done}/${p.research.of}`].filter(Boolean);
+  $("#pop-prog").innerHTML = `<div class="pop-h"><span>부화기 · 진행</span>${put}</div>${inc}${more.length ? `<div class="pop-progline">${more.join(" · ")}</div>` : ""}`;
 }
 
 function drawToday(m) {

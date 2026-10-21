@@ -631,7 +631,7 @@ module.exports = [
     },
   },
   {
-    id: "popover-egg-in", tags: ["smoke", "poke"], what: "메뉴바 대시보드 진행 줄: 가방에 알이 있으면 [알 넣기]로 부화기에 — 진행 줄에 '알 0/10', 가방에서 한 개 줄어듦 · 진행 줄은 탭 파트너 줄과 따로(탭과 상관없이) (PKM-30 규칙 9, #116)",
+    id: "popover-egg-in", tags: ["smoke", "poke"], what: "메뉴바 대시보드 부화기: 가방에 알이 있으면 [알 넣기]로 부화기에 — 빈 알 자리가 알 그림·'알 0/10'·'작업 10번 남음'으로(#117), 가방에서 한 개 줄어듦 · 진행 줄은 탭 파트너 줄과 따로(탭과 상관없이) (PKM-30 규칙 9, #116)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     setup: (box) => {
       const d = todayLocal();
@@ -644,8 +644,8 @@ module.exports = [
       const [a, b] = [...log.matchAll(/^lab-invoke popover_read_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const inc = JSON.parse(log.match(/^lab-invoke incubator_state (.*)$/m)?.[1] || "null"), st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
       return [
-        ok(/알 넣기 가방 2/.test(a?.text || "") && !/🥚 알 \d/.test(a?.text || "") && /⭐ 스탬프/.test(a?.text || ""), `처음: [알 넣기 가방 2], 부화기 줄 없음, 스탬프는 보임(탭이 없어도) ${JSON.stringify(a?.text?.match(/진행[\s\S]{0,60}/)?.[0])}`),
-        ok(/^lab-invoke popover_click_test true$/m.test(log) && inc?.active?.need === 10 && /🥚 알 0\/10/.test(b?.text || ""), `넣은 뒤 부화기 알 0/10 ${JSON.stringify(inc?.active)} ${JSON.stringify(b?.text?.match(/진행[\s\S]{0,60}/)?.[0])}`),
+        ok(/알 넣기 가방 2/.test(a?.text || "") && /부화기가 비어 있어요/.test(a?.text || "") && /\bempty\b/.test(a?.look?.egg || "") && /⭐ 스탬프/.test(a?.text || ""), `처음: [알 넣기 가방 2], 빈 알 자리, 스탬프는 보임(탭이 없어도) ${JSON.stringify([a?.text?.match(/진행[\s\S]{0,60}/)?.[0], a?.look?.egg])}`),
+        ok(/^lab-invoke popover_click_test true$/m.test(log) && inc?.active?.need === 10 && /알 0\/10/.test(b?.text || "") && /작업 10번 남음/.test(b?.text || "") && /pk-egg mid/.test(b?.look?.egg || "") && !/empty/.test(b?.look?.egg || ""), `넣은 뒤 부화기 알 그림·알 0/10·작업 10번 남음 ${JSON.stringify(inc?.active)} ${JSON.stringify([b?.text?.match(/진행[\s\S]{0,60}/)?.[0], b?.look?.egg])}`),
         ok((st.bag?.egg || 0) === 1, `가방 알 2 → 1 ${JSON.stringify(st.bag)}`),
       ];
     },
@@ -692,6 +692,20 @@ module.exports = [
         ok(a?.bubbles?.some((t) => /완료|✅/.test(t) && !/\[seen\]/.test(t)), `처음 그릴 때 완료 말풍선이 튀어나옴 ${JSON.stringify(a?.bubbles)}`),
         ok(b?.bubbles?.some((t) => /완료|✅/.test(t) && /\[seen\]/.test(t)), `다시 그려도 같은 말풍선은 다시 안 튐 ${JSON.stringify(b?.bubbles)}`),
         ok(/파이리가 리자드로 진화했어요!/.test(c?.evolve || "") && /Tamer 밖 작업 · 🪙 \+30/.test(c?.evolve || ""), `진화 알림 ${JSON.stringify(c?.evolve)}`),
+      ];
+    },
+  },
+  {
+    id: "popover-tall", tags: ["smoke", "poke"], what: "메뉴바 대시보드가 화면보다 길면(시험: 높이 420으로 줄인 화면) 창은 화면 끝까지만, 나머지는 스크롤 — 끝까지 내리면 [종료]·[설정]·[Tamer 열기]가 보임 · 파티 그림 72px·부화기 알 그림 (#117)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 6 }, log: true },
+      { invoke: "popover_test", args: { open: true, maxH: 420 } }, { wait: 1500 }, { invoke: "popover_read_test", args: { scroll: true }, log: true }, { invoke: "popover_test" }],
+    check: ({ log }) => {
+      const n = JSON.parse(log.match(/^lab-invoke party_test (.*)$/m)?.[1] || "{}").list?.length || 0;
+      const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
+      return [
+        ok(r?.height === 420 && r?.content > 420 && r?.footInView === true, `창 420에 내용 ${r?.content} — 끝까지 내리면 아래 버튼 보임 ${JSON.stringify(r && { height: r.height, content: r.content, foot: r.footInView })}`),
+        ok(n === 6 && r?.look?.party === 72 && /pk-egg mid/.test(r?.look?.egg || ""), `파티 6마리 그림 72px · 부화기 알 그림 ${JSON.stringify([n, r?.look])}`),
       ];
     },
   },

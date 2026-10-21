@@ -1159,6 +1159,7 @@ async function outsideStart() {
 // ── 메뉴바 미니 대시보드 (STA-22, #105): a panel under the icon — doesn't bring Tamer forward, closes when
 // another place is clicked (blur), Esc, or the icon again. Its model is redrawn while it's open ─────
 const POP_W = 360;
+let popTestMaxH = 0; // tests: a short screen, to see the dashboard scroll (#117)
 let popoverClosedAt = 0;
 function popoverModel() {
   const cur = workspaces.get(activeWs) || null, p = cur?.partner;
@@ -1349,8 +1350,9 @@ const popoverCommands = {
   popover_state: () => popoverModel(),
   popover_fit({ height }) {
     if (!popover || popover.isDestroyed()) return;
-    const b = popover.getBounds(), area = screen.getDisplayMatching(b).workArea;
-    const h = Math.round(Math.min(Math.max(Number(height) || 0, 80), area.y + area.height - b.y - 8));
+    // as tall as its content, down to the screen's bottom at most — the rest scrolls inside (#117)
+    const b = popover.getBounds(), area = screen.getDisplayMatching(b).workArea, room = area.y + area.height - b.y - 8;
+    const h = Math.round(Math.min(Math.max(Number(height) || 0, 80), popTestMaxH ? Math.min(room, popTestMaxH) : room));
     if (h !== b.height) popover.setBounds({ ...b, height: h });
   },
   popover_hide: () => popoverHide(),
@@ -1942,10 +1944,15 @@ const testCommands = {
       logLine("bg-done");
     })();
   },
-  popover_test({ open }) { if (open) popoverShow({ x: 900, y: 0, width: 24, height: 24 }); else popoverHide(); return { open: !!popover?.isVisible?.() }; },
-  popover_read_test: () => (popover?.isVisible?.() ? popover.webContents.executeJavaScript(`({ text: document.querySelector("#pop").innerText,
-    tabs: [...document.querySelectorAll(".pop-tab")].map((b) => b.innerText.replace(/\\s+/g, " ").trim()),
-    wild: !document.querySelector("#pop-wild .wild-card")?.hidden, height: innerHeight })`) : null),
+  popover_test({ open, maxH }) { popTestMaxH = Number(maxH) || 0; if (open) popoverShow({ x: 900, y: 0, width: 24, height: 24 }); else popoverHide(); return { open: !!popover?.isVisible?.() }; },
+  // look (#117): the pictures' sizes and the egg; scroll: true scrolls to the end and says whether the buttons at the bottom are in view
+  popover_read_test: ({ scroll } = {}) => (popover?.isVisible?.() ? popover.webContents.executeJavaScript(`(() => { const se = document.scrollingElement, w = (s) => Math.round(document.querySelector(s)?.getBoundingClientRect().width || 0);
+    const r = { text: document.querySelector("#pop").innerText,
+      tabs: [...document.querySelectorAll(".pop-tab")].map((b) => b.innerText.replace(/\\s+/g, " ").trim()),
+      wild: !document.querySelector("#pop-wild .wild-card")?.hidden, height: innerHeight, content: se.scrollHeight,
+      look: { partner: w(".pop-sprite img"), party: w(".pop-mon img"), egg: document.querySelector("#pop-prog .pk-egg")?.className || null } };
+    if (${!!scroll}) { se.scrollTop = se.scrollHeight; const f = document.querySelector("#pop-foot").getBoundingClientRect(); r.footInView = f.top >= 0 && f.bottom <= innerHeight + 1; }
+    return r; })()`) : null),
   popover_click_test: ({ sel }) => popover.webContents.executeJavaScript(`(() => { const b = document.querySelector(${JSON.stringify(String(sel))}); if (b) b.click(); return !!b; })()`),
   // 한도 (#104): what was read and how often the token was — counts only, never a value; status = the stand-in's answer
   // Tamer 밖 작업 (#107): a line appended to a log as an agent would write it — only under the test's own

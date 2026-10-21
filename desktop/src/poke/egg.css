@@ -1,0 +1,13 @@
+/* 🥚 알 (#84, PKM-25, SCREENS_P3 S5): the egg is drawn — no picture (POL-ASSET-01) — a white oval with spots, a rare
+   one gold spots; hatching shakes then goes white. Used by the Pokémon window (poke.css) and the menu bar
+   dashboard (popover.css, #117); each screen sizes it under its own id */
+.pk-egg { display: inline-block; width: 26px; height: 34px; border-radius: 50% 50% 46% 46% / 60% 60% 40% 40%; border: 2px solid #b8ad8c; box-sizing: border-box;
+  background: radial-gradient(circle at 35% 60%, #7fc48a 0 4px, transparent 5px), radial-gradient(circle at 65% 38%, #7fc48a 0 3px, transparent 4px), #f6f1e2; }
+.pk-egg.rare { background: radial-gradient(circle at 35% 60%, #e8b04a 0 4px, transparent 5px), radial-gradient(circle at 65% 38%, #e8b04a 0 3px, transparent 4px), #f6f1e2; }
+.pk-egg.big { width: 60px; height: 78px; border-width: 3px; }
+.pk-egg.hatching { animation: pk-egg-shake .3s ease-in-out 6; }
+.pk-egg.white { background: #fff; border-color: #fff; box-shadow: 0 0 24px 8px rgba(255, 255, 255, .8); transition: all .3s; }
+@keyframes pk-egg-shake { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
+/* the menu bar dashboard's small incubator (#117): a mid size, and the empty place when the incubator has none */
+.pk-egg.mid { width: 36px; height: 47px; border-width: 2px; }
+.pk-egg.empty { background: none; border-style: dashed; border-color: currentColor; opacity: .4; }

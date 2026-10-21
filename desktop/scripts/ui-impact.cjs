@@ -77,15 +77,17 @@ for (const [doc, files] of Object.entries(MAP.css?.documents || { all: CSS })) {
     if (own.length > 1 && !(MAP.css?.allowRepeat || []).includes(sel)) problems.push(`${doc}: defined in ${own.length} places: ${sel}  (${own.join(", ")})`);
   }
 }
+// a module's own files: "file", or "files" when it has more than one (poke: poke.css + egg.css, the egg the dashboard draws too)
+const own = (m) => m.files || [m.file];
 for (const [mod, m] of Object.entries(MAP.css?.namespaces || {})) {
-  for (const r of all.filter((x) => x.file === m.file)) {
+  for (const r of all.filter((x) => own(m).includes(x.file))) {
     if (!m.prefixes.some((p) => r.sel.startsWith(p) || r.sel.startsWith(`:root`) || r.sel.startsWith("body.ui-test"))) problems.push(`${mod} rule outside its namespace (${m.prefixes.join(" ")}): ${r.sel}  (${r.file}:${r.line})`);
   }
 }
 // classes that shared modules own must not be styled from elsewhere
 for (const [mod, m] of Object.entries(MAP.css?.namespaces || {})) {
-  for (const r of all.filter((x) => x.file !== m.file)) {
-    for (const p of m.prefixes.filter((p) => p.startsWith("."))) if (r.sel.includes(p)) problems.push(`${mod}'s ${p}* styled outside ${m.file}: ${r.sel}  (${r.file}:${r.line})`);
+  for (const r of all.filter((x) => !own(m).includes(x.file))) {
+    for (const p of m.prefixes.filter((p) => p.startsWith("."))) if (r.sel.includes(p)) problems.push(`${mod}'s ${p}* styled outside ${own(m).join(" · ")}: ${r.sel}  (${r.file}:${r.line})`);
   }
 }
 console.log(`\nCSS check: ${problems.length ? `${problems.length} problem(s)` : "ok"}`);

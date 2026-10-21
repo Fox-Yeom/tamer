@@ -1,6 +1,8 @@
 /* The Pokémon window (#29, docs/UI_SYSTEM.md): one frame for 파트너 고르기 · 도감 · 내 포켓몬.
    Every rule here starts with #dex or .pk- (npm run ui:impact checks it), colours come from the
    --pk-* tokens: the Pokédex green world; the app's orange (--accent) only marks "this tab". */
+@import "./egg.css";
+
 :root {
   --pk-bg-top: #23302a; --pk-bg: #1a211d; --pk-line: #3d5a45; --pk-line-soft: #2f4535; --pk-edge: #4f7a57;
   --pk-fg: #d9f3c0; --pk-title: #b9e28c; --pk-dim: #9fbf93; --pk-faint: #3f5845; --pk-ink: #1a211d;
@@ -198,18 +200,11 @@
 #dex .pk-stamp b { margin-left: 6px; font-size: 13px; color: var(--pk-legend); }
 #dex-from button.on { border-color: var(--pk-legend); }
 
-/* 🥚 알 · 🎓 졸업 (#84, PKM-25 · PKM-19, SCREENS_P3 S5 · S6 · S8): the egg is drawn (white oval + spots, a rare
-   one gold spots); hatching shakes then goes white; the graduation band stays over the partner until answered */
-.pk-egg { display: inline-block; width: 26px; height: 34px; border-radius: 50% 50% 46% 46% / 60% 60% 40% 40%; border: 2px solid #b8ad8c; box-sizing: border-box;
-  background: radial-gradient(circle at 35% 60%, #7fc48a 0 4px, transparent 5px), radial-gradient(circle at 65% 38%, #7fc48a 0 3px, transparent 4px), #f6f1e2; }
-.pk-egg.rare { background: radial-gradient(circle at 35% 60%, #e8b04a 0 4px, transparent 5px), radial-gradient(circle at 65% 38%, #e8b04a 0 3px, transparent 4px), #f6f1e2; }
-.pk-egg.big { width: 60px; height: 78px; border-width: 3px; }
+/* 🥚 알 (#84, PKM-25): the drawn egg is in egg.css (the menu bar dashboard draws it too, #117) · 🎓 졸업 (PKM-19,
+   SCREENS_P3 S6 · S8): the graduation band stays over the partner until answered */
 #dex .pk-card .pk-egg { width: 34px; height: 46px; margin: 5px 0; }
 #dex .pk-icon .pk-egg { width: 24px; height: 32px; }
 #dex .pk-icon.big .pk-egg { width: 46px; height: 60px; }
-.pk-egg.hatching { animation: pk-egg-shake .3s ease-in-out 6; }
-.pk-egg.white { background: #fff; border-color: #fff; box-shadow: 0 0 24px 8px rgba(255, 255, 255, .8); transition: all .3s; }
-@keyframes pk-egg-shake { 0%, 100% { transform: rotate(0); } 25% { transform: rotate(-12deg); } 75% { transform: rotate(12deg); } }
 .pk-grad { display: flex; flex-direction: column; align-items: center; gap: 4px; margin: 6px 8px; padding: 8px 10px; border: 1px solid var(--pk-coin-line); border-radius: 10px; background: var(--pk-coin-soft); font-size: 12px; text-align: center; }
 .pk-grad-do { display: flex; gap: 6px; }
 .pk-grad button { border: 1px solid var(--line); border-radius: 8px; padding: 3px 9px; font: inherit; font-size: 12px; cursor: pointer; background: var(--raised); color: var(--fg); }

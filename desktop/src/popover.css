@@ -1,11 +1,13 @@
 @import "./theme.css";
 @import "./wild.css";
+@import "./poke/egg.css";
 
 /* 메뉴바 미니 대시보드 (STA-22, #105): a small card under the menu bar icon — the main process sizes the
-   window to #pop's height (popover_fit) */
-html, body { margin: 0; background: var(--pane); color: var(--fg); overflow: hidden; user-select: none;
+   window to #pop's height (popover_fit), at most down to the screen's bottom: the rest scrolls inside (#117) */
+html, body { margin: 0; background: var(--pane); color: var(--fg); overflow-x: hidden; user-select: none;
   font: 13px -apple-system, "Apple SD Gothic Neo", sans-serif; }
-#pop { display: flex; flex-direction: column; width: 360px; box-sizing: border-box; }
+html { overflow-y: auto; }
+#pop { display: flex; flex-direction: column; width: 100%; box-sizing: border-box; } /* the window is 360 wide (POP_W); 100%: a shown scroll bar doesn't cut the right edge */
 .pop-sec { padding: 12px 14px; border-bottom: 1px solid var(--line); }
 .pop-sec:empty { display: none; }
 .pop-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; font-weight: 600; color: var(--dim); }
@@ -14,8 +16,8 @@ button:hover { background: var(--hover); }
 
 /* 파트너 */
 #pop-partner { display: flex; gap: 12px; align-items: center; }
-.pop-sprite { width: 64px; height: 64px; flex: none; display: flex; align-items: flex-end; justify-content: center; border-radius: 10px; background: var(--raised); }
-.pop-sprite img { max-width: 60px; max-height: 60px; image-rendering: pixelated; }
+.pop-sprite { width: 96px; height: 96px; flex: none; display: flex; align-items: flex-end; justify-content: center; border-radius: 12px; background: var(--raised); }
+.pop-sprite img { width: 88px; height: 88px; object-fit: contain; object-position: bottom; image-rendering: pixelated; }
 .pop-who { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
 .pop-name { font-size: 15px; font-weight: 600; }
 .pop-lv { font-size: 12px; color: var(--dim); }
@@ -24,19 +26,26 @@ button:hover { background: var(--hover); }
 .pop-chips { display: flex; gap: 6px; flex-wrap: wrap; font-size: 11px; color: var(--dim); }
 .pop-none { color: var(--dim); font-size: 12px; }
 
-/* 파티 (#107) */
-.pop-party { display: flex; gap: 6px; }
-.pop-mon { display: flex; flex-direction: column; align-items: center; width: 50px; padding: 4px 0; border-radius: 8px; background: var(--raised); }
+/* 파티 (#107): three to a row, pictures 72 px (#117) */
+.pop-party { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.pop-mon { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; padding: 6px 4px 7px; border-radius: 10px; background: var(--raised); }
 .pop-mon.next { outline: 1px solid var(--accent); }
 .pop-mon:not(.lead) { cursor: pointer; } .pop-mon:not(.lead):hover { background: var(--hover); }
 .pop-mon.lead small::before { content: "선두 "; color: var(--accent); }
-.pop-mon img { width: 40px; height: 40px; object-fit: contain; image-rendering: pixelated; }
-.pop-mon small { font-size: 10px; color: var(--dim); }
+.pop-mon img { width: 72px; height: 72px; object-fit: contain; object-position: bottom; image-rendering: pixelated; }
+.pop-mon .nm { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; font-weight: 600; }
+.pop-mon small { font-size: 11px; color: var(--dim); }
 .pop-recent { margin-top: 6px; font-size: 12px; color: var(--dim); }
 #pop-party-go { font-size: 11px; padding: 2px 8px; }
 
-/* 진행 (#116) */
-.pop-progline { font-size: 12px; color: var(--fg); }
+/* 부화기 · 진행 (#116): a small incubator — the drawn egg (src/poke/egg.css), name, bar, finishes left (#117) */
+.pop-inc { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; background: var(--raised); }
+.pop-inc.soon { background: color-mix(in srgb, var(--pk-coin, #f2c14e) 14%, var(--raised)); }
+.pop-inc.soon .pop-bar > i { background: var(--pk-coin, #f2c14e); }
+.pop-inc.empty { background: none; border: 1px dashed var(--line); color: var(--dim); }
+.pop-inc-what { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.pop-inc-what .dim { font-size: 12px; color: var(--dim); }
+.pop-progline { margin-top: 8px; font-size: 12px; color: var(--fg); }
 #pop-egg-in { font-size: 11px; padding: 2px 8px; }
 #pop-egg-in .dim { color: var(--dim); }
 
