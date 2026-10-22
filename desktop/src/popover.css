@@ -46,6 +46,11 @@ button:hover { background: var(--hover); }
 .pop-mon small { font-size: 11px; color: var(--dim); }
 .pop-recent { margin-top: 6px; font-size: 12px; color: var(--dim); }
 #pop-party-go { font-size: 11px; padding: 2px 8px; }
+/* 메뉴바 아이콘 한 번 안내 (STA-24 rule 2, #108) */
+.pop-lead { display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+.pop-lead small { display: block; margin-top: 2px; font-size: 11px; color: var(--dim); word-break: keep-all; }
+.pop-lead-do { display: flex; gap: 6px; }
+.pop-lead-do button { font-size: 12px; padding: 3px 10px; }
 
 /* 부화기 · 진행 (#116): a small incubator — the drawn egg (src/poke/egg.css), name, bar, finishes left (#117) */
 .pop-inc { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-radius: 10px; background: var(--raised); }

@@ -124,4 +124,73 @@ function trayIcon(nativeImage) {
   return img;
 }
 
-module.exports = { trayModel, trayIcon, trayIconBitmap, AGENTS };
+// ── the party lead on the menu bar (STA-24, #108): its cached GIF's frames (electron/gif.cjs), cut to where there's
+// picture in any frame, made to fit 22 pt (44 px at 2×), and the states drawn on — ! (needs you), z (resting, dimmed),
+// grass at its feet (a wild one out), a hop (coins). Colour pictures, not template ones ──
+const ICON_H = 44, CONTENT_H = 36, HOP = 3;
+// frames: [{ rgba }] of width × height → the frames cut and scaled: { w, h, frames: [Uint8Array rgba] }
+function leadFrames({ width, height, frames }) {
+  let x0 = width, y0 = height, x1 = -1, y1 = -1;
+  for (const f of frames) for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    if (f.rgba[(y * width + x) * 4 + 3]) { if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  if (x1 < 0) return null; // nothing drawn
+  const bw = x1 - x0 + 1, bh = y1 - y0 + 1, k = Math.min(1, CONTENT_H / bh); // smaller: as it is (crisp); bigger: shrunk to fit
+  const w = Math.max(1, Math.round(bw * k)), h = Math.max(1, Math.round(bh * k)), S = k < 1 ? 4 : 1;
+  const out = frames.map((f) => {
+    const o = new Uint8Array(w * h * 4);
+    for (let ty = 0; ty < h; ty++) for (let tx = 0; tx < w; tx++) {
+      let r = 0, g = 0, b = 0, a = 0;
+      for (let sy = 0; sy < S; sy++) for (let sx = 0; sx < S; sx++) { // a few samples a pixel: shrunk pixel art stays even
+        const x = x0 + Math.min(bw - 1, Math.floor((tx + (sx + 0.5) / S) / k)), y = y0 + Math.min(bh - 1, Math.floor((ty + (sy + 0.5) / S) / k)), i = (y * width + x) * 4, al = f.rgba[i + 3];
+        r += f.rgba[i] * al; g += f.rgba[i + 1] * al; b += f.rgba[i + 2] * al; a += al;
+      }
+      const d = (ty * w + tx) * 4;
+      if (a) { o[d] = r / a; o[d + 1] = g / a; o[d + 2] = b / a; o[d + 3] = a / (S * S); }
+    }
+    return o;
+  });
+  return { w, h, frames: out };
+}
+// one picture of the icon: a frame of the lead with the state drawn on → { buf: BGRA premultiplied, width, height } at 2×
+const Z = ["11111", "00010", "00100", "01000", "11111"]; // a small z
+function leadIcon(lead, i, { dim = false, z = false, badge = false, grass = false, hop = false } = {}) {
+  const W = Math.max(lead.w + 8, 24), H = ICON_H, buf = new Uint8Array(W * H * 4), src = lead.frames[i % lead.frames.length];
+  const ox = Math.floor((W - lead.w) / 2) - (badge || z ? 2 : 0), oy = H - lead.h - 4 - (hop ? HOP : 0);
+  const put = (x, y, r, g, b, a) => {
+    if (x < 0 || y < 0 || x >= W || y >= H || !a) return;
+    const d = (y * W + x) * 4, fa = a / 255, ba = buf[d + 3] / 255, oa = fa + ba * (1 - fa);
+    if (!oa) return;
+    // over what's there (stored as straight colour here, premultiplied at the end)
+    buf[d] = (r * fa + buf[d] * ba * (1 - fa)) / oa; buf[d + 1] = (g * fa + buf[d + 1] * ba * (1 - fa)) / oa; buf[d + 2] = (b * fa + buf[d + 2] * ba * (1 - fa)) / oa; buf[d + 3] = oa * 255;
+  };
+  for (let y = 0; y < lead.h; y++) for (let x = 0; x < lead.w; x++) {
+    const s = (y * lead.w + x) * 4, a = src[s + 3];
+    if (!a) continue;
+    let r = src[s], g = src[s + 1], b = src[s + 2];
+    if (dim) { const l = (r + g + b) / 3; r = (r + l) / 2; g = (g + l) / 2; b = (b + l) / 2; } // resting: greyer and see-through
+    put(ox + x, oy + y, r, g, b, dim ? a * 0.55 : a);
+  }
+  if (grass) for (let x = 0; x < W; x++) { // tufts at its feet: blades of 3–6 px, two greens
+    const tall = 3 + ((x * 7) % 4), dark = x % 3 === 0;
+    for (let y = 0; y < tall; y++) put(x, H - 1 - y, dark ? 46 : 74, dark ? 125 : 170, dark ? 50 : 70, 255);
+  }
+  if (z) Z.forEach((row, y) => [...row].forEach((c, x) => { if (c === "1") put(W - 7 + x, 3 + y, 120, 170, 255, 255); }));
+  if (badge) { // a red dot with a white ! — needs you
+    const cx = W - 5.5, cy = 6.5, R = 5.5;
+    for (let y = 0; y < 13; y++) for (let x = W - 12; x < W; x++) { const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy); if (d <= R) put(x, y, 229, 72, 77, d > R - 0.8 ? 160 : 255); }
+    for (let y = 3; y <= 9; y++) if (y !== 8) { put(W - 6, y, 255, 255, 255, 255); }
+  }
+  const out = Buffer.alloc(W * H * 4); // RGBA straight → BGRA premultiplied (nativeImage.createFromBitmap)
+  for (let d = 0; d < out.length; d += 4) { const a = buf[d + 3]; out[d] = (buf[d + 2] * a) / 255; out[d + 1] = (buf[d + 1] * a) / 255; out[d + 2] = (buf[d] * a) / 255; out[d + 3] = a; }
+  return { buf: out, width: W, height: H };
+}
+// what the icon does now (rule 4): wild → needs you → working (faster with more working tabs) → resting
+function leadState({ tabs = [], wild = null, now = Date.now() }) {
+  const working = tabs.filter((t) => WORKING.includes(t.state)).length, waiting = tabs.filter((t) => t.state === "waiting").length;
+  const state = wild ? "wild" : waiting ? "waiting" : working ? "working" : "rest";
+  return { state, working, waiting, step: state === "working" || state === "wild" ? Math.min(3, Math.max(1, working)) : 0,
+    wildLeft: wild && !wild.big && wild.until ? Math.max(0, Math.ceil((wild.until - now) / 1000)) : null };
+}
+
+module.exports = { trayModel, trayIcon, trayIconBitmap, AGENTS, leadFrames, leadIcon, leadState };

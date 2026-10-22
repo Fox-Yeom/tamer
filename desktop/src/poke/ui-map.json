@@ -160,10 +160,10 @@
       "screens": ["wild-catch"]
     },
     "pop-dash": {
-      "what": "메뉴바 대시보드 창 그리기 — 위쪽 탭(홈·작업, 점, #118)·파트너 줄·파티 칸(그림 72px, #117)·작은 부화기(알 그림, #117)·오늘 칸 3개·한도 에이전트 칩(#118)·막대 줄·탭 줄·아래 버튼(⏻ ⚙ Tamer 열기), 화면보다 길면 스크롤 (#105 #117 #118)",
+      "what": "메뉴바 대시보드 창 그리기 — 위쪽 탭(홈·작업, 점, #118)·메뉴바 아이콘 한 번 안내 줄(파티 선두를 데려갈까요? — STA-24 #108)·파트너 줄·파티 칸(그림 72px, #117)·작은 부화기(알 그림, #117)·오늘 칸 3개·한도 에이전트 칩(#118)·막대 줄·탭 줄·아래 버튼(⏻ ⚙ Tamer 열기), 화면보다 길면 스크롤 (#105 #117 #118)",
       "files": ["popover.html", "src/popover.js", "src/popover.css"],
       "selectors": ["#pop", ".pop-", "#pg-"],
-      "functions": ["draw", "drawPartner", "drawParty", "drawProg", "drawToday", "drawLimits", "drawTabs", "showPage", "drawDot", "popoverModel"],
+      "functions": ["draw", "drawLead", "drawPartner", "drawParty", "drawProg", "drawToday", "drawLimits", "drawTabs", "showPage", "drawDot", "popoverModel"],
       "screens": ["menubar-dashboard"]
     },
     "pk-tokens": {

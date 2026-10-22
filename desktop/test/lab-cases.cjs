@@ -1992,6 +1992,58 @@ sleep 40
     },
   },
   {
+    id: "menubar-lead", tags: ["smoke", "app", "poke"], what: "메뉴바 아이콘 = 파티 선두(STA-24, #108): 기본은 몬스터볼 + 대시보드 한 번 안내, 설정으로 바꾸면 선두 그림 — 쉼(흐리게·z, 멈춤) · 작업 중(재생, 일하는 탭 2개면 2배) · 입력 필요(멈춤 + !) · 완료 코인 +n·야생 풀숲 + 남은 초, 재생할 때만 틱 · CPU 기준 · 다시 몬스터볼",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1", CVIM_WILD_COOLDOWN: "0", CVIM_WILD_COOLDOWN_EMPTY: "0" },
+    setup: (box) => { putEcon(box, { "state.json": { startSeen: true } }); fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })); },
+    steps: [{ until: "tabs.1" }, { until: "partnerKnown", timeout: 8000 }, { invoke: "party_test", args: { n: 3 } }, { wait: 300 },
+      { invoke: "lead_test", log: true }, // 1 ball + ask
+      { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_read_test", log: true }, // the dashboard asks once
+      { invoke: "popover_click_test", args: { sel: "#pop-lead-yes" } }, { wait: 600 }, { invoke: "lead_test", log: true }, // 2 rest
+      { invoke: "popover_read_test", log: true }, { invoke: "popover_test", args: { open: false } },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "coding", hold: true } }, { wait: 300 }, { invoke: "lead_test", log: true }, { wait: 700 }, { invoke: "lead_test", log: true }, // 3·4 working
+      { invoke: "lead_cpu_test", args: { ms: 3000 }, log: true },
+      { key: "1", mods: 4 }, { wait: 400 }, { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "coding", hold: true } }, { wait: 300 }, { invoke: "lead_test", log: true }, // the other tab working too (the last folder handed in is in front at start)
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "coding", to: "waiting", hold: true } }, { wait: 300 }, { invoke: "lead_test", log: true }, { wait: 600 }, { invoke: "lead_test", log: true }, // 5·6 waiting
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "waiting", to: "idle" } }, { wait: 300 },
+      ...DONE("$ws"), { wait: 800 }, { invoke: "lead_test", log: true }, // 7 wild + coins
+      { invoke: "settings_set", args: { patch: { menubar: { icon: "ball" } } } }, { wait: 300 }, { invoke: "lead_test", log: true }, { invoke: "settings_get", log: true }], // 8 ball
+    check: ({ log }) => {
+      const L = [...log.matchAll(/^lab-invoke lead_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const cpu = JSON.parse(log.match(/^lab-invoke lead_cpu_test (.*)$/m)?.[1] || "null"), st = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
+      const [ball, rest, w1, w2, two, wait1, wait2, done, back] = L;
+      const [asked, after] = [...log.matchAll(/^lab-invoke popover_read_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      return [
+        ok(ball?.kind === "ball" && ball?.ask?.name, `처음은 몬스터볼 + 대시보드 한 번 안내(선두 이름) ${JSON.stringify(ball)}`),
+        ok(/메뉴바에 데려갈까요\?/.test(asked?.text || "") && !/데려갈까요/.test(after?.text || ""), `대시보드 홈 "○○를 메뉴바에 데려갈까요?" → [데려가기] 뒤 사라짐 ${JSON.stringify([asked?.text?.match(/🐾[^\n]*/)?.[0], /데려갈까요/.test(after?.text || "")])}`),
+        ok(two?.state === "working" && two.step === 2, `일하는 탭 2개 = 2배 ${JSON.stringify(two)}`),
+        ok(rest?.kind === "poke" && rest.state === "rest" && rest.marks === "dim,z" && rest.frame === 0 && rest.h === 22 && rest.frames > 10 && rest.ask === null, `파티 선두 — 쉼: 흐리게·z, 첫 프레임, 높이 22pt(44px), 안내는 다시 안 뜸 ${JSON.stringify(rest)}`),
+        ok(w1?.state === "working" && w1.step === 1 && w2?.state === "working" && w2.frame !== w1.frame && !w1.marks, `작업 중: 재생(프레임이 바뀜) ${JSON.stringify([w1?.frame, w2?.frame, w1?.marks])}`),
+        ok(cpu && cpu.ticks >= 20 && cpu.ticks <= 40 && cpu.made <= (w1?.frames || 0) + 5 && cpu.cpu < 5, `재생 중 틱 초당 10번쯤·그림은 한 번씩만 만듦·메인 프로세스 CPU 5% 밑 ${JSON.stringify(cpu)}`),
+        ok(wait1?.state === "waiting" && wait1.marks === "badge" && wait1.frame === 0 && wait2?.frame === 0, `입력 필요: 멈춤 + 빨간 ! ${JSON.stringify([wait1, wait2?.frame])}`),
+        ok(done?.state === "wild" && /grass/.test(done.marks || "") && /🌿\d+/.test(done.title || "") && /\+\d+/.test(done.title || ""), `완료: 코인 +n · 야생이 나와 풀숲 + 남은 초 ${JSON.stringify(done)}`),
+        ok(back?.kind === "ball" && back?.ask === null && st.menubar?.icon === "ball" && st.menubar?.iconAsked === true, `다시 몬스터볼, 고른 뒤엔 안 물음 ${JSON.stringify([back, st.menubar])}`),
+      ];
+    },
+  },
+  {
+    id: "menubar-lead-reduced", tags: ["smoke", "app"], what: "메뉴바 아이콘 = 파티 선두, macOS 동작 줄이기(시험: CVIM_TEST_REDUCED_MOTION): 작업 중에도 재생·틱 없이 첫 프레임, 표시는 그대로(! · z) (STA-24 규칙 6, #108)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_REDUCED_MOTION: "1" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { invoke: "party_test", args: { n: 2 } },
+      { invoke: "settings_set", args: { patch: { menubar: { icon: "poke" } } } },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "coding", hold: true } }, { wait: 300 }, { invoke: "lead_test", log: true },
+      { invoke: "lead_cpu_test", args: { ms: 1500 }, log: true }, { invoke: "lead_test", log: true },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "coding", to: "waiting", hold: true } }, { wait: 300 }, { invoke: "lead_test", log: true }],
+    check: ({ log }) => {
+      const [a, b, w] = [...log.matchAll(/^lab-invoke lead_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const cpu = JSON.parse(log.match(/^lab-invoke lead_cpu_test (.*)$/m)?.[1] || "null");
+      return [
+        ok(a?.state === "working" && a.reduced === true && a.frame === 0 && b?.frame === 0, `동작 줄이기: 작업 중에도 첫 프레임 ${JSON.stringify([a, b?.frame])}`),
+        ok(cpu && cpu.ticks <= 1, `틱 없음(그림 한 장) ${JSON.stringify(cpu)}`),
+        ok(w?.state === "waiting" && w.marks === "badge", `입력 필요 ! 는 그대로 ${JSON.stringify(w)}`),
+      ];
+    },
+  },
+  {
     id: "menubar", tags: ["smoke", "app"], what: "메뉴바: 기다리는 탭 수·5시간 한도 글자, 탭 상태 줄·한도 줄, 메뉴로 설정 바꾸기·아이콘 숨기기, 시험 앱은 아이콘을 안 띄움 (STA-19, #64)",
     data: "owner", mode: "direct", folders: ["a", "b"],
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },

@@ -2,7 +2,7 @@
 // cvim-core (Rust, desktop/core-rs), which owns the agent state machine, the adapters (Claude
 // hooks, Codex log, activity) and the path policy. Partner Pokémon data is still here (partner.cjs).
 // Data: ~/.cache/tamer (copied once from the Neovim CVIM's ~/.cache/cvim — core/paths.cjs).
-const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, Tray, powerMonitor, shell, nativeImage, nativeTheme } = require("electron");
+const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, Tray, powerMonitor, shell, nativeImage, nativeTheme, systemPreferences } = require("electron");
 const fs = require("node:fs");
 const path = require("node:path");
 const pty = require("node-pty");
@@ -11,7 +11,8 @@ const { HOME, CACHE, STATE, TABS, ROOT, writeFile, mkdirPrivate, tighten, pruneT
 const agents = require("./core/agents.cjs");
 const partner = require("./core/partner.cjs");
 const wild = require("./core/wild.cjs");
-const { trayModel, trayIcon, AGENTS: TRAY_AGENTS } = require("./tray.cjs");
+const { trayModel, trayIcon, AGENTS: TRAY_AGENTS, leadFrames, leadIcon, leadState } = require("./tray.cjs");
+const gif = require("./gif.cjs"); // the party lead's frames on the menu bar (STA-24, #108)
 const prices = require("./core/prices.cjs");
 const stats = require("./core/stats.cjs");
 const economy = require("./core/economy.cjs"); // 포켓코인 (#72)
@@ -545,6 +546,7 @@ function finishGame({ ws = null, cwd, agent = null, took = null, turnAt = null, 
   if (coins) {
     logLine(`coins ${ws ? `ws=${ws.id}` : "outside"} +${coins.gained} (${coins.pay}${coins.first ? `+${coins.first}` : ""}${coins.capped ? " capped" : ""})`);
     send("economy", { ...economy.summary(), ws: ws?.id || null, gained: coins.gained });
+    leadGain(coins.gained); // the menu bar's lead hops, "+5" beside it (STA-24)
   }
   // sometimes a wild Pokémon comes out (PLAN 3.6) — where and during whose task it showed up: kept with the
   // individual if it's caught (#44). A folder without a partner: more often (PKM-06)
@@ -916,11 +918,11 @@ const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
 const SETTINGS = path.join(CACHE, "ui", "settings.json");
 // card background: 0 % by default (#100) — only the Pokémon on the desktop (minimal mode, auto ≤ 30 %); a settings.json that has a value keeps it
 const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away" }, tabGlow: true, theme: "system", side: true, titles: true,
-  menubar: { on: true, text: "waiting" }, // 메뉴바 (STA-19, #64)
+  menubar: { on: true, text: "waiting", icon: "ball", iconAsked: false }, // 메뉴바 (STA-19, #64) · 아이콘: 몬스터볼 / 파티 선두 (STA-24, #108), asked once
   limits: { codex: true, claude: null }, // 채팅 없이 한도 (STA-21, #104): Codex app server · Claude usage API (null = not asked yet)
   background: true, loginOpen: false, backgroundSeen: false, // 백그라운드 (APP-21, #106): stay in the menu bar · open at login · the one-time notice
   outside: null }; // Tamer 밖 작업도 포켓몬에 (STA-23, #107): null = not asked yet
-const MENUBAR_TEXT = ["waiting", "limit", "none"];
+const MENUBAR_TEXT = ["waiting", "limit", "none"], MENUBAR_ICON = ["ball", "poke"];
 const MINIMAL = ["auto", "always", "never"];
 const WHEN = ["away", "always"]; // 보일 때 (#98): while another app is in front (as before) / always, Tamer in front too // 최소 모드 (#63): by the background (≤ 30 %), always, never
 const THEMES = ["system", "dark", "light"]; // 테마 (APP-20, #60)
@@ -934,7 +936,8 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
     tabGlow: b(raw?.tabGlow, SETTINGS_DEFAULT.tabGlow),
     side: b(raw?.side, SETTINGS_DEFAULT.side), // the right column shown (#97) — folded, the overlay shows with Tamer in front too
     titles: b(raw?.titles, SETTINGS_DEFAULT.titles), // 세션 제목 (#99): agents' conversation titles read and shown
-    menubar: { on: b(raw?.menubar?.on, SETTINGS_DEFAULT.menubar.on), text: MENUBAR_TEXT.includes(raw?.menubar?.text) ? raw.menubar.text : SETTINGS_DEFAULT.menubar.text },
+    menubar: { on: b(raw?.menubar?.on, SETTINGS_DEFAULT.menubar.on), text: MENUBAR_TEXT.includes(raw?.menubar?.text) ? raw.menubar.text : SETTINGS_DEFAULT.menubar.text,
+      icon: MENUBAR_ICON.includes(raw?.menubar?.icon) ? raw.menubar.icon : SETTINGS_DEFAULT.menubar.icon, iconAsked: b(raw?.menubar?.iconAsked, false) },
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
     limits: { codex: b(raw?.limits?.codex, SETTINGS_DEFAULT.limits.codex), claude: typeof raw?.limits?.claude === "boolean" ? raw.limits.claude : null },
     background: b(raw?.background, SETTINGS_DEFAULT.background), loginOpen: b(raw?.loginOpen, SETTINGS_DEFAULT.loginOpen), backgroundSeen: b(raw?.backgroundSeen, false),
@@ -946,6 +949,7 @@ nativeTheme.themeSource = settings.theme;
 // macOS switched between dark and light: "시스템 따라가기" pages re-pick their colours (#60)
 nativeTheme.on("updated", () => { broadcast("settings", settings); overlayUpdate(); });
 function setSettings(patch) {
+  if (patch?.menubar?.icon) patch = { ...patch, menubar: { ...patch.menubar, iconAsked: true } }; // chosen: the dashboard doesn't ask again (STA-24 rule 2)
   settings = readSettings({ ...settings, ...patch, overlay: { ...settings.overlay, ...(patch?.overlay || {}) }, menubar: { ...settings.menubar, ...(patch?.menubar || {}) }, limits: { ...settings.limits, ...(patch?.limits || {}) } });
   nativeTheme.themeSource = settings.theme; // menus, dialogs, scroll bars follow too (#60)
   writeFile(SETTINGS, JSON.stringify(settings));
@@ -1049,17 +1053,92 @@ function trayAct(act) {
 }
 const trayTemplate = (items) => items.map(({ act, submenu, ...it }) => ({ ...it, ...(submenu ? { submenu: trayTemplate(submenu) } : {}), ...(act ? { click: () => trayAct(act) } : {}) }));
 function trayUpdate() {
-  // a test app never puts an icon on the menu bar (it would sit on the tester's own) — tray_test reads the model
+  // a test app never puts an icon on the menu bar (it would sit on the tester's own) — tray_test reads the model,
+  // lead_test the icon's (STA-24)
+  if (TEST && app.isReady()) { leadAnim.base = trayNow().title; leadKick(); }
   if (TEST || draining || !app.isReady()) return;
-  if (!settings.menubar.on) { if (tray) { tray.destroy(); tray = null; } return; }
+  if (!settings.menubar.on) { if (tray) { tray.destroy(); tray = null; } leadStop(); return; }
   if (!tray) {
     tray = new Tray(trayIcon(nativeImage));
     tray.setToolTip("Tamer");
     const open = () => { popoverHide(); limitsRefresh(); tray.popUpContextMenu(Menu.buildFromTemplate(trayTemplate(trayNow().items))); }; // #104: older than a minute → read again (shown next time)
     tray.on("click", (_e, bounds) => popoverToggle(bounds)); // left: the dashboard (#105) · right: the menu
     tray.on("right-click", open);
+    leadAnim.img = null; leadAnim.title = null; leadAnim.shown = "ball"; // a new icon: drawn again below
   }
-  tray.setTitle(trayNow().title, { fontType: "monospacedDigit" });
+  leadAnim.base = trayNow().title;
+  leadKick();
+}
+
+// ── 메뉴바 아이콘 — 움직이는 파티 선두 (STA-24, #108): with 설정 › 메뉴바 "아이콘: 파티 선두", the lead's cached
+// GIF (never downloaded for this — POL-ASSET-01) instead of the Poké Ball: playing while tabs work (faster with more),
+// still with a red ! when one needs you, dimmed with a z at rest, grass at its feet and the seconds left while a wild
+// one is out, a hop and "+n" for coins. Ticks only while something moves (10 a second, 5 on battery); none with
+// macOS's 동작 줄이기 — the marks stay. Frames are made once per lead, each picture once (cached) ──────────────
+const leadAnim = { gif: null, lead: null, cache: new Map(), i: 0, timer: null, hopUntil: 0, gain: 0, gainUntil: 0, base: "", title: null, img: null, shown: null, ticks: 0, sets: 0, made: 0 };
+let leadSink = null; // tests: told what a Tray would be given (a test app puts no icon on the menu bar)
+const reducedMotion = () => { if (TEST && process.env.CVIM_TEST_REDUCED_MOTION) return true; try { return !!systemPreferences.getAnimationSettings().prefersReducedMotion; } catch { return false; } };
+const onBattery = () => { try { return powerMonitor.isOnBatteryPower(); } catch { return false; } };
+function leadPick() {
+  if (settings.menubar.icon !== "poke") return null;
+  const m = partyLite().list[0];
+  return m?.gif && fs.existsSync(m.gif) ? m : null;
+}
+function leadLoad(file) {
+  if (leadAnim.gif === file) return leadAnim.lead;
+  leadAnim.gif = file; leadAnim.cache.clear(); leadAnim.i = 0; leadAnim.img = null;
+  try { leadAnim.lead = leadFrames(gif.decode(fs.readFileSync(file))); } catch (e) { leadAnim.lead = null; logLine(`menubar lead unreadable ${String(e?.message || e).slice(0, 60)}`); }
+  return leadAnim.lead;
+}
+function leadImage(i, marks) {
+  const key = `${i}${marks.dim ? "d" : ""}${marks.z ? "z" : ""}${marks.badge ? "!" : ""}${marks.grass ? "g" : ""}${marks.hop ? "h" : ""}`;
+  let img = leadAnim.cache.get(key);
+  if (!img) { const { buf, width, height } = leadIcon(leadAnim.lead, i, marks); img = nativeImage.createFromBitmap(buf, { width, height, scaleFactor: 2 }); leadAnim.cache.set(key, img); leadAnim.made++; }
+  return img;
+}
+// what the icon shows now — as data (lead_test)
+function leadNow(now = Date.now()) {
+  const st = leadState({ tabs: [...workspaces.values()].map((w) => ({ state: w.state })), wild: wild.current(), now });
+  const reduced = reducedMotion();
+  return { ...st, reduced, hop: !reduced && now < leadAnim.hopUntil, gain: now < leadAnim.gainUntil ? leadAnim.gain : 0, fps: onBattery() ? 5 : 10 };
+}
+// the dashboard asks once (rule 2): the Poké Ball still, never asked, a lead whose picture is here
+function leadAsk() {
+  const mb = settings.menubar;
+  if (!mb.on || mb.icon !== "ball" || mb.iconAsked) return null;
+  const m = partyLite().list[0];
+  return m?.gif && fs.existsSync(m.gif) ? { name: m.name } : null;
+}
+const leadStop = () => { clearTimeout(leadAnim.timer); leadAnim.timer = null; };
+const leadKick = () => { leadStop(); leadTick(); };
+function leadGain(n) {
+  if (!(n > 0) || settings.menubar.icon !== "poke") return;
+  leadAnim.gain = n; leadAnim.gainUntil = Date.now() + 1500; leadAnim.hopUntil = Date.now() + 400;
+  leadKick();
+}
+function leadTick() {
+  leadAnim.timer = null;
+  const m = leadPick(), L = m && leadLoad(m.gif);
+  if (!L) { // the Poké Ball (the setting, no lead, or its picture isn't here)
+    if (leadAnim.shown !== "ball") { leadAnim.shown = "ball"; leadAnim.img = null; if (tray) tray.setImage(trayIcon(nativeImage)); leadAnim.sets++; }
+    if (leadAnim.title !== leadAnim.base) { leadAnim.title = leadAnim.base; tray?.setTitle(leadAnim.base, { fontType: "monospacedDigit" }); }
+    leadSink?.({ kind: "ball", title: leadAnim.base });
+    return;
+  }
+  const now = Date.now(), s = leadNow(now), moving = !s.reduced && s.step > 0;
+  leadAnim.ticks++;
+  if (moving) leadAnim.i = (leadAnim.i + s.step) % L.frames.length;
+  const frame = moving ? leadAnim.i : 0;
+  const marks = { badge: s.state === "waiting", grass: s.state === "wild", dim: s.state === "rest", z: s.state === "rest", hop: s.hop };
+  const img = leadImage(frame, marks);
+  if (img !== leadAnim.img) { leadAnim.img = img; leadAnim.shown = "poke"; tray?.setImage(img); leadAnim.sets++; }
+  const title = [leadAnim.base, s.state === "wild" ? `🌿${s.wildLeft ?? ""}` : "", s.gain ? `+${s.gain}` : ""].filter(Boolean).join(" ");
+  if (title !== leadAnim.title) { leadAnim.title = title; tray?.setTitle(title, { fontType: "monospacedDigit" }); }
+  leadSink?.({ kind: "poke", name: m.name, state: s.state, step: s.step, frame, frames: L.frames.length, w: img.getSize().width, h: img.getSize().height, title, reduced: s.reduced, fps: s.fps,
+    marks: Object.keys(marks).filter((k) => marks[k]).join(",") });
+  // the next tick: while it plays, a hop or "+n" is on, or the wild one's seconds count down
+  const wait = moving || s.hop ? 1000 / s.fps : s.gain || s.wildLeft != null ? 1000 : 0;
+  if (wait) leadAnim.timer = setTimeout(leadTick, wait);
 }
 // ── 채팅 없이 한도 (STA-21, #104 — POL-AGENT-02 rules 1 … 1-6) ──────────────────────────────────
 // Codex: its app server, on a timer too. Claude: only when turned on (asked once); the login read by the core
@@ -1200,6 +1279,7 @@ function popoverModel() {
     party: partyLite(), recent: recentDone.slice(0, 3), outside: settings.outside, // #107
     spend: settings.outside === true ? spendNow() : null, // 오늘 토큰 · ≈$ (#115 A5)
     eggs: (() => { try { const b = economy.bag(); return { egg: b.egg || 0, egg2: b.egg2 || 0 }; } catch { return { egg: 0, egg2: 0 }; } })(), // 🥚 in the bag (#116)
+    leadAsk: leadAsk(), // 메뉴바 아이콘을 파티 선두로? — once (STA-24 rule 2, #108)
   };
 }
 function popoverCreate() {
@@ -1534,6 +1614,7 @@ const popoverCommands = {
     return { ok: !!r?.ok, incubator: r?.incubator || null };
   },
   popover_settings() { popoverHide(); settingsOpen(); }, // ⚙: the 설정 창 by itself (APP-22 rule 8)
+  lead_icon({ on }) { setSettings({ menubar: { icon: on ? "poke" : "ball" } }); logLine(`menubar icon ${on ? "poke" : "ball"} (asked)`); }, // the one-time line's answer (STA-24 rule 2)
   popover_dex({ id }) { popoverHide(); pokeOpen({ view: "dex", sel: id }); }, // 도감에서 보기 — the Pokémon window, no terminal window (#113 P2)
   popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },
   limits_refresh: () => limitsRefresh({ user: true }), // pressed in the dashboard = the user's 새로 고침 (STA-21)
@@ -2169,6 +2250,16 @@ const testCommands = {
   own_open_test(a = {}) { if (Object.hasOwn(OWN, a.name)) OWN[a.name].open(a); return { open: !!ownWin(a.name) }; },
   own_close_test({ name }) { if (Object.hasOwn(OWN, name)) OWN[name].close(); return { open: !!ownWin(name) }; },
   own_up_test: ({ name }) => !!ownWin(name),
+  // 메뉴바 아이콘 (STA-24): what a Tray would be given now, as data (a test app puts no icon on the menu bar) — and, over
+  // ms, the main process's CPU while the lead plays, the ticks, the pictures set and made
+  lead_test() { let v = null; leadSink = (x) => { v = x; }; leadKick(); return { ...v, ask: leadAsk() }; },
+  async lead_cpu_test({ ms = 3000 } = {}) {
+    leadSink = () => {}; leadKick();
+    const a = process.cpuUsage(), t0 = Date.now(), n0 = { ticks: leadAnim.ticks, sets: leadAnim.sets, made: leadAnim.made };
+    await new Promise((r) => setTimeout(r, Number(ms) || 3000));
+    const b = process.cpuUsage(a), el = Date.now() - t0;
+    return { cpu: Math.round(((b.user + b.system) / 1000 / el) * 1000) / 10, ms: el, ticks: leadAnim.ticks - n0.ticks, sets: leadAnim.sets - n0.sets, made: leadAnim.made - n0.made, cached: leadAnim.cache.size };
+  },
   own_resize_test({ name, w, h }) { const x = ownWin(name); if (x) x.setContentSize(Math.max(100, Number(w) || 400), Math.max(100, Number(h) || 300)); return x ? x.getBounds() : null; }, // its minimum holds (#38)
   own_click_test: ({ name, sel }) => ownJs(name, `(() => { const b = document.querySelector(${JSON.stringify(String(sel))}); if (b) b.click(); return !!b; })()`),
   own_key_test: ({ name, key, meta }) => ownJs(name, `(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(String(key))}, metaKey: ${!!meta}, bubbles: true })); return true; })()`),

@@ -4,7 +4,7 @@
 import { invoke, listen } from "./host.js";
 import { DOING, esc } from "./overlay-view.js";
 import { lvLine } from "./poke/card.js";
-import { createWild } from "./wild.js";
+import { createWild, josa } from "./wild.js";
 
 const $ = (s) => document.querySelector(s);
 const WORKING = ["thinking", "coding", "reading", "searching", "bash", "agent", "tool", "compact"];
@@ -163,10 +163,18 @@ function drawTabs(m) {
   $("#pop-tabs").innerHTML = `<div class="pop-h"><span>Tamer 탭</span></div>${tabs.slice(0, TAB_MAX).map(row).join("")}${tabs.length > TAB_MAX ? `<div class="pop-more">외 ${tabs.length - TAB_MAX}개 탭</div>` : ""}`;
 }
 
+// 메뉴바 아이콘 (STA-24 rule 2, #108): asked once, here — the party lead on the menu bar instead of the Poké Ball
+function drawLead(m) {
+  const a = m.leadAsk;
+  $("#pop-lead").innerHTML = a ? `<div class="pop-lead"><span>🐾 <b>${esc(josa(a.name, "을", "를"))}</b> 메뉴바에 데려갈까요?<small>몬스터볼 자리에서 작업 상태에 따라 움직여요 — 설정 › 메뉴바에서 바꿀 수 있어요</small></span>`
+    + `<span class="pop-lead-do"><button id="pop-lead-yes" class="pop-primary">데려가기</button><button id="pop-lead-no">괜찮아요</button></span></div>` : "";
+}
+
 function draw(m) {
   if (!m) return;
   model = m;
   const now = Date.now();
+  drawLead(m);
   drawPartner(m);
   drawParty(m);
   drawProg(m);
@@ -199,6 +207,7 @@ document.addEventListener("click", (e) => {
   else if (t.id === "pop-settings") invoke("popover_settings");
   else if (t.id === "pop-quit") invoke("popover_quit");
   else if (t.id === "pop-party-go") invoke("popover_party"); // 포켓몬 창의 ⭐ 파티 (#107)
+  else if (t.id === "pop-lead-yes" || t.id === "pop-lead-no") invoke("lead_icon", { on: t.id === "pop-lead-yes" }).then(() => invoke("popover_state")).then(draw).catch(() => {}); // STA-24
   else if (t.id === "pop-egg-in") invoke("egg_in", { kind: t.dataset.kind }).then(() => invoke("popover_state")).then(draw).catch(() => {}); // 🥚 (#116) // 완전히 끄기 (#106 — the right-click menu's "Tamer 종료" too)
   else if (t.dataset.page) showPage(t.dataset.page); // 위쪽 탭 (#118)
   else if (t.dataset.agent) { agentPick = t.dataset.agent; keep.set("pop.agent", agentPick); drawLimits(model, Date.now()); } // 에이전트 칩
