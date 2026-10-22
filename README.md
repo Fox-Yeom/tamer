@@ -3,7 +3,7 @@
 <h1 align="center">Tamer</h1>
 
 <p align="center"><b>AI 코딩 에이전트를 길들이는 터미널</b><br>
-Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열고, 지금 무엇을 하는지·입력이 필요한지·끝났는지를 한눈에.</p>
+Claude Code · Codex · Gemini CLI · OpenCode · Cursor CLI를 폴더마다 셸과 함께 열고, 지금 무엇을 하는지·입력이 필요한지·끝났는지를 한눈에.</p>
 
 <p align="center">
 <img alt="beta" src="https://img.shields.io/badge/release-0.8.0--beta-orange">
@@ -18,7 +18,7 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 
 ## 왜
 - **에이전트가 지금 뭘 하는지 바로 보입니다**: 생각 중 · 파일 편집 · 명령 실행 · **입력 필요** · 완료 · 중단 · 실패를 탭과 바탕화면 오버레이에 표시합니다. 다른 앱을 쓰고 있어도 알 수 있어요.
-- **에이전트를 가리지 않습니다**: 쓰던 터미널처럼 셸에서 `claude`, `codex`, `gemini`, `opencode`를 그대로 치면 됩니다. 설치 방식(nvm·Homebrew·npm…)이 달라도 내 터미널에서 되면 Tamer에서도 됩니다.
+- **에이전트를 가리지 않습니다**: 쓰던 터미널처럼 셸에서 `claude`, `codex`, `gemini`, `opencode`, `agent`를 그대로 치면 됩니다. 설치 방식(nvm·Homebrew·npm…)이 달라도 내 터미널에서 되면 Tamer에서도 됩니다.
 - **사용량이 늘 보입니다**: 모델 · 컨텍스트 · 5시간/7일 한도를 상단 막대로 표시합니다.
 - **재미도 조금**: 작업을 끝낼 때마다 폴더의 파트너 포켓몬이 경험치를 얻고 진화하며, 가끔 야생 포켓몬이 나타납니다(비공식 팬 기능).
 
@@ -80,6 +80,7 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 | Codex | 🟢 전체 | 사용량(모델·ctx·5h·7d) |
 | Gemini CLI | 🟢 전체 | 에이전트 연결 창의 **"확장 연결"** 버튼 한 번(안 하면 🟡) |
 | OpenCode | 🟢 전체 | |
+| Cursor CLI | 🟢 전체 | 에이전트 연결 창의 **"훅 연결"** 한 번(안 하면 🟡). 사용량 막대·대화 제목·입력 필요는 없음 |
 | 그 밖의 CLI 에이전트 | 🟡 기본 | `~/.cvim/agents.json`에 등록하면 작업 중/대기, 오래 일하다 끝나면 완료로 봄 |
 
 🟢 전체 = 생각 중·도구·입력 필요·완료·중단까지, 파트너 경험치·야생 포켓몬 / 🟡 기본 = 작업 중·대기(완료는 추정, 경험치 절반, 야생 없음)
@@ -122,6 +123,7 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 - **세션 제목**(켜져 있을 때): Claude Code 대화 기록에서는 제목 줄(`ai-title` 등)만, Codex는 세션 목록 `~/.codex/session_index.jsonl`의 제목만 읽고, 터미널 창 제목도 씁니다. 제목은 메모리에만 두고, 직접 붙인 셸 이름만 탭 복원용으로 이 맥에 남아요. 끄면 읽지 않아요.
 - 에이전트는 내 터미널과 같은 환경으로 실행됩니다(시작할 때 셸 환경을 한 번 읽고, 메모리에만 둠).
 - Claude는 Tamer가 띄울 때(또는 직접 켠 "셸에서 친 Claude도 연결"이 있을 때 Tamer 셸 안에서만) 상태 표시용 설정이 붙고, `~/.claude/settings.json`은 건드리지 않습니다. 연결을 켜면 셸 설정 파일에 표시된 블록 하나가 들어가고(사본은 `~/.cache/tamer/backup/shell-rc`), 해제하면 그 블록만 빠집니다.
+- Cursor CLI는 실행마다 훅을 끼우는 방법이 없어, 연결을 켜면 `~/.cursor/hooks.json`에 Tamer 항목만 추가합니다(사본은 `~/.cache/tamer/backup/cursor-hooks`). 그 훅은 Tamer 안에서만 기록하고(`CVIM_TAB_ID`가 없으면 종료), 경로·명령·프롬프트는 남기지 않습니다. 명령 승인은 바꾸지 않습니다. 해제하면 그 항목만 빠집니다.
 
 ## 피드백 · 문제 보고
 - **GitHub Issues**: 이 저장소의 [Issues](../../issues)에 바로 써 주세요(GitHub 계정 필요). 이슈는 **누구나 볼 수 있으니** 이름 · 메일 · 회사 · 프로젝트 이름 같은 개인 정보는 넣지 마세요.
@@ -137,7 +139,7 @@ Claude Code · Codex · Gemini CLI · OpenCode를 폴더마다 셸과 함께 열
 - Windows · Linux는 아직 지원하지 않습니다.
 
 ## 지우기
-1. ("셸에서 친 Claude도 연결"을 켰다면, 먼저) ⌘G → ⚙ 에이전트 연결 상태 → **연결 해제**. 이미 앱을 지웠다면 셸 설정 파일(`~/.zshrc` · `~/.bash_profile` · `~/.config/fish/config.fish` 중 쓰는 것)에서 `# >>> Tamer: Claude 연결` 부터 `# <<< Tamer: Claude 연결 <<<` 까지 지우세요(Tamer 밖에서는 아무 일도 하지 않는 줄이라 남아 있어도 동작엔 영향 없음)
+1. ("셸에서 친 Claude도 연결" 또는 Cursor **훅 연결**을 켰다면, 먼저) ⌘G → ⚙ 에이전트 연결 상태 → **연결 해제**. 이미 앱을 지웠다면 셸 설정 파일(`~/.zshrc` · `~/.bash_profile` · `~/.config/fish/config.fish` 중 쓰는 것)에서 `# >>> Tamer: Claude 연결` 부터 `# <<< Tamer: Claude 연결 <<<` 까지 지우고, `~/.cursor/hooks.json`에서 명령이 `tamer-cursor.sh`인 항목만 지우세요(Tamer 밖에서는 아무 일도 하지 않는 훅이라 남아 있어도 동작엔 영향 없음)
 2. Tamer 종료 → Applications에서 Tamer를 휴지통으로
 3. (데이터까지) `~/.cache/tamer`, `~/Library/Application Support/Tamer` 삭제
 4. (Gemini 확장을 연결했다면) `gemini extensions uninstall cvim`

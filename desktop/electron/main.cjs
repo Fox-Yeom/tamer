@@ -98,6 +98,38 @@ async function claudeLinkAsk() {
   catch (e) { logLine(`claude link error ${e.code || e.message}`); return { ok: false, msg: `연결하지 못했어요: ${e.message}` }; }
 }
 
+// Cursor CLI only reads ~/.cursor/hooks.json (no per-run flag). Ask, then append Tamer's
+// observational hooks. The launcher no-ops outside Tamer. Shell approval is left alone.
+async function cursorLinkAsk() {
+  const p = agents.cursorLinkPreview();
+  const file = p.file.replace(HOME, "~");
+  const r = await dialog.showMessageBox(win, {
+    type: "question", buttons: ["연결", "취소"], defaultId: 0, cancelId: 1,
+    message: "Cursor CLI를 Tamer에 연결할까요?",
+    detail: `생각 중·도구·완료를 Tamer에 알려 줍니다. 5시간·주간 한도와 ctx는 Cursor가 알려 주지 않아요.\n\n${file}에 이 이벤트만 추가해요: ${p.events.join(", ")}\n이미 있는 훅은 그대로 두고, 명령 승인(beforeShellExecution)은 넣지 않아요.\n\nTamer 안에서 띄운 agent만 기록해요(CVIM_TAB_ID가 없으면 아무 것도 쓰지 않음). 넣기 전 파일 사본은 ~/.cache/tamer/backup/cursor-hooks에 두고, 에이전트 연결 창에서 언제든 해제할 수 있어요. 다음에 띄우는 Cursor부터 적용돼요.`,
+  });
+  if (r.response !== 0) return { ok: false, cancelled: true };
+  try {
+    const l = agents.cursorLink();
+    logLine(`cursor link ${l.already ? "already" : "ok"} ${l.file}`);
+    return { ok: true, msg: "연결했어요 — 다음에 띄우는 Cursor부터 적용돼요" };
+  } catch (e) { logLine(`cursor link error ${e.code || e.message}`); return { ok: false, msg: `연결하지 못했어요: ${e.message}` }; }
+}
+async function cursorUnlinkAsk() {
+  const file = agents.cursorHooksPath().replace(HOME, "~");
+  const r = await dialog.showMessageBox(win, {
+    type: "question", buttons: ["해제", "취소"], defaultId: 0, cancelId: 1,
+    message: "Cursor CLI 연결을 해제할까요?",
+    detail: `${file}에서 Tamer가 넣은 훅만 지워요(지우기 전 사본: ~/.cache/tamer/backup/cursor-hooks). 다른 훅은 남아요. 다음에 띄우는 Cursor부터 적용돼요.`,
+  });
+  if (r.response !== 0) return { ok: false, cancelled: true };
+  try {
+    const u = agents.cursorUnlink();
+    logLine(`cursor unlink ${u.absent ? "absent" : "ok"}`);
+    return { ok: true, msg: "해제했어요 — 다음에 띄우는 Cursor부터" };
+  } catch (e) { logLine(`cursor unlink error ${e.code || e.message}`); return { ok: false, msg: `해제하지 못했어요: ${e.message}` }; }
+}
+
 function userStatusline() {
   try {
     const cmd = JSON.parse(fs.readFileSync(path.join(HOME, ".claude/settings.json"), "utf8"))?.statusLine?.command;
@@ -361,7 +393,7 @@ function typedKind(d, args = "") {
   if (d.state === "codex_log") return "codex_log";
   // a Claude that came up with Tamer's --settings (the opt-in shell line, #45): hooks + status line like ⌘G
   if (d.key === "claude") return ROOT && String(args).includes(path.join(ROOT, "claude/settings.json")) ? "hooks" : "claude_log";
-  if (d.key === "gemini" || d.key === "opencode") return agents.stateOf(d.key) === "hooks" ? "hooks" : "activity";
+  if (d.key === "gemini" || d.key === "opencode" || d.key === "cursor") return agents.stateOf(d.key) === "hooks" ? "hooks" : "activity";
   return "activity";
 }
 
@@ -1309,6 +1341,7 @@ const commands = {
   // to another copy is replaced)
   async agent_fix({ key }) {
     if (key === "claude") return claudeLinkAsk(); // #45
+    if (key === "cursor") return cursorLinkAsk();
     if (key !== "gemini") throw new Error("nothing to fix");
     const ext = ROOT && path.join(ROOT, "agents", "gemini-extension");
     const gem = agents.where("gemini");
@@ -1328,6 +1361,7 @@ const commands = {
   },
   // #45: undo the opt-in shell line (the marked block only; a copy of the file is kept first)
   async agent_unfix({ key }) {
+    if (key === "cursor") return cursorUnlinkAsk();
     if (key !== "claude") throw new Error("nothing to undo");
     const f = agents.claudeLinkFile();
     const r = await dialog.showMessageBox(win, { type: "question", buttons: ["해제", "취소"], defaultId: 0, cancelId: 1,
