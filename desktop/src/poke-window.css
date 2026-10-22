@@ -1,0 +1,13 @@
+@import "./theme.css";
+@import "./poke/poke.css";
+
+/* 포켓몬 창 (PKM-09 · APP-22 rule 10, #113 P2): a titled window of its own — macOS's title bar moves it (APP-22
+   rule 7); the Pokémon window's frame (#dex, src/poke/poke.css) fills it */
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; background: var(--pk-bg); color: var(--pk-fg); overflow: hidden;
+  font: 13px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+.dim { color: var(--dim); } /* as in the main window, where these screens were drawn before */
+/* 알림 (PKM-09 rule 6): bought, used, burning — over the window */
+#toast { position: fixed; z-index: 40; top: 12px; right: 16px; background: var(--raised-hi); color: var(--fg); padding: 8px 12px; border-radius: 6px; opacity: 0; transition: opacity .2s; pointer-events: none; }
+#toast.show { opacity: 1; }
+body.ui-test *, body.ui-test *::before, body.ui-test *::after { animation: none !important; transition: none !important; caret-color: transparent !important; }

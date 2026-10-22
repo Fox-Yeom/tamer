@@ -14,8 +14,8 @@ applyTheme();
 darkMedia.addEventListener("change", applyTheme);
 
 const close = () => invoke("catch_close").catch(() => {});
-// no 이 탭의 파트너로 / 도감에서 보기 here: the dex is the Pokémon window's, after #113
-const wild = createWild($("#catch-wild"), { invoke, log: (line) => invoke("catch_log", { line }).catch(() => {}) });
+// caught: 📕 도감에서 보기 opens the Pokémon window on it (#113 P2 — no terminal window); no 이 탭의 파트너로 here (there may be no tab)
+const wild = createWild($("#catch-wild"), { invoke, log: (line) => invoke("catch_log", { line }).catch(() => {}), dexButton: (e) => invoke("catch_dex", { id: e.id }).catch(() => {}) });
 listen("wild", (e) => wild.show(e.payload));
 listen("wild-throw", (e) => wild.play(e.payload));
 listen("wild-end", (e) => wild.end(e.payload));

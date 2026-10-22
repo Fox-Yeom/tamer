@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 포켓몬 창 (PKM-09 · APP-22 rule 10, #113 P2): a window of its own — our own files only (POLICY.md 11) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+    <title>포켓몬</title>
+    <link rel="stylesheet" href="/src/poke-window.css" />
+  </head>
+  <body>
+    <!-- 홈 · 파트너 고르기 · 도감 · 내 포켓몬 · 파티 · 상점 · 가방 — src/poke/, docs/UI_SYSTEM.md -->
+    <section id="dex">
+      <div class="pk-window">
+        <header id="dex-title"></header>
+        <nav id="dex-regions"></nav>
+        <div class="dex-body">
+          <div id="dex-grid"></div>
+          <div id="box-grid" hidden></div>
+          <div class="dex-preview"><img id="dex-img" alt="" /><div id="dex-name"></div><div id="dex-meta"></div>
+            <button id="dex-take" hidden>이 탭의 파트너로</button><div id="dex-from"></div></div>
+        </div>
+        <footer><span id="dex-help"></span><span id="dex-pos"></span></footer>
+      </div>
+    </section>
+    <div id="toast"></div>
+    <script type="module" src="/src/poke/window.js"></script>
+  </body>
+</html>

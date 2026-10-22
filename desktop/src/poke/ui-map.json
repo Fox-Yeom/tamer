@@ -24,16 +24,16 @@
       ]
     },
     "choose": {
-      "what": "파트너 고르기 (새 폴더 · 🔄 파트너 바꾸기 · 파트너 칸 버튼)",
-      "entry": "openChoose",
+      "what": "파트너 고르기 — 포켓몬 창(poke.html, #113 P2) 탭: 파트너 칸 [파트너 고르기] · 🔄 파트너 바꾸기 · 졸업 띠 (저절로 안 뜸, A8)",
+      "entry": "pokeOpen(\"choose\")",
       "scenes": [
         "choose-starter",
         "choose-box"
       ]
     },
     "dex": {
-      "what": "도감 (⌘D)",
-      "entry": "openDex",
+      "what": "도감 (⌘D) — 포켓몬 창(poke.html, 따로 창 — APP-22 규칙 10, #113 P2)",
+      "entry": "pokeOpen(\"dex\")",
       "scenes": [
         "dex-grid",
         "dex-search",
@@ -147,7 +147,7 @@
   "components": {
     "pk-party": {
       "what": "파티 화면 — 칸·다음 차례·넣기 목록 (#107)",
-      "files": ["src/main.js", "src/poke/poke.css"],
+      "files": ["src/poke/window.js", "src/poke/poke.css"],
       "selectors": [".pk-party", ".pk-party-"],
       "functions": ["partyRender", "partyChange"],
       "screens": ["party"]
@@ -182,11 +182,12 @@
       ]
     },
     "pk-window": {
-      "what": "포켓몬 창 틀: 제목 줄 탭(파트너 고르기·도감·내 포켓몬)·요약·✕, 도구 줄(지역·정렬·검색), 본문, 안내 줄",
+      "what": "포켓몬 창 — 따로 뜨는 창(poke.html, 제목 줄로 옮김, 터미널 창 없이 — APP-22 규칙 7·8·10, #113 P2): 탭 줄(홈·파트너 고르기·도감·내 포켓몬·파티·상점·가방)·요약·✕, 도구 줄(지역·정렬·검색), 본문, 안내 줄 — 틀이 창을 채움",
       "files": [
-        "index.html",
+        "poke.html",
+        "src/poke-window.css",
         "src/poke/poke.css",
-        "src/main.js"
+        "src/poke/window.js"
       ],
       "selectors": [
         "#dex",
@@ -203,11 +204,12 @@
         "dexView",
         "dexTitle",
         "closeDex",
-        "openChoose",
-        "closeChoose",
-        "chooseOpen",
         "dexKey",
-        "keydown (pokeOnTop)"
+        "keydown (poke window)",
+        "pokeOpen",
+        "pokeClose",
+        "pokeCommands",
+        "pokeTab"
       ],
       "screens": [
         "choose",
@@ -223,7 +225,8 @@
       "files": [
         "src/poke/poke.css",
         "src/theme.css",
-        "src/main.js"
+        "src/main.js",
+        "src/poke/window.js"
       ],
       "selectors": [
         ".pk-coin",
@@ -267,7 +270,7 @@
       "what": "상점·가방 아이템 카드(그림 · 이름 · 효과 · 값/수, 꺼짐·켜짐 점)와 미리보기의 사기·쓰기(#dex-take, .confirm = 두 번째 누름) (#76)",
       "files": [
         "src/poke/poke.css",
-        "src/main.js"
+        "src/poke/window.js"
       ],
       "selectors": [
         ".pk-item",
@@ -307,7 +310,7 @@
       "what": "상점 수 고르기 − n + (최대 = 살 수 있는 수) (#76)",
       "files": [
         "src/poke/poke.css",
-        "src/main.js"
+        "src/poke/window.js"
       ],
       "selectors": [
         ".pk-qty"
@@ -326,6 +329,7 @@
         "src/poke/egg.css",
         "src/popover.js",
         "src/main.js",
+        "src/poke/window.js",
         "src/poke/card.js"
       ],
       "selectors": [
@@ -396,6 +400,7 @@
       "what": "포켓몬 카드 (이름·레벨 줄(Lv · 진화 Lv/친밀도/교환/졸업까지 — #74)·위치·NEW·✨·번호 키)",
       "files": [
         "src/poke/card.js",
+        "src/poke/window.js",
         "src/poke/poke.css"
       ],
       "selectors": [
@@ -416,7 +421,7 @@
     "pk-tile": {
       "what": "도감 칸 (44px, 잡음·만남·?·NEW·✨·파트너 점·번호)",
       "files": [
-        "src/main.js",
+        "src/poke/window.js",
         "src/poke/poke.css"
       ],
       "selectors": [
@@ -437,7 +442,7 @@
     "pk-search": {
       "what": "검색칸·결과 수·결과 없음 안내 (포켓몬 GO 검색어)",
       "files": [
-        "src/main.js",
+        "src/poke/window.js",
         "src/poke/poke.css"
       ],
       "selectors": [
@@ -464,8 +469,8 @@
     "pk-preview": {
       "what": "오른쪽 미리보기 + [이 탭의 파트너로] (다른 폴더는 두 번)",
       "files": [
-        "index.html",
-        "src/main.js",
+        "poke.html",
+        "src/poke/window.js",
         "src/poke/poke.css"
       ],
       "selectors": [
@@ -596,7 +601,7 @@
       "what": "홈 본문: 오늘·연속 카드, 7일 막대, 에이전트 한도 막대 (#44) · 🪙 오늘 번 코인 칸·시작 코인 띠 (#72)",
       "files": [
         "src/poke/poke.css",
-        "src/main.js"
+        "src/poke/window.js"
       ],
       "selectors": [
         ".pk-home",
@@ -622,7 +627,7 @@
       "what": "연구 스탬프 7칸(찍힌 칸 = 날짜) · 남은 수 · 다음 대발견 줄 (#82, PKM-24) · ✦ 리서치 단계·전설의 길 세대 줄(#86)",
       "files": [
         "src/poke/poke.css",
-        "src/main.js"
+        "src/poke/window.js"
       ],
       "selectors": [
         ".pk-stamps",

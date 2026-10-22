@@ -64,6 +64,7 @@ let overlay; // desktop overlay (overlay.html): partners while you're in another
 let popover = null; // 메뉴바 미니 대시보드 (popover.html, STA-22 #105): the menu bar icon's left click
 let catchWin = null; // 야생 잡기 창 (catch.html, PKM-08 rule 3 #119): the overlay's wild notice clicked
 let settingsWin = null; // 설정 창 (settings.html, APP-19 · APP-22 rule 9 #113 P1): ⌘, · the menus · the dashboard
+let pokeWin = null; // 포켓몬 창 (poke.html, PKM-09 · APP-22 rule 10 #113 P2): ⌘P · ⌘D · the partner pane · the dashboard · the overlay
 let activeWs = null; // the tab on screen in the main window
 let core; // cvim-core process (started when the app is ready)
 const workspaces = new Map(); // ws id -> { id, cwd, agent, opened, partnerReady, partner, sessions }
@@ -73,13 +74,17 @@ const sessions = new Map(); // session id -> session ({ id, parent?, cwd, agent,
 const tabOf = (s) => s.parent || s;
 const pendingOpen = []; // folders handed to the app (Dock / Finder) before the window was ready
 
+// what the Pokémon window hears of the main window's events — coins, progress, the box, this tab's partner (APP-22 rule 3)
+const POKE_EVENTS = new Set(["economy", "progress", "incubator", "hatched", "partner", "partner-choose", "partner-today"]);
 function send(event, payload) {
   if (win && !win.isDestroyed()) win.webContents.send("host-event", { event, payload });
+  if (pokeWin && !pokeWin.isDestroyed() && POKE_EVENTS.has(event)) pokeWin.webContents.send("host-event", { event, payload });
 }
 
 // to every window (wild encounters show in any — the dashboard catches too, #105)
 function broadcast(event, payload) {
   send(event, payload);
+  if (pokeWin && !pokeWin.isDestroyed() && !POKE_EVENTS.has(event)) pokeWin.webContents.send("host-event", { event, payload });
   if (overlay && !overlay.isDestroyed()) overlay.webContents.send("host-event", { event, payload });
   if (popover && !popover.isDestroyed()) popover.webContents.send("host-event", { event, payload });
   if (catchWin && !catchWin.isDestroyed()) catchWin.webContents.send("host-event", { event, payload });
@@ -253,7 +258,7 @@ function closeWorkspace(id) {
   }
   setShellAgent(ws, null);
   workspaces.delete(id);
-  if (activeWs === id) activeWs = null;
+  if (activeWs === id) { activeWs = null; pokeTabChanged(); }
   saveSession();
   overlayUpdate();
   overlaySync(); // the last tab gone: no overlay (#97)
@@ -1297,6 +1302,9 @@ function catchClose() {
 // ── 설정 창 (APP-19 · APP-22 rule 9, #113 P1): a titled window — macOS's title bar moves it (APP-22 rule 7) — that
 // opens by itself, never with the terminal window (rule 8). Closed = gone (rule 5); the kind shown last is kept
 // while the app runs (#101) ─────
+// where a titled window of its own opens: the screen the pointer is on — tests: the main window's (else the main screen), so a
+// scene's picture doesn't change size with wherever the real pointer happens to be (a Retina screen or not)
+const ownArea = () => (TEST ? (win && !win.isDestroyed() ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay()) : screen.getDisplayNearestPoint(screen.getCursorScreenPoint())).workArea;
 const SETTINGS_W = 760, SETTINGS_H = 580, SETTINGS_PAGES = ["general", "overlay", "menubar"];
 let settingsLastPage = "general";
 function settingsOpen(page) {
@@ -1306,7 +1314,7 @@ function settingsOpen(page) {
     if (!TEST) { settingsWin.show(); settingsWin.focus(); }
     return;
   }
-  const area = screen.getDisplayNearestPoint(screen.getCursorScreenPoint()).workArea;
+  const area = ownArea();
   settingsWin = new BrowserWindow({
     title: "설정", width: SETTINGS_W, height: SETTINGS_H, x: Math.round(area.x + (area.width - SETTINGS_W) / 2), y: Math.round(area.y + Math.max(0, (area.height - SETTINGS_H) / 3)),
     show: false, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, movable: true,
@@ -1326,6 +1334,52 @@ function settingsClose() {
 }
 // the consent dialogs (limits · outside): over the 설정 창 when it's there, else the main window, else on their own (APP-22 rule 4)
 const dialogParent = () => (settingsWin && !settingsWin.isDestroyed() ? settingsWin : win && !win.isDestroyed() ? win : undefined);
+
+// ── 포켓몬 창 (PKM-09 · APP-22 rule 10, #113 P2): 홈 · 파트너 고르기 · 도감 · 내 포켓몬 · 파티 · 상점 · 가방 in a titled
+// window of its own — macOS's title bar moves it (rule 7), it never makes or raises the terminal window (rule 8).
+// "This tab" is the one on screen in the main window (activeWs, rule 2); closed = gone (rule 5), the last view and
+// the search kept here while the app runs (PKM-09 rule 2, PKM-13 rule 5) ─────
+const POKE_W = 1120, POKE_H = 740, POKE_VIEWS = ["home", "choose", "dex", "box", "party", "shop", "bag"];
+const pokeKept = { view: "dex", query: "" };
+let pokeWant = null; // what the window opens on: { view, sel }
+const pokeWantOf = (a = {}) => ({ view: POKE_VIEWS.includes(a.view) ? a.view : null, sel: Number(a.sel) > 0 ? Math.floor(Number(a.sel)) : null });
+function pokeOpen(a) {
+  pokeWant = pokeWantOf(a);
+  if (pokeWin && !pokeWin.isDestroyed()) {
+    pokeWin.webContents.send("host-event", { event: "poke-open", payload: pokeWant });
+    if (!TEST) { pokeWin.show(); pokeWin.focus(); }
+    return;
+  }
+  const area = ownArea();
+  const w = Math.min(POKE_W, area.width - 40), h = Math.min(POKE_H, area.height - 40);
+  pokeWin = new BrowserWindow({
+    title: "포켓몬", width: w, height: h, x: Math.round(area.x + (area.width - w) / 2), y: Math.round(area.y + Math.max(0, (area.height - h) / 3)),
+    minWidth: 820, minHeight: 560, show: false, resizable: true, fullscreenable: false, movable: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a211d" : "#e3eedb", // --pk-bg
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false },
+  });
+  pokeWin.on("closed", () => { pokeWin = null; });
+  pokeWin.webContents.on("will-navigate", (e) => e.preventDefault());
+  pokeWin.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  pokeWin.once("ready-to-show", () => { if (!pokeWin) return; if (TEST) pokeWin.showInactive(); else { pokeWin.show(); pokeWin.focus(); } });
+  pokeWin.loadFile(path.join(DIST, "poke.html"));
+  logLine(`poke open ${pokeWant.view || "-"}${pokeWant.sel ? ` #${pokeWant.sel}` : ""}`);
+}
+function pokeClose() {
+  if (pokeWin && !pokeWin.isDestroyed()) { pokeWin.destroy(); logLine("poke closed"); }
+  pokeWin = null;
+}
+// this tab for the window: its folder's name and partner (names, pictures, levels — what the window shows)
+function pokeTab() {
+  const ws = workspaces.get(activeWs);
+  if (!ws) return null;
+  const p = ws.partner;
+  return { ws: ws.id, folder: path.basename(ws.cwd), partner: p?.uid != null ? { id: p.id, uid: p.uid, name: p.name, shiny: !!p.shiny, lv: p.lv ?? null } : null };
+}
+// the tab on screen changed (or closed): the window follows (rule 2)
+function pokeTabChanged() {
+  if (pokeWin && !pokeWin.isDestroyed()) pokeWin.webContents.send("host-event", { event: "poke-tab", payload: pokeTab() });
+}
 
 function trayUpdateSoon() {
   if (trayTimer) return;
@@ -1470,7 +1524,7 @@ const popoverCommands = {
   popover_tab({ ws }) { popoverHide(); focusMain(String(ws)); },
   popover_open() { popoverHide(); focusMain(); },
   popover_quit() { popoverHide(); logLine("popover quit"); app.quit(); }, // 완전히 끄기 — as ⌘Q / the menu's Tamer 종료
-  popover_party() { popoverHide(); focusMain(); whenUi(() => send("open-dex", { view: "party" })); }, // ⭐ 파티 (#107)
+  popover_party() { popoverHide(); pokeOpen({ view: "party" }); }, // ⭐ 파티 (#107) — the Pokémon window by itself (APP-22 rule 8)
   party_set: (args) => commands.party_set(args), // 선두 바꾸기 right there (#112) — partner.partySet checks the list
   // 🥚 알 넣기 right there (#116, PKM-30 rule 9): an egg from the bag into the incubator — eggs only, as the bag does it
   async egg_in({ kind }) {
@@ -1480,7 +1534,7 @@ const popoverCommands = {
     return { ok: !!r?.ok, incubator: r?.incubator || null };
   },
   popover_settings() { popoverHide(); settingsOpen(); }, // ⚙: the 설정 창 by itself (APP-22 rule 8)
-  popover_dex({ id }) { popoverHide(); focusMain(); whenUi(() => send("open-dex", { id: Number(id) || null })); },
+  popover_dex({ id }) { popoverHide(); pokeOpen({ view: "dex", sel: id }); }, // 도감에서 보기 — the Pokémon window, no terminal window (#113 P2)
   popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },
   limits_refresh: () => limitsRefresh({ user: true }), // pressed in the dashboard = the user's 새로 고침 (STA-21)
   sprite_b64: (args) => commands.sprite_b64(args),
@@ -1492,6 +1546,7 @@ const catchCommands = {
   catch_fit({ height }) { if (catchWin && !catchWin.isDestroyed()) catchFit(Math.min(Math.max(Number(height) || 0, 80), 600)); },
   catch_close: () => catchClose(),
   catch_log({ line }) { logLine(`catch ${String(line).slice(0, 120)}`); },
+  catch_dex({ id }) { pokeOpen({ view: "dex", sel: id }); }, // 📕 도감에서 보기 — the Pokémon window (#113 P2)
   sprite_b64: (args) => commands.sprite_b64(args),
   wild_throw: (args) => commands.wild_throw(args),
 };
@@ -1514,14 +1569,51 @@ const settingsCommands = {
   sprite_b64: (args) => commands.sprite_b64(args),
 };
 
+// the 포켓몬 창 (poke.html, #113 P2) may call only these (POL-SEC-02): the box, the shop and the bag as the main
+// window could, "this tab" always the one on screen (APP-22 rule 2) — no terminal, file or settings command
+const thisWs = () => { if (!workspaces.has(activeWs)) throw new Error("열린 탭이 없어요"); return activeWs; };
+const pokeCommands = {
+  poke_state: () => ({ want: pokeWant, kept: pokeKept, tab: pokeTab(), test: TEST ? { ui_scenes: !!process.env.CVIM_DESKTOP_UI_SCENES } : null }),
+  poke_keep({ view, query }) { if (POKE_VIEWS.includes(view) && view !== "choose") pokeKept.view = view; if (typeof query === "string") pokeKept.query = query.slice(0, 200); },
+  poke_tab: () => pokeTab(),
+  poke_close: () => pokeClose(),
+  poke_log({ line }) { logLine(`poke ${String(line).slice(0, 120)}`); },
+  poke_usage: () => usageSeen, // 🏠 홈's limits: what the menu bar shows too (PKM-10 rule 6)
+  dex_list: () => commands.dex_list(),
+  dex_viewed: (args) => commands.dex_viewed(args),
+  box_list: () => commands.box_list({ ws: workspaces.has(activeWs) ? activeWs : null }),
+  partner_options: () => (workspaces.has(activeWs) ? commands.partner_options({ ws: activeWs }) : null),
+  partner_state: () => commands.partner_state({ ws: thisWs() }),
+  // taken for this tab: the main window's pane shows it and reacts (💕, the toast) — the window closes; Tamer's isn't brought forward (rule 8)
+  partner_take({ starter, uid, from }) {
+    const ws = thisWs(), r = commands.partner_take({ ws, starter, uid });
+    if (r) send("partner-taken", { ws, from: typeof from === "string" ? from.slice(0, 80) : null });
+    return r;
+  },
+  home_state: () => commands.home_state(),
+  economy_state: () => commands.economy_state(),
+  economy_start_seen: () => commands.economy_start_seen(),
+  shop_state: () => commands.shop_state(),
+  shop_buy: (args) => commands.shop_buy(args),
+  bag_use: ({ item, uid, id, to }) => commands.bag_use({ item, uid, id, to }),
+  incubator_state: () => commands.incubator_state(),
+  incubator_first: (args) => commands.incubator_first(args),
+  progress_state: () => commands.progress_state(),
+  stone_options: (args) => commands.stone_options(args),
+  legend_road: () => commands.legend_road(),
+  party_state: () => commands.party_state(),
+  party_set: (args) => commands.party_set(args),
+  sprite_b64: (args) => commands.sprite_b64(args),
+};
+
 const overlayCommands = {
   overlay_state: () => overlayPayload(),
   overlay_click({ ws }) { focusMain(String(ws)); },
   // the wild notice (#66): the catch window beside it (#119) — not Tamer's window, which (closed, #106) would
   // come back with its tabs and terminals. rect: the notice in the overlay's page
   wild_open({ rect } = {}) { catchOpen(rect && { left: Number(rect.left), top: Number(rect.top), width: Number(rect.width) || 0, height: Number(rect.height) || 0 }); logLine("wild open from overlay"); },
-  // the hatch notice (#88): Tamer, on 🎒 내 포켓몬 where the hatchling is
-  hatch_open() { focusMain(); send("open-dex", { view: "box" }); logLine("hatch open from overlay"); },
+  // the hatch notice (#88): 🎒 내 포켓몬 where the hatchling is — the Pokémon window, not Tamer's (#113 P2)
+  hatch_open() { pokeOpen({ view: "box" }); logLine("hatch open from overlay"); },
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
   overlay_fit({ width, height }) {
     if (drag) return;
@@ -1584,10 +1676,10 @@ const commands = {
   party_state: () => ({ ...partner.party(), recent: recentDone }),
   party_set({ uids }) { const v = partner.partySet(uids); logLine(`party ${v.list.map((m) => m.uid).join(",") || "-"}`); broadcast("party", v); popoverUpdate(); overlayUpdate(); return v; },
   // 메뉴바 (STA-19): the last 5h · 7d the window remembers for an agent — numbers only, kept in memory
-  usage_seen({ key, five_hour, seven_day }) {
+  usage_seen({ key, five_hour, seven_day, model }) {
     if (!TRAY_AGENTS.some(([k]) => k === key)) return;
     const win = (w) => (w && Number.isFinite(Number(w.pct)) ? { pct: Number(w.pct), resets_at: Number.isFinite(Number(w.resets_at)) && w.resets_at != null ? Number(w.resets_at) : null } : null);
-    usageSeen[key] = { five_hour: win(five_hour), seven_day: win(seven_day) };
+    usageSeen[key] = { five_hour: win(five_hour), seven_day: win(seven_day), model: typeof model === "string" ? model.slice(0, 40) : null }; // the model's name: 포켓몬 창 홈 (#113 P2)
     trayUpdateSoon();
     limitsResetSoon();
   },
@@ -1979,7 +2071,8 @@ const commands = {
     ws.state = shownState(ws);
     overlayUpdate();
   },
-  tab_active({ ws }) { activeWs = workspaces.has(String(ws)) ? String(ws) : null; overlayUpdate(); saveSession(); },
+  tab_active({ ws }) { activeWs = workspaces.has(String(ws)) ? String(ws) : null; overlayUpdate(); saveSession(); pokeTabChanged(); },
+  poke_open: (args) => pokeOpen(args), // ⌘P · ⌘D · the partner pane · its chips (#113 P2)
   // 🌿 wild encounters
   wild_state: () => ({ enabled: wild.enabled(), current: wild.current(), balls: ballsOwned() }),
   wild_toggle() { const on = wild.setEnabled(!wild.enabled()); overlayUpdate(); return on; },
@@ -1999,9 +2092,20 @@ const commands = {
 let backgroundTested = false;
 // 따로 뜨는 창 (APP-22): tests reach each by name — the same few commands for every window of its own, now and later
 const OWN = { catch: { win: () => catchWin, open: () => catchOpen(null), close: () => catchClose() },
-  settings: { win: () => settingsWin, open: (a) => settingsOpen(a.page), close: () => settingsClose() } };
+  settings: { win: () => settingsWin, open: (a) => settingsOpen(a.page), close: () => settingsClose() },
+  poke: { win: () => pokeWin, open: (a) => pokeOpen(a), close: () => pokeClose() } };
 function ownWin(name) { const w = Object.hasOwn(OWN, name) ? OWN[name].win() : null; return w && !w.isDestroyed() ? w : null; }
 const ownJs = (name, js) => { const w = ownWin(name); return w ? w.webContents.executeJavaScript(js) : null; };
+// the page a test's key / click goes to: a window of its own by name (the Pokémon window has the keys while it's open — the lab
+// sends them there, as macOS would to the window in front), else the main window
+const testWc = (target) => (ownWin(target) || win).webContents;
+// a test's input events to that page — a key or click that closes its own window (Esc · ✕ in the Pokémon window) leaves the
+// rest of the events (keyUp, mouseReleased) nowhere to go: not an error
+function testInput(target) {
+  const wc = testWc(target), dbg = wc.debugger;
+  if (!dbg.isAttached()) dbg.attach("1.3");
+  return (method, params) => (wc.isDestroyed() ? null : dbg.sendCommand(method, params).catch((e) => { if (!wc.isDestroyed() && !/target closed/i.test(String(e?.message || e))) throw e; }));
+}
 // tests (#119): the overlay's wild notice in its page · what the catch window shows, where, and whether Tamer's window is there
 const NOTE_RECT = `(() => { const r = document.querySelector("#wild .wild-note")?.getBoundingClientRect(); return r ? { left: r.left, top: r.top, width: r.width, height: r.height } : null; })()`;
 async function catchRead() {
@@ -2013,14 +2117,14 @@ async function catchRead() {
 }
 const testCommands = {
   // put the focused element into IME composition (as if typing Hangul) via DevTools protocol
-  async ime_compose({ text }) {
-    const dbg = win.webContents.debugger;
+  async ime_compose({ text, target }) {
+    const dbg = testWc(target).debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
     await dbg.sendCommand("Input.imeSetComposition", { text, selectionStart: text.length, selectionEnd: text.length });
   },
   // tests: the IME commits the composition (what happens on the next key / focus change)
-  async ime_commit({ text }) {
-    const dbg = win.webContents.debugger;
+  async ime_commit({ text, target }) {
+    const dbg = testWc(target).debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
     await dbg.sendCommand("Input.insertText", { text });
   },
@@ -2054,7 +2158,7 @@ const testCommands = {
     return { name: n, diff: changed / (x.length / 4), block: Math.max(...blocks) / (B * B) };
   },
   // the Pokédex on a species, as the wild card's "도감에서 보기" (#25) asks
-  wild_dex_test({ id }) { focusMain(); send("open-dex", { id: Number(id) || null }); },
+  wild_dex_test({ id }) { pokeOpen({ view: "dex", sel: id }); },
   // the overlay's wild notice clicked where it is (#119): the catch window beside it
   async wild_open_test() { return overlayCommands.wild_open({ rect: await overlay.webContents.executeJavaScript(NOTE_RECT) }); },
   // the catch window (#119): open / close; scene: an encounter to draw while none is out (ui:shots)
@@ -2064,8 +2168,12 @@ const testCommands = {
   // whether the terminal window is there (rule 8: opening it never makes one)
   own_open_test(a = {}) { if (Object.hasOwn(OWN, a.name)) OWN[a.name].open(a); return { open: !!ownWin(a.name) }; },
   own_close_test({ name }) { if (Object.hasOwn(OWN, name)) OWN[name].close(); return { open: !!ownWin(name) }; },
+  own_up_test: ({ name }) => !!ownWin(name),
+  own_resize_test({ name, w, h }) { const x = ownWin(name); if (x) x.setContentSize(Math.max(100, Number(w) || 400), Math.max(100, Number(h) || 300)); return x ? x.getBounds() : null; }, // its minimum holds (#38)
   own_click_test: ({ name, sel }) => ownJs(name, `(() => { const b = document.querySelector(${JSON.stringify(String(sel))}); if (b) b.click(); return !!b; })()`),
   own_key_test: ({ name, key, meta }) => ownJs(name, `(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(String(key))}, metaKey: ${!!meta}, bubbles: true })); return true; })()`),
+  // a function the page offers tests (window.lab, test mode only): its state, a scene … — by name, JSON in and out
+  own_call_test: ({ name, fn, args = [] }) => ownJs(name, `(async () => { const f = window.lab?.[${JSON.stringify(String(fn))}]; return f ? f(...${JSON.stringify(Array.isArray(args) ? args : [args])}) : undefined; })()`),
   async own_read_test({ name }) {
     const w = ownWin(name), main = !!win && !win.isDestroyed();
     if (!w) return { open: false, win: main };
@@ -2119,7 +2227,14 @@ const testCommands = {
         overlayCommands.wild_open({ rect: await overlay.webContents.executeJavaScript(NOTE_RECT) }); await T(2000);
         logLine(`bg catch ${JSON.stringify(await catchRead())}`);
         const thrown = await catchWin?.webContents.executeJavaScript(`(() => { const m = document.querySelector("[data-ball='master']"); if (m) m.click(); const t = document.querySelector(".wild-throw"); if (t) t.click(); return !!m && !!t; })()`);
-        await T(10000);
+        // caught: [📕 도감에서 보기] there — the Pokémon window on it, still no terminal window (#113 P2, APP-22 rule 8)
+        let dexed = false; // the result comes after the ball's shakes — the button then, for 4 s
+        for (let i = 0; i < 40 && !dexed && catchWin; i++) { await T(200); dexed = await catchWin?.webContents.executeJavaScript(`(() => { const b = document.querySelector(".wild-dex"); if (b && !b.hidden) { b.click(); return true; } return false; })()`).catch(() => false); }
+        await T(2500);
+        const pv = pokeWin ? await pokeWin.webContents.executeJavaScript("window.lab?.state()").catch(() => null) : null;
+        logLine(`bg poke dex=${!!dexed} open=${!!pokeWin} view=${pv?.poke} sel=${pv?.dexSel} movable=${!!pokeWin?.isMovable()} win=${!!win && !win.isDestroyed()}`);
+        pokeClose();
+        await T(5000);
         logLine(`bg catch after thrown=${!!thrown} open=${!!catchWin} win=${!!win}`);
       }
       overlayForced = false; overlaySync();
@@ -2127,6 +2242,11 @@ const testCommands = {
       popoverCommands.popover_settings(); await T(1800);
       logLine(`bg settings open=${!!settingsWin} movable=${!!settingsWin?.isMovable()} win=${!!win && !win.isDestroyed()}`);
       settingsClose(); await T(300);
+      // the dashboard's party (#113 P2): the Pokémon window by itself, on ⭐ 파티 — no terminal window made
+      popoverCommands.popover_party(); await T(2500);
+      const pp = pokeWin ? await pokeWin.webContents.executeJavaScript("window.lab?.state()").catch(() => null) : null;
+      logLine(`bg poke-party open=${!!pokeWin} view=${pp?.poke} tabs=${JSON.stringify(pp?.pokeTabs)} win=${!!win && !win.isDestroyed()}`);
+      pokeClose(); await T(300);
       popoverShow({ x: 900, y: 0, width: 24, height: 24 }); await T(1500);
       const ok = await popover.webContents.executeJavaScript(`(() => { const b = document.querySelector("#pop-open"); if (b) b.click(); return !!b; })()`);
       await T(6000);
@@ -2217,19 +2337,18 @@ const testCommands = {
       hatch: document.querySelector(".wild-note.hatch")?.textContent.replace(/\\s+/g, " ").trim() || null };
   })()`),
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)
-  async click_test({ x, y, modifiers = 0, button = "left", count = 1 }) {
-    const dbg = win.webContents.debugger;
-    if (!dbg.isAttached()) dbg.attach("1.3");
-    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
+  async click_test({ x, y, modifiers = 0, button = "left", count = 1, target }) {
+    const send = testInput(target);
+    await send("Input.dispatchMouseEvent", { type: "mouseMoved", x, y, modifiers });
     await new Promise((r) => setTimeout(r, 120)); // the link under the pointer is looked up on move
     for (let n = 1; n <= count; n++) { // count 2 = a double-click (the second press says clickCount 2)
-      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mousePressed", x, y, modifiers, button, clickCount: n });
-      await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button, clickCount: n });
+      await send("Input.dispatchMouseEvent", { type: "mousePressed", x, y, modifiers, button, clickCount: n });
+      await send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button, clickCount: n });
     }
   },
   // the (test) pointer to a corner of the page: no :hover left on a scene by wherever the real mouse is
-  async mouse_park_test() {
-    const dbg = win.webContents.debugger;
+  async mouse_park_test({ target } = {}) {
+    const dbg = testWc(target).debugger;
     if (!dbg.isAttached()) dbg.attach("1.3");
     await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
   },
@@ -2251,14 +2370,13 @@ const testCommands = {
     for (const type of ["dragEnter", "dragOver", "drop"]) await dbg.sendCommand("Input.dispatchDragEvent", { type, x, y, data });
   },
   // a key as from the keyboard (modifiers: 8 = ⇧, 4 = ⌘) to the focused element (#7 #8 keys test)
-  async key_test({ key, code, keyCode, modifiers = 0, text, commands }) {
-    const dbg = win.webContents.debugger;
-    if (!dbg.isAttached()) dbg.attach("1.3");
+  async key_test({ key, code, keyCode, modifiers = 0, text, commands, target }) {
+    const send = testInput(target);
     // commands: the macOS editing command the key would run (moveToBeginningOfLine …)
     const base = { key, code, windowsVirtualKeyCode: keyCode, nativeVirtualKeyCode: keyCode, modifiers, ...(commands ? { commands } : {}) };
-    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
-    if (text) await dbg.sendCommand("Input.dispatchKeyEvent", { type: "char", ...base, text, unmodifiedText: text });
-    await dbg.sendCommand("Input.dispatchKeyEvent", { type: "keyUp", ...base });
+    await send("Input.dispatchKeyEvent", { type: "rawKeyDown", ...base });
+    if (text) await send("Input.dispatchKeyEvent", { type: "char", ...base, text, unmodifiedText: text });
+    await send("Input.dispatchKeyEvent", { type: "keyUp", ...base });
   },
   // the IME commits a syllable and the key that did it arrives right after (#15)
   async ime_commit_key_test({ text, ...k }) {
@@ -2340,6 +2458,8 @@ const testCommands = {
   },
 };
 if (TEST) Object.assign(commands, testCommands);
+// the Pokémon window's page in test mode (POL-SEC-03): its old checks type real keys into it and log (#113 P2)
+if (TEST) Object.assign(pokeCommands, { log_line: (a) => commands.log_line(a), key_test: (a) => testCommands.key_test({ ...a, target: "poke" }) });
 
 const num = (v) => Math.max(1, Math.min(1000, Number(v) || 1));
 
@@ -2407,7 +2527,8 @@ ipcMain.handle("host-invoke", async (e, cmd, args) => {
     : page === path.join(DIST, "overlay.html") && e.sender === overlay?.webContents ? overlayCommands
     : page === path.join(DIST, "popover.html") && e.sender === popover?.webContents ? popoverCommands
     : page === path.join(DIST, "catch.html") && e.sender === catchWin?.webContents ? catchCommands
-    : page === path.join(DIST, "settings.html") && e.sender === settingsWin?.webContents ? settingsCommands : null;
+    : page === path.join(DIST, "settings.html") && e.sender === settingsWin?.webContents ? settingsCommands
+    : page === path.join(DIST, "poke.html") && e.sender === pokeWin?.webContents ? pokeCommands : null;
   if (!table) throw new Error("unexpected sender");
   const fn = Object.hasOwn(table, cmd) && table[cmd];
   if (!fn) throw new Error(`unknown command ${cmd}`);
@@ -2503,6 +2624,7 @@ app.on("browser-window-created", (_e, w) => w.on("closed", () => {
   if (popover && !popover.isDestroyed()) popover.destroy();
   catchClose();
   settingsClose();
+  pokeClose();
 }));
 function toBackground() {
   sessionKept = true; // closing the tabs below mustn't empty the saved ones

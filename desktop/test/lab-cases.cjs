@@ -100,26 +100,27 @@ module.exports = [
     ],
   },
   {
-    id: "launch-folder", tags: ["smoke", "launch"], what: "폴더를 넘겨 실행 → 그 탭, 파트너가 없으면 파트너 고르기",
+    id: "launch-folder", tags: ["smoke", "launch"], what: "폴더를 넘겨 실행 → 그 탭, 파트너가 없으면 파트너 칸에 [파트너 고르기] — 포켓몬 창은 저절로 안 뜸, 누르면 그 창의 고르기 (#113 A8)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { probe: "tab" }],
-    check: ({ probe }) => [ok(probe.tab?.tabs?.[0] === "proj", `탭 ${JSON.stringify(probe.tab?.tabs)}`), ok(probe.tab?.start === false, "시작 화면이 떠 있음"), ok(probe.tab?.choose, "파트너 고르기가 안 열림")],
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 1500 }, { probe: "tab" }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "poke", timeout: 5000 }, { wait: 500 }, { probe: "chose" }],
+    check: ({ probe }) => [ok(probe.tab?.tabs?.[0] === "proj", `탭 ${JSON.stringify(probe.tab?.tabs)}`), ok(probe.tab?.start === false, "시작 화면이 떠 있음"),
+      ok(probe.tab?.needPartner === true && probe.tab?.poke === null, `파트너 칸 버튼 ${probe.tab?.needPartner} · 저절로 뜬 창 ${probe.tab?.poke}`),
+      ok(probe.chose?.choose === true && probe.chose?.pokeFor === "proj" && (probe.chose?.pokeTabs || []).includes("choose"), `버튼 → 포켓몬 창 고르기 ${JSON.stringify([probe.chose?.poke, probe.chose?.pokeFor])}`)],
   },
   {
-    id: "first-launch-dialogs", tags: ["smoke", "first-run"], what: "첫 실행: 에이전트 연결 창이 파트너 고르기 위, Esc는 위 창만 닫음 (#30)",
+    id: "first-launch-dialogs", tags: ["smoke", "first-run"], what: "첫 실행: 에이전트 연결 창만 — 파트너 고르기는 저절로 안 뜨고(#113 A8) 파트너 칸에 버튼, Esc는 그 창을 닫음 (#30)",
     data: "empty", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_DESKTOP_FIRST_LAUNCH: "1" },
-    steps: [{ until: "agents" }, { until: "choose" }, { wait: 300 }, { probe: "both" }, { key: "Escape" }, { wait: 400 }, { probe: "esc" }],
+    steps: [{ until: "agents" }, { until: "partnerKnown", timeout: 8000 }, { wait: 1000 }, { probe: "both" }, { key: "Escape" }, { wait: 400 }, { probe: "esc" }],
     check: ({ probe }) => [
-      ok(probe.both?.top === "agents", `맨 위가 ${probe.both?.top}`),
+      ok(probe.both?.top === "agents" && probe.both?.poke === null, `맨 위 ${probe.both?.top} · 포켓몬 창 ${probe.both?.poke}`),
       ok(probe.esc?.agents === false, "Esc 후 에이전트 연결 창이 남음"),
-      ok(probe.esc?.choose === true, "Esc가 파트너 고르기를 닫음"),
-      ok(probe.esc?.top === "poke", `Esc 후 맨 위가 ${probe.esc?.top}`),
+      ok(probe.esc?.needPartner === true && probe.esc?.poke === null, `파트너 칸 [파트너 고르기] ${probe.esc?.needPartner} · 창 ${probe.esc?.poke}`),
     ],
   },
   {
     id: "first-partner-offline", tags: ["smoke", "first-run"], what: "첫 실행인데 오프라인: 첫 파트너를 못 받아도 창이 멈추지 않고 닫힘",
     data: "empty", offline: true, mode: "direct", folders: ["proj"],
-    steps: [{ until: "choose" }, { wait: 3000 }, { probe: "waiting" }, { key: "Escape" }, { wait: 400 }, { probe: "closed" }],
+    steps: [{ until: "needPartner", timeout: 8000 }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "choose", timeout: 5000 }, { wait: 3000 }, { probe: "waiting" }, { key: "Escape" }, { wait: 600 }, { probe: "closed" }],
     check: ({ probe, log }) => [
       ok(probe.waiting?.choose === true, "파트너 고르기가 안 열림"),
       ok(probe.waiting?.starters?.ready === false, "오프라인인데 후보가 준비됨"),
@@ -130,13 +131,13 @@ module.exports = [
   {
     id: "first-partner-keys", tags: ["smoke", "first-run"], what: "새 사용자: 방향키 + Enter로 첫 파트너",
     data: "newuser", offline: true, mode: "direct", folders: ["proj"],
-    steps: [{ until: "starters.ready" }, { key: "ArrowRight" }, { key: "Enter" }, { wait: 1500 }, { probe: "picked" }],
+    steps: [{ until: "needPartner", timeout: 8000 }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "starters.ready" }, { key: "ArrowRight" }, { key: "Enter" }, { wait: 1500 }, { probe: "picked" }],
     check: ({ probe }) => [ok(probe.picked?.partner, "파트너가 안 생김"), ok(probe.picked?.poke === null, "창이 안 닫힘")],
   },
   {
     id: "first-partner-net", tags: ["net", "first-run"], what: "첫 실행: PokéAPI에서 후보를 받아 1·2·3 키로 고르기",
     data: "empty", mode: "direct", folders: ["proj"],
-    steps: [{ until: "starters.ready", timeout: 40000 }, { probe: "ready" }, { key: "2" }, { wait: 1500 }, { probe: "picked" }],
+    steps: [{ until: "needPartner", timeout: 8000 }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "starters.ready", timeout: 40000 }, { probe: "ready" }, { key: "2" }, { wait: 1500 }, { probe: "picked" }],
     check: ({ probe }) => [ok(probe.ready?.starters?.n === 3, "후보 3마리가 안 옴"), ok(probe.picked?.partner, "파트너가 안 생김")],
   },
   {
@@ -244,7 +245,7 @@ module.exports = [
   {
     id: "corrupt-data", tags: ["smoke", "data"], what: "데이터 파일이 중간에 잘린 맥: 앱은 뜨고, 파트너를 고른 뒤에도 잘린 원본은 backup/corrupt에 남음",
     data: "corrupt", offline: true, mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "starters.ready", timeout: 10000 }, { probe: "open" }, { key: "1" }, { wait: 1500 }, { probe: "picked" }],
+    steps: [{ until: "tabs.0" }, { until: "needPartner", timeout: 10000 }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "starters.ready", timeout: 10000 }, { probe: "open" }, { key: "1" }, { wait: 1500 }, { probe: "picked" }],
     check: ({ probe, log, box }) => [
       ok(probe.open?.tabs?.[0] === "proj", "탭이 안 열림"),
       ok(!/lab-error|Uncaught/.test(log), "오류"),
@@ -257,35 +258,36 @@ module.exports = [
   {
     id: "hangul-in-shell", tags: ["smoke", "input"], what: "셸에서 한글 조합 → 확정, 이어서 영문 — 글자가 겹치거나 빠지지 않음",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 3000 }, { text: "echo " }, { ime: "ㅎ" }, { ime: "하" }, { ime: "한" }, { text: "한" }, { ime: "ㄱ" }, { ime: "그" }, { ime: "글" }, { text: "글" }, { text: "ab" }, { wait: 600 }, { probe: "typed" }],
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 3000 }, { text: "echo " }, { ime: "ㅎ" }, { ime: "하" }, { ime: "한" }, { text: "한" }, { ime: "ㄱ" }, { ime: "그" }, { ime: "글" }, { text: "글" }, { text: "ab" }, { wait: 600 }, { probe: "typed" }],
     check: ({ probe }) => [ok(/echo 한글ab$/.test(probe.typed?.line || ""), `셸 줄 ${JSON.stringify(probe.typed?.line)}`)],
   },
   {
     id: "hangul-cmd-arrow", tags: ["smoke", "input"], what: "한글 조합 중 ⌘← → 조합만 끝내고 글자는 제자리 (#15, iTerm2와 같음)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 3000 }, { text: "echo ab" }, { ime: "ㅎ" }, { ime: "하" }, { key: "ArrowLeft", mods: 4, commands: ["moveToBeginningOfLine"] }, { wait: 300 }, { text: "하" }, { wait: 600 }, { probe: "after" }],
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 3000 }, { text: "echo ab" }, { ime: "ㅎ" }, { ime: "하" }, { key: "ArrowLeft", mods: 4, commands: ["moveToBeginningOfLine"] }, { wait: 300 }, { text: "하" }, { wait: 600 }, { probe: "after" }],
     check: ({ probe }) => [ok(/echo ab하$/.test(probe.after?.line || ""), `셸 줄 ${JSON.stringify(probe.after?.line)}`)],
   },
   // ── window size ──
   {
-    id: "narrow-window", tags: ["smoke", "layout"], what: "좁은 창(1100·900·720): 상단 바·단축키 줄이 한 줄로 들어감, 가로 넘침 없음, 포켓몬 창이 창 안에 (#38)",
+    id: "narrow-window", tags: ["smoke", "layout"], what: "좁은 창(1100·900·720): 상단 바·단축키 줄이 한 줄로 들어감, 가로 넘침 없음 · 포켓몬 창을 가장 작게(820×560) 해도 틀이 창 안에 (#38, #113 P2)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { call: "fakeUsage" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { call: "fakeUsage" },
       { resize: [1100, 600] }, { probe: "w1100" }, { resize: [900, 600] }, { probe: "w900" }, { shot: "narrow-900" }, { resize: [720, 520] }, { probe: "main" }, { shot: "narrow-720" },
-      { call: "openDex" }, { wait: 500 }, { probe: "dex" }, { call: "box" }, { wait: 400 }, { probe: "box" }, { shot: "narrow-box" }],
-    check: ({ probe }) => [
+      { call: "openDex" }, { invoke: "own_resize_test", args: { name: "poke", w: 400, h: 300 } }, { wait: 600 }, { probe: "dex" }, { call: "box" }, { wait: 400 }, { probe: "box" }, { invoke: "own_read_test", args: { name: "poke" }, log: true }, { shot: "narrow-box" }],
+    check: ({ probe, log }) => [
       ok(probe.main?.width <= 730, `창 폭 ${probe.main?.width} (크기 바꾸기가 안 됨)`),
       ok(probe.main?.overflow === false, "메인 화면이 가로로 넘침"),
       ...["w1100", "w900", "main"].flatMap((k) => [ok(probe[k]?.barFits === true, `${k}: 상단 바가 넘치거나 두 줄`), ok(probe[k]?.hintFits === true, `${k}: 단축키 줄이 두 줄`)]),
-      ok(probe.dex?.pokeFits === true, "도감 창이 창 밖으로 나감"),
-      ok(probe.box?.pokeFits === true, "내 포켓몬 창이 창 밖으로 나감"),
+      ok(probe.dex?.pokeFits === true, "도감 틀이 포켓몬 창 밖으로 나감"),
+      ok(probe.box?.pokeFits === true, "내 포켓몬 틀이 포켓몬 창 밖으로 나감"),
+      ...(() => { const r = JSON.parse(log.match(/^lab-invoke own_read_test (.*)$/m)?.[1] || "null"); return [ok(r?.bounds?.width >= 820 && r?.bounds?.height >= 560, `포켓몬 창 최소 크기 ${JSON.stringify(r?.bounds)}`)]; })(),
     ],
   },
   // ── find in the terminal (#40) ──
   {
     id: "term-search", tags: ["smoke", "input"], what: "터미널 ⌘F: 결과 수·다음·이전, 한글도, Esc로 닫고 터미널로, 포켓몬 창이 열려 있으면 도감 검색 (#40)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "echo 바늘1; echo 바늘2; echo needle" }, { key: "Enter" }, { wait: 800 },
       { key: "f", mods: 4 }, { wait: 300 }, { probe: "open" },
       { text: "바늘" }, { wait: 400 }, { probe: "found" },
@@ -305,7 +307,7 @@ module.exports = [
   {
     id: "term-search-scrollback", tags: ["smoke", "input"], what: "⌘F가 화면 밖(스크롤백)의 줄도 찾음 — 300줄 위의 단어 (#40)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "echo TOPMARK; seq 1 300" }, { wait: 200 }, { key: "Enter" }, { wait: 1200 },
       { key: "f", mods: 4 }, { wait: 300 }, { text: "TOPMARK" }, { wait: 500 }, { probe: "found" }, { grep: "TOPMARK" }, { grep: "lab$" }, { grep: "299" }],
     check: ({ probe }) => [ok(/^\d\/2$/.test(probe.found?.tsearch?.n || ""), `300줄 위 단어 결과 ${probe.found?.tsearch?.n} (명령 줄 + 출력 = 2)`), ok(probe.found?.tsearch?.alt === false, "일반 화면인데 \"보이는 화면만\" 안내")],
@@ -313,7 +315,7 @@ module.exports = [
   {
     id: "term-search-alt", tags: ["smoke", "input"], what: "전체 화면 프로그램(대체 화면)에서 ⌘F: \"보이는 화면만\" 안내, 일반 화면에선 안내 없음 (#40)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "printf '\\033[?1049h'; seq 1 100; echo ALTMARK; sleep 30" }, { wait: 200 }, { key: "Enter" }, { wait: 1200 },
       { key: "f", mods: 4 }, { wait: 300 }, { text: "ALTMARK" }, { wait: 500 }, { probe: "alt" }, { grep: "ALTMARK" }],
     check: ({ probe }) => [ok(probe.alt?.tsearch?.alt === true, `대체 화면인데 안내가 없음 (${JSON.stringify(probe.alt?.tsearch)})`), ok(/^1\/1$/.test(probe.alt?.tsearch?.n || ""), `보이는 단어 결과 ${probe.alt?.tsearch?.n}`)],
@@ -351,7 +353,7 @@ module.exports = [
   {
     id: "shell-env-dump", tags: ["explore", "agents"], what: "Dock에서 켠 것처럼(open) 실행한 Tamer 셸의 환경 변수 — 터미널과 다른 것을 보기 위한 기록 (#42)",
     data: "owner", mode: "open", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "env | sort > env.txt" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { probe: "done" }],
     check: ({ box }) => [ok(fs.existsSync(path.join(box.folder("proj"), "env.txt")), "env.txt가 안 생김")],
   },
@@ -363,7 +365,7 @@ module.exports = [
       b.mons.push({ uid: b.next++, id: 25, shiny: false, xp: 0, lv: 5, mile: 0, how: "egg", hatched: Math.floor(Date.now() / 1000) - 600, at: Math.floor(Date.now() / 1000) - 600, folder: null, new: true });
       fs.writeFileSync(path.join(box.data, "box.json"), JSON.stringify(b));
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, { key: "d", mods: 4 }, { wait: 1000 }, { probe: "dex" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, { key: "d", mods: 4 }, { wait: 1000 }, { probe: "dex" },
       { key: "ArrowDown" }, { wait: 300 }, { probe: "down" }],
     check: ({ probe }) => [
       ok(JSON.stringify(probe.dex?.dexRows?.slice(0, 2)) === '["🆕 새로 잡은 포켓몬:3","🥚 새로 부화한 포켓몬:1"]', `줄 ${JSON.stringify(probe.dex?.dexRows?.slice(0, 2))}`),
@@ -380,7 +382,7 @@ module.exports = [
       fs.writeFileSync(f, JSON.stringify(dex));
       putEcon(box, { "state.json": { startSeen: true } });
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, { key: "p", mods: 4 }, { wait: 900 }, { probe: "home" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, { key: "p", mods: 4 }, { wait: 900 }, { probe: "home" },
       { invoke: "legend_road", log: true }, { invoke: "shop_state", log: true }],
     check: ({ probe, log }) => {
       const lr = JSON.parse(log.match(/^lab-invoke legend_road (.*)$/m)?.[1] || "{}"), st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
@@ -554,7 +556,7 @@ module.exports = [
     },
   },
   {
-    id: "background-close", tags: ["smoke", "app"], what: "백그라운드: 메인 창을 닫으면 앱은 메뉴바에 남음 — 터미널은 끝나고 탭 기록은 그대로, 처음 한 번 안내, 대시보드는 계속 · 대시보드 ⚙는 설정 창만(터미널 창 없이, #113 P1) · 대시보드 [Tamer 열기]로 창이 다시 열리고 탭이 돌아옴 (APP-21, APP-22 규칙 8, #106)",
+    id: "background-close", tags: ["smoke", "app"], what: "백그라운드: 메인 창을 닫으면 앱은 메뉴바에 남음 — 터미널은 끝나고 탭 기록은 그대로, 처음 한 번 안내, 대시보드는 계속 · 대시보드 ⚙는 설정 창만(터미널 창 없이, #113 P1) · 대시보드 파티는 포켓몬 창만(#113 P2) · 대시보드 [Tamer 열기]로 창이 다시 열리고 탭이 돌아옴 (APP-21, APP-22 규칙 8, #106)",
     data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 40000,
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 2 } }, { invoke: "background_test" }, { wait: 15000 }],
     check: ({ log }) => {
@@ -562,6 +564,7 @@ module.exports = [
       return [
         ok(/^window closed: Tamer stays in the menu bar$/m.test(log) && !/^user quit/m.test(log), "창을 닫아도 끝나지 않아야"),
         ok(/^bg settings open=true movable=true win=false$/m.test(log), `창이 없을 때 대시보드 ⚙ → 설정 창만(터미널 창 안 생김, #113 P1 APP-22 규칙 8) ${log.match(/^bg settings .*$/m)?.[0]}`),
+        ok(/^bg poke-party open=true view=party tabs=\[[^\]]*\] win=false$/m.test(log) && !/"choose"/.test(log.match(/^bg poke-party .*$/m)?.[0] || ""), `창이 없을 때 대시보드 파티 → 포켓몬 창만(⭐ 파티, 탭이 없어 파트너 고르기 탭 없음 — #113 P2) ${log.match(/^bg poke-party .*$/m)?.[0]}`),
         ok(/win=false tabs=0 popover=\w+ saved=1 quit=false/.test(closed), `닫은 뒤: 창 없음·터미널 끝·탭 기록 1개 그대로(끝냄 표시 없음) — ${closed}`),
         ok((log.match(/^background notice$/gm) || []).length === 1, "처음 한 번 안내"),
         ok(/^bg overlay alive=true wants=true party=2$/m.test(log), `탭이 없을 때 오버레이에 파티 2마리(#107) — ${log.match(/^bg overlay .*$/m)?.[0]}`),
@@ -588,7 +591,7 @@ module.exports = [
     },
   },
   {
-    id: "background-wild-catch", tags: ["smoke", "app", "poke"], what: "창을 닫아 메뉴바로만 쓸 때 바탕화면 야생 알림을 누르면 알림 옆 작은 잡기 창 — Tamer 창은 생기지 않음, 그 창에서 마스터볼로 던지면 잡히고 잠시 뒤 잡기 창이 닫힘 · 도감 버튼 없음(#113 전) (PKM-08 규칙 3, #119)",
+    id: "background-wild-catch", tags: ["smoke", "app", "poke"], what: "창을 닫아 메뉴바로만 쓸 때 바탕화면 야생 알림을 누르면 알림 옆 작은 잡기 창 — Tamer 창은 생기지 않음, 그 창에서 마스터볼로 던지면 잡히고 잠시 뒤 잡기 창이 닫힘 · 잡기 전엔 도감 버튼이 숨어 있음(잡으면 [📕 도감에서 보기] — #113 P2) (PKM-08 규칙 3, #119)",
     data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 60000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1", CVIM_WILD_COOLDOWN: "0", CVIM_WILD_COOLDOWN_EMPTY: "0" },
     setup: (box) => {
       const d = todayLocal();
@@ -600,8 +603,9 @@ module.exports = [
       const c = JSON.parse(log.match(/^bg catch (\{.*\})$/m)?.[1] || "null"), after = log.match(/^bg catch after (.*)$/m)?.[1] || "";
       return [
         ok(/^window closed: Tamer stays in the menu bar$/m.test(log) && /^wild appeared 16 /m.test(log) && /^wild open from overlay$/m.test(log), "창을 닫은 뒤 밖 작업으로 야생 · 알림을 누름"),
-        ok(c?.open && c.wild && c.win === false && c.beside && c.dex === false && c.balls?.includes("master"), `잡기 창: 야생 카드·마스터볼, 알림 옆, Tamer 창 없음, 도감 버튼 없음 ${JSON.stringify(c && { open: c.open, wild: c.wild, win: c.win, beside: c.beside, dex: c.dex, balls: c.balls })}`),
+        ok(c?.open && c.wild && c.win === false && c.beside && c.dex === false && c.balls?.includes("master"), `잡기 창: 야생 카드·마스터볼, 알림 옆, Tamer 창 없음, 잡기 전 도감 버튼 숨음 ${JSON.stringify(c && { open: c.open, wild: c.wild, win: c.win, beside: c.beside, dex: c.dex, balls: c.balls })}`),
         ok(/^wild throw caught/m.test(log) && /^thrown=true open=false win=false$/.test(after) && /^catch closed$/m.test(log), `잡기 창에서 잡힘 → 잡기 창 닫힘, Tamer 창은 여전히 없음 (${after})`),
+        ok(/^bg poke dex=true open=true view=dex sel=\w+:16 movable=true win=false$/m.test(log), `잡은 뒤 [📕 도감에서 보기] → 포켓몬 창이 그 종(16)에, Tamer 창 없음 (#113 P2) — ${log.match(/^bg poke dex.*$/m)?.[0]}`),
       ];
     },
   },
@@ -620,7 +624,7 @@ module.exports = [
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 2000 }, { day: d, kind: "buy", item: "master", n: 1, amount: -1500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
       fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } }));
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 },
       { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_read_test", log: true },
       { invoke: "popover_click_test", args: { sel: "#pop-nav [data-page='work']" } }, { wait: 300 }, { invoke: "popover_read_test", log: true },
       { invoke: "popover_click_test", args: { sel: "#pop-nav [data-page='home']" } }, { wait: 300 },
@@ -907,7 +911,7 @@ module.exports = [
       fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 144, shiny: false } }));
       putEcon(box, { "state.json": { startSeen: true } });
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, { invoke: "wild_rig_test", args: { result: "caught" } }, ...DONE("$ws"), { wait: 1500 }, { probe: "card" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, { invoke: "wild_rig_test", args: { result: "caught" } }, ...DONE("$ws"), { wait: 1500 }, { probe: "card" },
       { key: "b", mods: 4 }, { wait: 4500 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
     check: ({ probe, log }) => {
       const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]");
@@ -944,17 +948,17 @@ module.exports = [
     },
   },
   {
-    id: "egg-migrate", tags: ["smoke", "poke", "data"], what: "beta.8에서 폴더에 품어 둔 알은 처음 켤 때 부화기로 — 진행 그대로, 그 폴더는 파트너가 비어 고르기 (#85)",
+    id: "egg-migrate", tags: ["smoke", "poke", "data"], what: "beta.8에서 폴더에 품어 둔 알은 처음 켤 때 부화기로 — 진행 그대로, 그 폴더는 파트너가 비어 파트너 칸 [파트너 고르기] (#85, #113 A8)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => {
       const b = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8"));
       b.mons.push({ uid: b.next++, egg: { kind: "egg", need: 10, have: 4 }, how: "egg", at: 1, folder: box.folder("proj"), last_folder: box.folder("proj") });
       fs.writeFileSync(path.join(box.data, "box.json"), JSON.stringify(b));
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { probe: "choose" }, { invoke: "incubator_state", log: true }],
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 500 }, { probe: "choose" }, { invoke: "incubator_state", log: true }],
     check: ({ probe, log }) => {
       const inc = JSON.parse(log.match(/^lab-invoke incubator_state (.*)$/m)?.[1] || "null");
-      return [ok(inc?.active?.have === 4 && inc.active.need === 10 && probe.choose?.poke === "choose", `부화기 ${JSON.stringify(inc)} · 폴더는 고르기 ${probe.choose?.poke}`)];
+      return [ok(inc?.active?.have === 4 && inc.active.need === 10 && probe.choose?.needPartner === true, `부화기 ${JSON.stringify(inc)} · 폴더는 파트너 없음 [파트너 고르기] ${probe.choose?.needPartner}`)];
     },
   },
   {
@@ -1007,7 +1011,7 @@ module.exports = [
     id: "shiny-charm", tags: ["smoke", "poke"], what: "빛나는부적: 5,000코인에 한 번 — 다시 사기 거부, 상점 카드 \"가짐 ✔\"·버튼 없음, 가방 켜진 효과 ✨·탭 수엔 안 셈, 이로치 1/32 (#93)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => putEcon(box, { "ledger.jsonl": JSON.stringify({ day: todayLocal(), kind: "start", n: 0, amount: 12000 }) + "\n", "state.json": { startSeen: true } }),
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, { invoke: "charm_test", log: true },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, { invoke: "charm_test", log: true },
       { invoke: "shop_buy", args: { item: "charm", n: 1 }, log: true }, { invoke: "shop_buy", args: { item: "charm", n: 1 }, log: true }, { invoke: "charm_test", log: true },
       { key: "p", mods: 4 }, { wait: 700 }, { key: "s" }, { wait: 800 }, { probe: "shop" }, { key: "i" }, { wait: 800 }, { probe: "bag" }, { invoke: "economy_state", log: true }],
     check: ({ probe, log }) => {
@@ -1026,7 +1030,7 @@ module.exports = [
     id: "incubator-first", tags: ["smoke", "poke"], what: "가방 안 부화기 섹션: 비었으면 가방의 알 [알 넣기], 넣으면 부화 칸·작업 n번 남음, 둘째 알은 차례 카드 — 고르면 [먼저 부화] 한 번에 바뀌고 진행은 알마다 그대로 (#88)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => putEcon(box, { "ledger.jsonl": [{ day: todayLocal(), kind: "start", n: 0, amount: 1000 }, { day: todayLocal(), kind: "buy", item: "egg", n: 1, amount: -500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } }),
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { wait: 300 }, { call: "closeDex" }, { wait: 300 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 800 }, { probe: "empty" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 800 }, { probe: "empty" },
       { click: "#box-grid [data-incadd='egg']" }, { wait: 800 }, { probe: "one" },
       { invoke: "incubator_add_test", args: { kind: "egg2", have: 0 } }, { wait: 800 }, { probe: "two" },
       { click: "#box-grid .pk-incq" }, { wait: 400 }, { probe: "pick" }, { key: "Enter" }, { wait: 800 }, { probe: "first" }, { invoke: "incubator_state", log: true }],
@@ -1089,7 +1093,7 @@ module.exports = [
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => { fakeSpecies(box, 6, "리자몽", { reach: { kind: "level", level: 36 }, next: [] }); evolvePartner(box, { id: 6, lv: 99, mile: 90, final: true }); putEcon(box, { "state.json": { startSeen: true } }); },
     steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, ...DONE("$ws"), { wait: 1500 }, { probe: "grad" },
-      { click: "main.grid:not([hidden]) [data-grad='new']" }, { wait: 1200 }, { probe: "after" }, { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true }],
+      { click: "main.grid:not([hidden]) [data-grad='new']" }, { until: "poke", timeout: 5000 }, { wait: 600 }, { probe: "after" }, { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true }],
     check: ({ probe, log }) => {
       const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]"), m = list.find((x) => x.id === 6);
       const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
@@ -1105,7 +1109,7 @@ module.exports = [
     id: "breakthrough", tags: ["smoke", "poke"], what: "대발견: 스탬프가 다 차는 완료에 전설(1세대 새) 확정 조우 + 100코인 — 금색 카드, 놓쳐도 도망 없음·×1.2, 남아 있는 동안 보통 야생 없음, 잡으면 끝 (#82)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "2", CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     setup: (box) => { birds(box); putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(1) } }); fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })); },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "big" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "big" },
       { invoke: "wild_rig_test", args: { result: "broke" } }, { key: "b", mods: 4 }, { wait: 3500 }, { probe: "missed" },
       ...DONE("$ws"), { wait: 1200 }, { key: "p", mods: 4 }, { wait: 800 }, { probe: "home" }, { key: "Escape" }, { wait: 300 },
       { invoke: "wild_rig_test", args: { result: "caught" } }, { key: "b", mods: 4 }, { wait: 5000 }, { invoke: "economy_state", log: true }],
@@ -1131,7 +1135,7 @@ module.exports = [
       birds(box);
       putEcon(box, { "ledger.jsonl": [{ day: todayLocal(), kind: "start", n: 0, amount: 1000 }, { day: todayLocal(), kind: "buy", item: "legend", n: 1, amount: -800 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true, stampsSince: dayAgo(1) } });
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 },
       { invoke: "bag_use", args: { item: "legend", id: 999 }, log: true }, { invoke: "bag_use", args: { item: "legend", id: 146 }, log: true },
       { key: "p", mods: 4 }, { wait: 800 }, { probe: "home" }, { key: "Escape" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { invoke: "shop_state", log: true }],
     check: ({ probe, log }) => {
@@ -1155,7 +1159,7 @@ module.exports = [
       fs.writeFileSync(path.join(box.data, "box.json"), JSON.stringify(b));
       putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(1) } });
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "after" }],
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "after" }],
     check: ({ probe, log, box }) => {
       const rows = ledgerRows(box) || [];
       return [
@@ -1168,14 +1172,14 @@ module.exports = [
     id: "breakthrough-restart", tags: ["smoke", "poke"], what: "잡지 않은 대발견은 앱을 다시 켜도 그대로 — 놓친 횟수(×1.44)까지 (#82)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => { birds(box); fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ big: { id: 145, shiny: false, misses: 2, seen: true } })); },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 }, { probe: "after" }],
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 1500 }, { probe: "after" }],
     check: ({ probe }) => [ok(probe.after?.wildBig && /전설의 썬더가 나타났다!.*×1\.44/.test(probe.after?.wildText || ""), `다시 켠 뒤 ${probe.after?.wildBig} · ${probe.after?.wildText}`)],
   },
   {
     id: "shell-hook-finish", tags: ["explore", "poke"], what: "시험 앱 셸에서 훅 스크립트로 UserPromptSubmit → Stop을 보내면 완료로 잡혀 대발견까지 — 사용자가 직접 확인하는 시험 빌드의 '작업 끝내기' (#82)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "6" },
     setup: (box) => { birds(box); putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(6) } }); },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: `printf '{}' | bash "$CVIM_ROOT/claude/hooks/event.sh" UserPromptSubmit; sleep 2; printf '{}' | bash "$CVIM_ROOT/claude/hooks/event.sh" Stop` }, { wait: 200 }, { key: "Enter" }, { wait: 5000 }, { probe: "after" }],
     check: ({ probe, log }) => [ok(/^breakthrough 14[4-6]/m.test(log) && probe.after?.wildBig, `대발견 ${log.match(/^breakthrough[^\n]*/m)?.[0]} · 카드 ${probe.after?.wildBig} · 전환 ${(log.match(/^transition [^\n]*/gm) || []).slice(-3).join(" | ")}`)],
   },
@@ -1183,7 +1187,7 @@ module.exports = [
   {
     id: "poke-keys-hangul", tags: ["smoke", "poke"], what: "한글 입력 상태에서도 포켓몬 창 글자 키: S(ㄴ) 상점 · I(ㅑ) 가방 · M(ㅡ) 내 포켓몬 — 터미널엔 아무 글자도 안 들어감 (#77)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" }, { wait: 300 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" }, { wait: 300 },
       { key: "p", mods: 4 }, { wait: 700 }, { key: "ㄴ", code: "KeyS" }, { wait: 600 }, { probe: "s" }, { key: "ㅑ", code: "KeyI" }, { wait: 600 }, { probe: "i" },
       { key: "ㅡ", code: "KeyM" }, { wait: 600 }, { probe: "m" }, { key: "Escape" }, { wait: 400 },
       { text: "echo LABKEYS" }, { wait: 200 }, { key: "Enter" }, { wait: 800 }, { grep: "LABKEYS" }],
@@ -1199,7 +1203,7 @@ module.exports = [
     id: "shop-buy", tags: ["smoke", "poke"], what: "상점: S로 열기, 슈퍼볼 3개(− + 수), 마스터볼은 두 번 눌러 사기·주 1개, 메인이 잔액·제한·수를 다시 검사 — 원장엔 산 것 하루 합계 (#76)",
     data: "owner", mode: "direct", folders: ["proj"],
     setup: (box) => putEcon(box, { "ledger.jsonl": JSON.stringify({ day: todayLocal(), kind: "start", n: 1000, amount: 2000 }) + "\n", "state.json": { startSeen: true } }),
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 },
       { key: "p", mods: 4 }, { wait: 700 }, { key: "s" }, { wait: 700 }, { probe: "shop" },
       { click: "#box-grid .pk-item[data-i='0']" }, { wait: 150 }, { key: "+" }, { wait: 200 }, { probe: "three" }, { key: "Enter" }, { wait: 1200 },
       { key: "ArrowRight" }, { key: "ArrowRight" }, { wait: 300 }, { key: "Enter" }, { wait: 300 }, { probe: "ask" }, { key: "Enter" }, { wait: 1200 }, { probe: "bought" },
@@ -1262,7 +1266,7 @@ module.exports = [
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 2000 }, { day: d, kind: "buy", item: "great", n: 1, amount: -40 }, { day: d, kind: "buy", item: "master", n: 1, amount: -1500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
       fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } }));
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "card" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "card" },
       { click: "#wild .wild-balls [data-ball='master']" }, { wait: 200 }, { probe: "master" }, { key: "b", mods: 4 }, { wait: 4000 }, { invoke: "shop_state", log: true }],
     check: ({ probe, log }) => {
       const st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
@@ -1334,7 +1338,7 @@ module.exports = [
   {
     id: "economy-earn", tags: ["smoke", "poke", "data"], what: "포켓코인: 처음 켤 때 시작 코인(지난 완료 27 × 2 = ₽54), 완료 +5 · 하루 첫 +20 · 30초 미만 턴 +1, 같은 턴이 두 번 와도 한 번 — 칩·홈·띠·메뉴바, 원장엔 하루·종류별 합계만 (#72)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 },
       ...DONE("$ws", { turn_at: 1700000000000, took: 120000 }), ...DONE("$ws", { turn_at: 1700000000000, took: 120000 }), // the same turn twice
       ...DONE("$ws", { turn_at: 1700000100000, took: 5000 }), { wait: 400 }, // a 5-second turn
       { key: "p", mods: 4 }, { wait: 900 }, { probe: "home" }, { click: "#box-grid .pk-band-x" }, { wait: 600 }, { probe: "closed" },
@@ -1369,7 +1373,7 @@ module.exports = [
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 0 }, { day: d, kind: "done", n: 60, amount: 298 }, { day: d, kind: "first", n: 1, amount: 20 }].map((r) => JSON.stringify(r)).join("\n") + "\n", "state.json": { startSeen: true } });
       fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })); // 구구: seen, never caught (owner data)
     },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 },
       { invoke: "wild_rig_test", args: { result: "caught" } }, ...DONE("$ws"), { wait: 600 }, ...DONE("$ws"), { wait: 400 },
       { key: "b", mods: 4 }, { wait: 3500 }, { key: "p", mods: 4 }, { wait: 900 }, { probe: "home" }, { invoke: "economy_state", log: true }],
     check: ({ probe, log }) => {
@@ -1404,7 +1408,7 @@ module.exports = [
   {
     id: "home", tags: ["smoke", "poke"], what: "⌘P → 홈: 오늘 끝낸 작업·연속 일수, 끝낼 때마다 오늘 수가 늘고 stats.json엔 날짜별 수만 (#44)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 },
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 300 },
       { key: "p", mods: 4 }, { wait: 800 }, { probe: "home" }, { invoke: "home_state", log: true }, { key: "m" }, { wait: 500 }, { probe: "box" }],
     check: ({ probe, log, box }) => {
@@ -1423,7 +1427,7 @@ module.exports = [
   {
     id: "box-no-eggs", tags: ["smoke", "poke"], what: "내 포켓몬: 부화기 알은 카드·수에서 빠지고 맨 위 한 줄 \"🥚 알 n개는 👜 가방의 부화기에\" — [가방 열기]로 가방 (#91)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 300 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 },
       { invoke: "incubator_add_test", args: { kind: "egg", have: 2 } }, { invoke: "incubator_add_test", args: { kind: "egg2", have: 0 } },
       { call: "openDex" }, { call: "box" }, { wait: 800 }, { probe: "box" }, { invoke: "box_list", args: { ws: "$ws" }, log: true },
       { click: "#box-grid .pk-box-eggs button" }, { wait: 800 }, { probe: "bag" }],
@@ -1440,7 +1444,7 @@ module.exports = [
   {
     id: "catch-log", tags: ["smoke", "poke"], what: "내 포켓몬 상세: 잡은 폴더·에이전트·진화 이력, 기록 없는 옛 개체는 그 줄 없음 (#44)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { call: "box" }, { wait: 300 }, { call: "openDex" }, { call: "box" }, { wait: 800 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { call: "box" }, { wait: 300 }, { call: "openDex" }, { call: "box" }, { wait: 800 },
       { probe: "first" }, { key: "ArrowRight" }, { wait: 300 }, { probe: "second" }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
     check: ({ probe, log }) => {
       const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]");
@@ -1469,7 +1473,7 @@ sleep 10
 echo '{"type":"response_item","payload":{"type":"custom_tool_call_output","call_id":"c1","output":"1.0.0"}}' >> "$f"
 sleep 30
 ` },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "codex" }, { wait: 200 }, { key: "Enter" }, { until: "astate", timeout: 9000 }, { wait: 5000 }, { probe: "asking" },
       { wait: 9000 }, { probe: "answered" }],
     check: ({ probe, log }) => [
@@ -1486,11 +1490,11 @@ sleep 30
     setup: (box) => fs.writeFileSync(path.join(box.data, "recent_dirs"), [box.folder("c"), box.folder("b"), path.join(box.dir, "gone"), box.folder("a")].join("\n") + "\n"),
     steps: [{ until: "start" }, { wait: 400 }, { probe: "first" }, { key: "Escape" }, { wait: 300 }, { probe: "esc0" },
       { key: "ArrowDown" }, { key: "ArrowDown" }, { wait: 100 }, { probe: "sel" }, { key: "ArrowUp" }, { key: "j" }, { wait: 100 }, { probe: "selj" }, { key: "Enter" },
-      { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 500 },
+      { until: "partnerKnown", timeout: 8000 }, { wait: 500 },
       { key: "t", mods: 4 }, { wait: 400 }, { probe: "t1" }, { key: "Escape" }, { wait: 300 }, { probe: "esc1" },
-      { key: "t", mods: 4 }, { wait: 400 }, { probe: "t2" }, { key: "2" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 500 },
-      { key: "t", mods: 4 }, { wait: 400 }, { key: "h" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 500 },
-      { key: "t", mods: 4 }, { wait: 400 }, { key: "o" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 }, { probe: "end" }],
+      { key: "t", mods: 4 }, { wait: 400 }, { probe: "t2" }, { key: "2" }, { until: "partnerKnown", timeout: 8000 }, { wait: 500 },
+      { key: "t", mods: 4 }, { wait: 400 }, { key: "h" }, { until: "partnerKnown", timeout: 8000 }, { wait: 500 },
+      { key: "t", mods: 4 }, { wait: 400 }, { key: "o" }, { until: "partnerKnown", timeout: 8000 }, { wait: 800 }, { probe: "end" }],
     check: ({ probe }) => [
       ok(JSON.stringify(probe.first?.recent) === JSON.stringify(["c", "b", "a"]), `최근 폴더 ${JSON.stringify(probe.first?.recent)} (없는 폴더는 빠져야)`),
       ok(probe.esc0?.start === true, "꼭 필요한 시작 화면이 Esc로 닫힘"),
@@ -1505,7 +1509,7 @@ sleep 30
     id: "recent-dirs", tags: ["smoke", "tabs", "data"], what: "최근 폴더: 10개까지, 없는 폴더 빠짐, 연 폴더는 맨 앞에 한 번만, last_dir (TAB-04)",
     data: "owner", mode: "direct", folders: [], make: Array.from({ length: 12 }, (_, i) => `f${String(i + 1).padStart(2, "0")}`),
     setup: (box) => fs.writeFileSync(path.join(box.data, "recent_dirs"), [...Array.from({ length: 11 }, (_, i) => box.folder(`f${String(i + 1).padStart(2, "0")}`)), path.join(box.dir, "gone")].join("\n") + "\n"),
-    steps: [{ until: "start" }, { wait: 400 }, { probe: "first" }, { key: "3" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 }],
+    steps: [{ until: "start" }, { wait: 400 }, { probe: "first" }, { key: "3" }, { until: "partnerKnown", timeout: 8000 }, { wait: 800 }],
     check: ({ probe, box }) => {
       const list = fs.readFileSync(path.join(box.data, "recent_dirs"), "utf8").split("\n").filter(Boolean).map((d) => path.basename(d));
       const last = path.basename(fs.readFileSync(path.join(box.data, "last_dir"), "utf8").trim());
@@ -1534,7 +1538,7 @@ sleep 30
   {
     id: "select-copy", tags: ["smoke", "terminal"], what: "터미널 글을 마우스로 끌어 고르면 복사·'복사됨' 알림 — 시험은 시스템 클립보드를 건드리지 않음 (TRM-04)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "echo lab-pick-4821" }, { wait: 200 }, { key: "Enter" }, { wait: 1000 }, { select: "lab-pick-4821" }, { wait: 300 }, { probe: "picked" }],
     check: ({ probe, log }) => [
       ok(/^copy_text "lab-pick-4821"$/m.test(log), `복사한 글 ${log.match(/^copy_text (.*)$/m)?.[1]}`),
@@ -1544,7 +1548,7 @@ sleep 30
   {
     id: "hand-pick", tags: ["smoke", "terminal"], what: "셸 1에서 고른 글을 레일에서 셸 2 우클릭 → 보내기: 출처 한 줄과 함께 셸 2에 입력·실행 (TRM-11)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 },
       { key: "t", mods: 12 }, { wait: 2500 }, { key: "1", mods: 6 }, { wait: 500 }, { call: "focusShell" }, // ⌃⌘1: back to shell 1
       { text: "echo lab-hand-7390" }, { wait: 200 }, { key: "Enter" }, { wait: 1000 }, { select: "lab-hand-7390" }, { wait: 300 },
       { click: ".rail .sess:nth-of-type(2)", button: "right" }, { wait: 300 }, { probe: "menu" },
@@ -1571,7 +1575,7 @@ for l in '{"type":"event_msg","payload":{"type":"task_started"}}' \\
   '{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"all good"}}'; do printf '%s\\n' "$l" >> "$f"; done
 sleep 30
 ` },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "codex" }, { wait: 200 }, { key: "Enter" }, { wait: 7000 }, { probe: "log" }],
     check: ({ probe }) => {
       const a = (probe.log?.activity || []).map((x) => x.trim());
@@ -1588,7 +1592,7 @@ sleep 30
     id: "agent-swap", tags: ["smoke", "agents"], what: "⌘G: 실행 중인 것과 같은 에이전트는 그대로(포커스만), 다른 것은 확인 — 취소면 그대로, 확인이면 교체 (AGT-03)",
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
     files: { "fakebin/claude": "#!/bin/sh\necho \"fake-claude args: $*\"\nsleep 60\n", "fakebin/codex": "#!/bin/sh\n[ \"$1\" = \"--version\" ] && { echo 'codex-cli 9.9.9-lab'; exit 0; }\necho \"fake-codex args: $*\"\nsleep 60\n" },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 },
       { key: "g", mods: 4 }, { wait: 500 }, { probe: "menu0" }, { key: "1" }, { wait: 2500 }, { probe: "claude" },
       { key: "g", mods: 4 }, { wait: 500 }, { probe: "menu1" }, { key: "1" }, { wait: 800 }, { probe: "stay" },
       { confirm: false }, { key: "g", mods: 4 }, { wait: 500 }, { key: "2" }, { wait: 1500 }, { probe: "cancel" },
@@ -1612,7 +1616,7 @@ sleep 30
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
     files: { "agents-user.json": JSON.stringify({ labagent: { name: "LabAgent", icon: "⌘", cmd: ["labagent"], state: "activity" }, plain: { cmd: "plainagent" } }),
       "fakebin/labagent": "#!/bin/sh\necho lab agent running\nsleep 30\n", "fakebin/plainagent": "#!/bin/sh\nsleep 30\n" },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 },
       { invoke: "agents_status", log: true }, { key: "g", mods: 4 }, { wait: 500 }, { probe: "menu" }, { key: "Escape" }, { wait: 300 },
       { call: "focusShell" }, { text: "labagent" }, { wait: 200 }, { key: "Enter" }, { wait: 3500 }, { probe: "typed" }],
     check: ({ probe, log }) => {
@@ -1632,7 +1636,7 @@ sleep 30
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], timeoutMs: 110000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
     files: { "agents-user.json": JSON.stringify({ labagent: { name: "LabAgent", cmd: ["labagent"], state: "activity" } }),
       "fakebin/labagent": "#!/bin/sh\nfor round in 1 2; do i=0; while [ $i -lt 46 ]; do echo \"working $round.$i\"; i=$((i+1)); sleep 0.5; done; sleep 8; done\nsleep 30\n" },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "labagent" }, { wait: 200 }, { key: "Enter" }, { wait: 12000 }, { probe: "working" }, { wait: 50000 }, { probe: "end" }],
     check: ({ probe, log }) => {
       const lines = log.split("\n");
@@ -1697,7 +1701,7 @@ sleep 30
     id: "drop-folders", tags: ["smoke", "tabs"], what: "Finder 폴더를 시작 화면·탭 줄에 끌어 놓으면 새 탭(여러 개는 차례로), 파일은 '폴더만' 알림, 터미널 칸에 놓으면 경로 입력 (TAB-07)",
     data: "owner", mode: "direct", folders: [], make: ["a", "b", "c"], files: { "note.txt": "x" },
     steps: (box) => [{ until: "start" }, { wait: 400 },
-      { drop: "#start", files: [box.folder("a")] }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 600 }, { probe: "start" },
+      { drop: "#start", files: [box.folder("a")] }, { until: "partnerKnown", timeout: 8000 }, { wait: 600 }, { probe: "start" },
       { drop: "#tabs", files: [box.folder("b"), box.folder("c")] }, { wait: 2500 }, { call: "closeDex" }, { wait: 400 }, { probe: "bar" },
       { drop: "#tabs", files: [path.join(box.dir, "note.txt")] }, { wait: 200 }, { probe: "file" },
       { call: "focusShell" }, { drop: "main.grid:not([hidden]) .pane-agent .term", files: [path.join(box.dir, "note.txt")] }, { wait: 600 }, { grep: "note.txt" }, { probe: "pane" }],
@@ -1727,7 +1731,7 @@ sleep 16
 w '{"type":"event_msg","payload":{"type":"task_complete","last_agent_message":"ok"}}'
 sleep 30
 ` },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "codex" }, { wait: 200 }, { key: "Enter" }, { wait: 6000 }, { probe: "early" },
       { wait: 11000 }, { probe: "stall" }, { invoke: "overlay_payload_test", log: true },
       { wait: 17000 }, { probe: "bash" }, { wait: 9000 }, { probe: "done" }],
@@ -1800,7 +1804,7 @@ sleep 40
   {
     id: "quit-waits-terminals", tags: ["smoke", "app"], what: "끌 때 모든 터미널이 끝난 것(종료 알림)을 확인한 뒤 종료 — 늦게 끝나는 셸도 (#54)",
     data: "owner", mode: "direct", folders: ["proj"], until: "quit: terminals ended",
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 3500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 3500 }, { call: "focusShell" },
       { text: "trap 'sleep 0.4; exit 0' HUP" }, { wait: 200 }, { key: "Enter" }, { wait: 500 }, { invoke: "quit_test" }, { wait: 5000 }],
     check: ({ log }) => {
       const m = log.match(/^quit: terminals ended in (\d+)ms(.*)$/m);
@@ -1816,7 +1820,7 @@ sleep 40
     id: "changes-git-live", tags: ["smoke", "terminal"], what: "셸에서 git 브랜치를 바꾸면 변경 사항 칸 제목이 바로(10초 틱 없이) 바뀜 (#52)",
     data: "owner", mode: "direct", folders: ["proj"],
     setup: (box) => gitRepo(box.folder("proj"), [["init", "-q"], (d) => fs.writeFileSync(path.join(d, "a.txt"), "1\n"), ["add", "."], ["commit", "-qm", "one"]]),
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2000 }, { probe: "before" }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2000 }, { probe: "before" }, { call: "focusShell" },
       { text: "GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1 git checkout -qb live-branch" }, { wait: 200 }, { key: "Enter" },
       { until: "branch.text", match: "live-branch", timeout: 5000 }, { probe: "after" }],
     check: ({ probe }) => [
@@ -1829,7 +1833,7 @@ sleep 40
     id: "open-file-kinds", tags: ["smoke", "terminal"], what: "⌘-클릭한 파일: index.html·그림은 기본 앱(브라우저 등), 코드는 편집기 그 줄로 (#57, TRM-08)",
     data: "owner", mode: "direct", folders: ["proj"],
     setup: (box) => { const d = box.folder("proj"); fs.mkdirSync(path.join(d, "src"), { recursive: true }); fs.writeFileSync(path.join(d, "index.html"), "<p>x</p>\n"); fs.writeFileSync(path.join(d, "src", "a.ts"), "1\n2\n3\n"); fs.writeFileSync(path.join(d, "shot.png"), ""); },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "clear; printf 'see index.html and src/a.ts:3 and shot.png\\n'" }, { wait: 200 }, { key: "Enter" }, { wait: 1200 },
       { clickText: "index.html", mods: 4 }, { clickText: "src/a.ts:3", mods: 4 }, { clickText: "shot.png", mods: 4 }, { invoke: "links_opened_test", log: true }],
     check: ({ log, box }) => {
@@ -1863,7 +1867,7 @@ sleep 40
   {
     id: "settings-overlay", tags: ["smoke", "app"], what: "설정 창(따로 창, #113 P1 — 제목 줄로 옮김, 터미널 창 덮개 아님): 처음엔 일반, 왼쪽 사이드바로 오버레이·일반 범주 바꾸기(#101) · 오버레이 켜기·보일 것·빠른 선택, 탭 효과, 세그먼트 단추(테마) — 바로 적용되고 settings.json에 남음, Esc 닫기 · 닫았다 열면 지난 범주 (APP-19, APP-22 규칙 7·9, #59)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 800 },
       { invoke: "overlay_show_test", args: { on: true } }, { wait: 600 }, { invoke: "overlay_visible_test", log: true },
       { invoke: "own_open_test", args: { name: "settings" } }, { wait: 1500 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
       { invoke: "own_click_test", args: { name: "settings", sel: ".set-nav [data-page='overlay']" } }, { wait: 400 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
@@ -2030,7 +2034,7 @@ sleep 40
     files: { "agents-user.json": JSON.stringify({ labagent: { name: "LabAgent", cmd: ["labagent"], state: "activity" } }),
       "fakebin/labagent": "#!/bin/sh\necho $$ > .agentpid\necho lab agent running\nsleep 30\n",
       "fakebin/labhelper": "#!/usr/bin/perl\nfor (1..80) { last if -s '.agentpid'; select(undef, undef, undef, 0.1); }\nopen(my $f, '<', '.agentpid') or exit 1; my $l = <$f>; chomp $l;\nsetpgrp(0, $l) or die \"setpgrp: $!\";\nopen(my $o, '>', '.joined'); print $o \"$$ $l\\n\"; close $o;\nsleep 30;\n" },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "labhelper & labagent" }, { wait: 200 }, { key: "Enter" }, { wait: 5000 }, { probe: "typed" }],
     check: ({ probe, log, box }) => {
       let joined = null; try { joined = fs.readFileSync(path.join(box.folder("proj"), ".joined"), "utf8").trim().split(" ").map(Number); } catch {}
@@ -2046,7 +2050,7 @@ sleep 40
     id: "theme-switch", tags: ["smoke", "app"], what: "테마: 라이트·다크를 고르면 화면·터미널 색이 바로 바뀌고 settings.json에 남음 (APP-20, #60)",
     data: "owner", mode: "direct", folders: ["proj"],
     // #70: a dark-theme agent's light grey (RGB) and dim text, printed in the shell
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 1500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 1500 }, { call: "focusShell" },
       { text: "printf '\\033[38;2;215;215;215mLABFAINT\\033[0m \\033[2;38;2;200;200;200mLABDIM\\033[0m\\n'" }, { key: "Enter" }, { wait: 800 },
       { invoke: "settings_set", args: { patch: { theme: "light" } } }, { wait: 700 }, { probe: "light" },
       { invoke: "settings_set", args: { patch: { theme: "dark" } } }, { wait: 700 }, { probe: "dark" },
@@ -2068,7 +2072,7 @@ sleep 40
   {
     id: "claude-typed-unlinked", tags: ["smoke", "agents"], what: "연결 안 한 셸에서 친 Claude: 대화 기록 방식, 상단 바에 \"5h·7d ?\" 안내 (#45)",
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": "#!/bin/sh\n# an unlinked Claude never runs Tamer's status line\necho \"fake-claude args: $*\"\nsleep 30\n" },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "claude" }, { wait: 200 }, { key: "Enter" }, { wait: 3500 }, { probe: "running" }, { invoke: "agents_status", log: true }],
     check: ({ probe, log }) => {
       const st = JSON.parse(log.match(/^lab-invoke agents_status (.*)$/m)?.[1] || "{}");
@@ -2084,7 +2088,7 @@ sleep 40
   {
     id: "claude-typed-linked", tags: ["smoke", "agents"], what: "연결한 뒤 새 셸에서 친 Claude: --settings가 붙고 hooks 방식, 상단 바에 5h·7d, 해제하면 블록만 빠짐 (#45)",
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": FAKE_CLAUDE },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 800 },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 800 },
       { invoke: "claude_link_test", args: { on: true }, log: true }, { invoke: "agents_status", log: true },
       { key: "t", mods: 12 }, { wait: 3500 }, // ⌘⇧T: a new shell reads the line
       { text: "claude" }, { wait: 200 }, { key: "Enter" }, { wait: 4000 }, { probe: "running" },
@@ -2178,7 +2182,7 @@ sleep 40
   {
     id: "hook-log-minimal", tags: ["smoke", "agents", "data"], what: "훅 기록엔 이벤트·도구 이름·종류만 — 명령·경로·메시지 글은 안 남음 (STA-02, POL-DATA-02)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: `L="$CVIM_STATE_DIR/tabs/$CVIM_TAB_ID.log"; printf '{"tool_name":"Bash","tool_input":{"command":"curl -H Bearer LABSECRET9 https://x"}}' | bash "$CVIM_ROOT/claude/hooks/event.sh" PreToolUse; printf '{"message":"needs permission for /Users/x/LABPATH9"}' | bash "$CVIM_ROOT/claude/hooks/event.sh" Notification; echo "LEAK=$(grep -c 'LABSECRET9\\|LABPATH9' "$L") LINES=$(wc -l < "$L" | tr -d ' ')"` },
       { wait: 200 }, { key: "Enter" }, { wait: 1500 }, { grep: "LEAK=0 LINES=2" }],
     check: ({ log }) => [ok(/lab-grep LEAK=0 LINES=2 rows=\[\d/.test(log), "훅 기록에 명령·경로가 남았거나 줄이 안 써짐")],
@@ -2186,7 +2190,7 @@ sleep 40
   {
     id: "claude-typed-stale", tags: ["smoke", "agents"], what: "Claude가 떠 있는 동안 연결을 켜고 끄면 상단 바 표시가 바로 따라감: 연결 안 됨 → 새 셸에서 다시 → 연결 안 됨 (#49)",
     data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], files: { "fakebin/claude": FAKE_CLAUDE },
-    steps: [{ until: "tabs.0" }, { until: "choose", timeout: 8000 }, { call: "closeDex" }, { wait: 2500 }, { call: "focusShell" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
       { text: "claude" }, { wait: 200 }, { key: "Enter" }, { wait: 3500 }, { probe: "before" }, // not linked yet
       { invoke: "claude_link_test", args: { on: true } }, { wait: 500 }, { probe: "running" }, // linked while it runs: the alias isn't in this shell
       { invoke: "claude_link_test", args: { on: false } }, { wait: 500 }, { probe: "unlinked" }],

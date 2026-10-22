@@ -5,6 +5,6 @@ export default defineConfig({
   base: "./", // relative asset paths: Electron loads dist/ from file://
   clearScreen: false,
   server: { port: 1420, strictPort: true },
-  // three pages: the main window, the desktop overlay and the menu bar dashboard (#105)
-  build: { target: "safari16", outDir: "dist", rollupOptions: { input: { main: "index.html", overlay: "overlay.html", popover: "popover.html", catch: "catch.html", settings: "settings.html" } } },
+  // the pages: the main window, the desktop overlay, the menu bar dashboard (#105), the windows of their own (APP-22)
+  build: { target: "safari16", outDir: "dist", rollupOptions: { input: { main: "index.html", overlay: "overlay.html", popover: "popover.html", catch: "catch.html", settings: "settings.html", poke: "poke.html" } } },
 });
