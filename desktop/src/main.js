@@ -480,13 +480,16 @@ async function openAgents(fixed = null) {
   for (const a of list) {
     const li = document.createElement("li");
     const note = a.level === "none" ? "설치 안 됨" : a.fix === "gemini_link" ? "확장을 연결하면 전체"
-      : a.fix === "claude_link" ? "⌘G는 전체 · 셸에서 친 Claude는 연결하면 전체" : a.fix === "claude_linked" ? `${a.path} · 셸에서 친 Claude도 연결됨` : a.path;
+      : a.fix === "claude_link" ? "⌘G는 전체 · 셸에서 친 Claude는 연결하면 전체" : a.fix === "claude_linked" ? `${a.path} · 셸에서 친 Claude도 연결됨`
+      : a.fix === "cursor_link" ? "훅을 연결하면 전체" : a.fix === "cursor_linked" ? `${a.path} · 훅 연결됨` : a.path;
     li.innerHTML = `<span>${esc(a.icon)}</span><b>${esc(a.name)}</b><span class="lv">${LEVEL[a.level]}</span><span class="where" title="${esc(a.path || "")}">${esc(note || "")}</span><span class="act"></span>`;
     const act = li.querySelector(".act");
     const button = (label, fn) => { const b = document.createElement("button"); b.textContent = label; b.addEventListener("click", fn); act.appendChild(b); };
     if (a.fix === "gemini_link") button("확장 연결", async () => { const r = await invoke("agent_fix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); });
     if (a.fix === "claude_link") button("셸에서 친 Claude도 연결", async () => { const r = await invoke("agent_fix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); }); // #45
     if (a.fix === "claude_linked") button("연결 해제", async () => { const r = await invoke("agent_unfix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); });
+    if (a.fix === "cursor_link") button("훅 연결", async () => { const r = await invoke("agent_fix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); });
+    if (a.fix === "cursor_linked") button("연결 해제", async () => { const r = await invoke("agent_unfix", { key: a.key }); if (!r.cancelled) toast(r.msg); openAgents(); });
     if (a.level === "none" && a.install) {
       button("설치 명령 복사", () => invoke("copy_text", { text: a.install.cmd }).then(() => toast(`복사됨 — 터미널에 붙여넣어 실행: ${a.install.cmd}`)));
       button("공식 안내", () => invoke("open_url", { url: a.install.url }));
@@ -815,7 +818,7 @@ function sessTitle(tab, x) {
 // path or user@host isn't a conversation's title
 function termTitle(t) {
   const v = String(t || "").replace(/^[^\p{L}\p{N}]+/u, "").replace(/\s+/g, " ").trim().slice(0, 80);
-  if (!v || /^(claude( code)?|codex|gemini( cli)?|opencode|aider|-?(zsh|bash|fish|sh))$/i.test(v) || /^[~/]|[\w.-]+@[\w.-]+:/.test(v)) return null;
+  if (!v || /^(claude( code)?|codex|gemini( cli)?|opencode|cursor( agent)?|aider|-?(zsh|bash|fish|sh))$/i.test(v) || /^[~/]|[\w.-]+@[\w.-]+:/.test(v)) return null;
   return v;
 }
 function renderRail(tab) {

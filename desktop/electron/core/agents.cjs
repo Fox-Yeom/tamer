@@ -5,10 +5,10 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { execFile, execFileSync } = require("node:child_process");
-const { HOME, CACHE, ROOT, readJson, writeJson } = require("./paths.cjs");
+const { HOME, CACHE, ROOT, readJson, writeJson, writeFile } = require("./paths.cjs");
 
 const CHOICE = path.join(CACHE, "agents.json");
-const ORDER = ["claude", "codex", "gemini", "opencode"];
+const ORDER = ["claude", "codex", "gemini", "opencode", "cursor"];
 
 const DEFS = {
   claude: { name: "Claude Code", short: "Claude", icon: "✻", color: "#D97757", cmd: ["claude"], state: "hooks" },
@@ -24,6 +24,13 @@ const DEFS = {
   // A2: official events, injected for CVIM's run only (agentEnv) — Gemini hooks, an OpenCode plugin
   gemini: { name: "Gemini CLI", short: "Gemini", icon: "✦", color: "#4F8DF7", cmd: ["gemini"], state: "hooks" },
   opencode: { name: "OpenCode", short: "OpenCode", icon: "◆", color: "#E0E0E0", cmd: ["opencode"], state: "hooks" },
+  // Cursor CLI (`agent`) has no per-run hooks flag. Lifecycle comes from an opt-in block in
+  // ~/.cursor/hooks.json (cursorLink) that no-ops unless CVIM_TAB_ID is set. `agent` is a generic
+  // name, so --help must say Cursor Agent before we claim the binary.
+  cursor: {
+    name: "Cursor", short: "Cursor", icon: "▶", color: "#7C3AED", state: "hooks",
+    cmd: ["agent", "cursor-agent"], check: ["--help"], checkIncludes: "Cursor Agent",
+  },
 };
 
 let defs;
@@ -127,12 +134,18 @@ function findExe(exe) {
 // first runnable candidate of the agent's command (with its arguments). With `check`, the candidate
 // must also answer it (exit 0, within 4 s) — remembered per file and its modification time
 const answers = new Map();
-function answersCheck(p, check) {
+function answersCheck(p, check, includes) {
   let key;
-  try { key = `${p}:${fs.statSync(p).mtimeMs}`; } catch { return false; }
+  try { key = `${p}:${fs.statSync(p).mtimeMs}:${includes || ""}`; } catch { return false; }
   if (!answers.has(key)) {
     let ok = false;
-    try { execFileSync(p, check, { timeout: 4000, stdio: "ignore", env: { ...process.env, PATH: shellPath() } }); ok = true; } catch {}
+    try {
+      const out = execFileSync(p, check, { timeout: 4000, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: { ...process.env, PATH: shellPath() } });
+      ok = !includes || String(out).toLowerCase().includes(String(includes).toLowerCase());
+    } catch (e) {
+      const out = `${e.stdout || ""}\n${e.stderr || ""}`;
+      ok = e.status === 0 && !!includes && out.toLowerCase().includes(String(includes).toLowerCase());
+    }
     answers.set(key, ok);
   }
   return answers.get(key);
@@ -142,7 +155,7 @@ function bin(key) {
   if (!d) return null;
   for (const c of d.cmd || []) {
     const p = findExe(c.split(/\s+/)[0]);
-    if (p && (!d.check || answersCheck(p, d.check))) return c;
+    if (p && (!d.check || answersCheck(p, d.check, d.checkIncludes))) return c;
   }
   return null;
 }
@@ -167,6 +180,8 @@ function command(key, { resume = false } = {}) {
 //   Gemini CLI: nothing per run — Gemini only reads a system settings file owned by root, so its
 //     hooks come from the CVIM extension (agents/gemini-extension, `gemini extensions link`), which
 //     does nothing unless CVIM_TAB_ID is set. Without it, Gemini falls back to output activity.
+//   Cursor CLI: nothing per run — it only reads ~/.cursor/hooks.json. The opt-in block
+//     (cursorLink) runs agents/cursor/launch.sh, which no-ops unless CVIM_TAB_ID is set.
 function agentEnv(key) {
   if (!ROOT) return {};
   if (key === "opencode" && !process.env.OPENCODE_CONFIG_CONTENT) {
@@ -187,6 +202,7 @@ const INSTALL = {
   codex: { cmd: "npm install -g @openai/codex", url: "https://github.com/openai/codex" },
   gemini: { cmd: "npm install -g @google/gemini-cli", url: "https://github.com/google-gemini/gemini-cli" },
   opencode: { cmd: "curl -fsSL https://opencode.ai/install | bash", url: "https://opencode.ai/docs/" },
+  cursor: { cmd: "curl -fsS https://cursor.com/install | bash", url: "https://cursor.com/docs/cli/installation" },
 };
 
 // the agent connection list (⌘G → "에이전트 연결"): what CVIM sees of each agent
@@ -198,6 +214,7 @@ function status() {
     const at = where(d.key);
     const level = !at ? "none" : stateOf(d.key) === "activity" ? "basic" : "full";
     const fix = d.key === "gemini" && at && !geminiLinked() ? "gemini_link"
+      : d.key === "cursor" && at ? (cursorLinked() ? "cursor_linked" : "cursor_link")
       : d.key === "claude" && at && claudeLinkFile() ? (claudeLinked() ? "claude_linked" : "claude_link") : null; // #45
     return { key: d.key, name: d.name, icon: d.icon, color: d.color, path: at, level, fix, install: INSTALL[d.key] || null };
   });
@@ -209,7 +226,11 @@ const geminiLinked = () => fs.existsSync(path.join(HOME, ".gemini", "extensions"
 // how CVIM reads an agent's state: its definition, except Gemini without the extension → activity
 function stateOf(key) {
   const d = get(key);
-  return key === "gemini" && d.state === "hooks" && !geminiLinked() ? "activity" : d.state;
+  if (d.state !== "hooks") return d.state;
+  // hooks that are not injected per run stay on output until the user connects them
+  if (key === "gemini" && !geminiLinked()) return "activity";
+  if (key === "cursor" && !cursorLinked()) return "activity";
+  return d.state;
 }
 
 // agent for a folder: env > folder's last choice > global default > claude
@@ -303,4 +324,108 @@ function claudeUnlink() {
   return { file: f.file, backup };
 }
 
-module.exports = { claudeLinkFile, claudeLinked, claudeLink, claudeUnlink, LINK_BEGIN, envFailed: () => envFailed, all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };
+// ── Cursor CLI (opt-in): one marked set of entries in ~/.cursor/hooks.json.
+// Cursor has no per-run settings flag, so the user agrees once and we append command hooks.
+// The launcher no-ops unless CVIM_TAB_ID is set (Tamer's shells and ⌘G both set it). Existing
+// hooks stay. "연결 해제" removes only entries whose command is our launcher. beforeShellExecution
+// is not added: that hook must return a permission decision, and Tamer does not approve commands.
+const CURSOR_EVENTS = ["sessionStart", "postToolUse", "afterFileEdit", "afterShellExecution", "stop"];
+const CURSOR_LAUNCHER = "tamer-cursor.sh";
+
+function cursorHooksPath() {
+  return process.env.CVIM_CURSOR_HOOKS || path.join(HOME, ".cursor", "hooks.json");
+}
+function cursorLauncherPath() {
+  return path.join(path.dirname(cursorHooksPath()), "hooks", CURSOR_LAUNCHER);
+}
+function isTamerCommand(cmd) {
+  return typeof cmd === "string" && (cmd.endsWith(`/${CURSOR_LAUNCHER}`) || cmd.endsWith(`\\${CURSOR_LAUNCHER}`));
+}
+function readCursorHooks() {
+  const file = cursorHooksPath();
+  let text = "";
+  try { text = fs.readFileSync(file, "utf8"); } catch { return { file, data: null, text: "" }; }
+  try { return { file, data: JSON.parse(text), text }; }
+  catch { throw new Error("hooks.json을 읽지 못했어요"); }
+}
+// Claude Code's settings shape (hooks[].hooks[]) is not Cursor's. Don't rewrite it.
+function claudeStyleHooks(data) {
+  const hooks = data?.hooks;
+  if (!hooks || typeof hooks !== "object" || Array.isArray(hooks)) return false;
+  return Object.values(hooks).some((list) => Array.isArray(list) && list.some((item) => item && Array.isArray(item.hooks)));
+}
+function cursorLinked() {
+  try {
+    const { data } = readCursorHooks();
+    if (!data?.hooks || typeof data.hooks !== "object") return false;
+    return Object.values(data.hooks).some((list) => Array.isArray(list) && list.some((item) => isTamerCommand(item?.command)));
+  } catch { return false; }
+}
+function backupCursor(text) {
+  const dir = path.join(CACHE, "backup", "cursor-hooks");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  const to = path.join(dir, `hooks.json.${new Date().toISOString().replace(/[:.]/g, "-")}`);
+  fs.writeFileSync(to, text, { mode: 0o600 });
+  return to;
+}
+function installCursorLauncher() {
+  const src = ROOT && path.join(ROOT, "agents", "cursor", "launch.sh");
+  if (!src || !fs.existsSync(src)) throw new Error("cursor hook launcher missing");
+  const dest = cursorLauncherPath();
+  fs.mkdirSync(path.dirname(dest), { recursive: true, mode: 0o700 });
+  fs.copyFileSync(src, dest);
+  fs.chmodSync(dest, 0o700);
+  return dest;
+}
+function cursorLinkPreview() {
+  const dest = cursorLauncherPath();
+  return { file: cursorHooksPath(), launcher: dest, events: CURSOR_EVENTS.slice() };
+}
+function cursorLink() {
+  const dest = installCursorLauncher();
+  const { file, data, text } = readCursorHooks();
+  if (data && claudeStyleHooks(data)) throw new Error("이 hooks.json은 Claude 형식이에요. Tamer는 Cursor 형식(~/.cursor/hooks.json)에만 항목을 넣어요");
+  const base = data && typeof data === "object" && !Array.isArray(data) ? data : { version: 1, hooks: {} };
+  if (base.version == null) base.version = 1;
+  if (!base.hooks || typeof base.hooks !== "object" || Array.isArray(base.hooks)) base.hooks = {};
+  let added = 0;
+  for (const ev of CURSOR_EVENTS) {
+    const list = Array.isArray(base.hooks[ev]) ? base.hooks[ev].filter((x) => x && typeof x === "object") : [];
+    if (!list.some((item) => isTamerCommand(item.command))) {
+      list.push({ command: dest, timeout: 3 });
+      added++;
+    }
+    base.hooks[ev] = list;
+  }
+  const backup = text ? backupCursor(text) : null;
+  writeFile(file, `${JSON.stringify(base, null, 2)}\n`);
+  return { file, launcher: dest, backup, already: added === 0 };
+}
+function cursorUnlink() {
+  const { file, data, text } = readCursorHooks();
+  if (!data?.hooks || typeof data.hooks !== "object") return { file, absent: true };
+  let removed = 0;
+  for (const ev of Object.keys(data.hooks)) {
+    if (!Array.isArray(data.hooks[ev])) continue;
+    const next = data.hooks[ev].filter((item) => {
+      if (isTamerCommand(item?.command)) { removed++; return false; }
+      return true;
+    });
+    if (next.length) data.hooks[ev] = next;
+    else delete data.hooks[ev];
+  }
+  if (!removed) return { file, absent: true };
+  const backup = text ? backupCursor(text) : null;
+  const extra = Object.keys(data).filter((k) => k !== "version" && k !== "hooks");
+  const any = Object.values(data.hooks).some((list) => Array.isArray(list) && list.length);
+  if (!any && !extra.length) {
+    try { fs.unlinkSync(file); } catch {}
+  } else writeFile(file, `${JSON.stringify(data, null, 2)}\n`);
+  try {
+    const launcher = cursorLauncherPath();
+    if (fs.readFileSync(launcher, "utf8").includes("tamer-cursor-event")) fs.unlinkSync(launcher);
+  } catch {}
+  return { file, backup };
+}
+
+module.exports = { claudeLinkFile, claudeLinked, claudeLink, claudeUnlink, LINK_BEGIN, cursorHooksPath, cursorLinkPreview, cursorLinked, cursorLink, cursorUnlink, CURSOR_EVENTS, envFailed: () => envFailed, all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };
