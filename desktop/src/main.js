@@ -2647,8 +2647,8 @@ async function uiScenes(set) {
       }
       await invoke("popover_click_test", { sel: "#pop-nav [data-page='home']" });
       await invoke("popover_test", { open: false });
-      // 메뉴바 아이콘 (#108, STA-24): the party's lead with the limit gauge (Claude 58 % · 14 % left), the Poké Ball with it — a
-      // dark menu bar; frame 0 (a test app puts no icon on the menu bar: the picture it would be given)
+      // 메뉴바 아이콘 (#108, STA-24): the party's lead, the Poké Ball — frame 0 (a test app puts no icon on the menu bar: the
+      // picture it would be given; the limits are its title, not in the picture)
       await invoke("settings_set", { patch: { menubar: { icon: "poke", text: "limit" } } }); await wait(300);
       for (const [name, marks] of [["menubar-icon", {}], ["menubar-icon-waiting", { badge: true }]]) {
         const r = await invoke("lead_shot_test", { name, marks });

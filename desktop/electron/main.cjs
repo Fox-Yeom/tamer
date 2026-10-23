@@ -11,7 +11,7 @@ const { HOME, CACHE, STATE, TABS, ROOT, writeFile, mkdirPrivate, tighten, pruneT
 const agents = require("./core/agents.cjs");
 const partner = require("./core/partner.cjs");
 const wild = require("./core/wild.cjs");
-const { trayModel, trayIcon, AGENTS: TRAY_AGENTS, leadFrames, leadIcon, ballIcon, leadState } = require("./tray.cjs");
+const { trayModel, trayIcon, AGENTS: TRAY_AGENTS, leadFrames, leadIcon, leadState } = require("./tray.cjs");
 const gif = require("./gif.cjs"); // the party lead's frames on the menu bar (STA-24, #108)
 const prices = require("./core/prices.cjs");
 const stats = require("./core/stats.cjs");
@@ -1040,7 +1040,7 @@ const progShown = (v = progressNow()) => !!(v.inc || v.stamps?.soon || v.researc
 function progressBump() { progCache = null; send("progress", progressNow()); overlaySync(); overlayUpdate(); }
 // the balls in the bag, for the wild card's ball chips (#76)
 const ballsOwned = () => { try { const b = economy.bag(); return { great: b.great || 0, ultra: b.ultra || 0, master: b.master || 0 }; } catch { return {}; } };
-const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow(), prog: progressNow(), limits: limitsView() });
+const trayNow = () => trayModel({ tabs: trayTabs(), usage: usageSeen, settings, coins: coinsNow(), prog: progressNow(), limits: limitsView(), dark: menuDark() });
 function trayAct(act) {
   if (act?.tab) focusMain(String(act.tab));
   else if (act?.set) setSettings(act.set);
@@ -1073,16 +1073,16 @@ function trayUpdate() {
 // ── 메뉴바 아이콘 — 움직이는 파티 선두 (STA-24, #108): with 설정 › 메뉴바 "아이콘: 파티 선두", the lead's cached
 // GIF (never downloaded for this — POL-ASSET-01) instead of the Poké Ball, always playing (5 pictures a second; 10 while tabs
 // work — more frames a picture with more of them — or a wild one is out; half on battery): a red ! when one needs you, grass
-// at its feet and the seconds left while a wild one is out, a hop and "+n" for coins. "5시간 한도" beside it: two small bars
-// drawn into the picture, the % left as its title (rule 8). macOS's 동작 줄이기: the marks, no playing. Frames are made once per lead,
-// each picture once (cached until the gauge's numbers or the menu bar's appearance change) ─────────────────────────────
-const leadAnim = { gif: null, lead: null, cache: new Map(), sig: "", i: 0, timer: null, hopUntil: 0, gain: 0, gainUntil: 0, base: "", gauge: null, title: null, img: null, shown: null, ticks: 0, sets: 0, made: 0 };
+// at its feet and the seconds left while a wild one is out, a hop and "+n" for coins. "5시간 한도" beside it: the % left as its
+// title, coloured when low (rule 8). macOS's 동작 줄이기: the marks, no playing. Frames are made once per lead, each picture
+// once ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+const leadAnim = { gif: null, lead: null, cache: new Map(), i: 0, timer: null, hopUntil: 0, gain: 0, gainUntil: 0, base: "", gauge: null, title: null, img: null, shown: null, ticks: 0, sets: 0, made: 0 };
 let leadSink = null; // tests: told what a Tray would be given (a test app puts no icon on the menu bar)
 const reducedMotion = () => { if (TEST && process.env.CVIM_TEST_REDUCED_MOTION) return true; try { return !!systemPreferences.getAnimationSettings().prefersReducedMotion; } catch { return false; } };
 const onBattery = () => { if (TEST) return !!process.env.CVIM_TEST_BATTERY; try { return powerMonitor.isOnBatteryPower(); } catch { return false; } }; // tests: not the Mac's own power (a run on battery saw half speed)
-// the menu bar's own appearance (macOS's dark / light — not the app's theme setting): the bars' and the Poké Ball's colours
+// the menu bar's own appearance (macOS's dark / light — not the app's theme setting): the title's yellow
 const menuDark = () => { if (TEST) return process.env.CVIM_TEST_MENU_LIGHT ? false : true; try { return systemPreferences.getUserDefault("AppleInterfaceStyle", "string") === "Dark"; } catch { return true; } };
-// the title and the gauge, from the menu bar's model (when it changes — not each picture)
+// the title and the limits' numbers, from the menu bar's model (when it changes — not each picture)
 function leadModel() { const m = trayNow(); leadAnim.base = m.title; leadAnim.gauge = m.gauge || null; }
 function leadPick() {
   if (settings.menubar.icon !== "poke") return null;
@@ -1095,26 +1095,15 @@ function leadLoad(file) {
   try { leadAnim.lead = leadFrames(gif.decode(fs.readFileSync(file))); } catch (e) { leadAnim.lead = null; logLine(`menubar lead unreadable ${String(e?.message || e).slice(0, 60)}`); }
   return leadAnim.lead;
 }
-// the pictures are kept per gauge numbers and appearance: those changing starts a new set
-function leadCache() {
-  const sig = `${JSON.stringify(leadAnim.gauge)}|${menuDark()}`;
-  if (sig !== leadAnim.sig) { leadAnim.sig = sig; leadAnim.cache.clear(); }
-  return leadAnim.cache;
-}
 function leadImage(i, marks) {
-  const cache = leadCache(), key = `${i}${marks.badge ? "!" : ""}${marks.grass ? "g" : ""}${marks.hop ? "h" : ""}`;
+  const cache = leadAnim.cache, key = `${i}${marks.badge ? "!" : ""}${marks.grass ? "g" : ""}${marks.hop ? "h" : ""}`;
   let img = cache.get(key);
-  if (!img) { const { buf, width, height } = leadIcon(leadAnim.lead, i, marks, leadAnim.gauge, menuDark()); img = nativeImage.createFromBitmap(buf, { width, height, scaleFactor: 2 }); cache.set(key, img); leadAnim.made++; }
+  if (!img) { const { buf, width, height } = leadIcon(leadAnim.lead, i, marks); img = nativeImage.createFromBitmap(buf, { width, height, scaleFactor: 2 }); cache.set(key, img); leadAnim.made++; }
   return img;
 }
-// the Poké Ball: the template picture — or, with the gauge beside it, drawn in the menu bar's colour
-function ballImage() {
-  if (!leadAnim.gauge) return trayIcon(nativeImage);
-  const cache = leadCache();
-  let img = cache.get("ball");
-  if (!img) { const { buf, width, height } = ballIcon(leadAnim.gauge, menuDark()); img = nativeImage.createFromBitmap(buf, { width, height, scaleFactor: 2 }); cache.set("ball", img); leadAnim.made++; }
-  return img;
-}
+// the Poké Ball: the template picture (macOS colours it for the menu bar), made once
+let ballImg = null;
+const ballImage = () => (ballImg ||= trayIcon(nativeImage));
 // what the icon shows now — as data (lead_test)
 function leadNow(now = Date.now()) {
   const st = leadState({ tabs: [...workspaces.values()].map((w) => ({ state: w.state })), wild: wild.current(), now });
@@ -2278,7 +2267,7 @@ const testCommands = {
   // 메뉴바 아이콘 (STA-24): what a Tray would be given now, as data (a test app puts no icon on the menu bar) — and, over
   // ms, the main process's CPU while the lead plays, the ticks, the pictures set and made
   lead_test() { let v = null; leadSink = (x) => { v = x; }; leadModel(); leadKick(); return { ...v, ask: leadAsk() }; },
-  // a scene of the icon (ui:shots): frame 0 with a state's marks and the gauge, as a picture, compared like the windows'
+  // a scene of the icon (ui:shots): frame 0 with a state's marks, as a picture, compared like the windows'
   lead_shot_test({ name, marks = {} }) {
     leadModel();
     const L = leadPick() && leadLoad(leadPick().gif), img = L ? leadImage(0, marks) : ballImage();

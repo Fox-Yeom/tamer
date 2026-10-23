@@ -16,7 +16,7 @@
       ]
     },
     "menubar-icon": {
-      "what": "메뉴바 아이콘 — 파티 선두(늘 재생, 입력 필요 !, 야생 풀숲) 또는 몬스터볼, 옆에 한도 막대 두 줄(5시간·주간 남은 만큼·색) — 남은 %는 그림이 아니라 메뉴바 글자 한 줄 (STA-24, #108) — 시험 앱은 아이콘을 띄우지 않아 그 그림을 파일로",
+      "what": "메뉴바 아이콘 — 파티 선두(늘 재생, 입력 필요 !, 야생 풀숲) 또는 몬스터볼, — 한도 남은 %는 그림이 아니라 메뉴바 글자 한 줄, 막대 없음 (STA-24, #108) — 시험 앱은 아이콘을 띄우지 않아 그 그림을 파일로",
       "entry": "leadTick",
       "scenes": [
         "menubar-icon",
@@ -169,7 +169,7 @@
       "screens": ["wild-catch"]
     },
     "menubar-lead": {
-      "what": "메뉴바 아이콘 그림 — GIF 프레임(gif.cjs) 잘라 22pt, 표시(! · 풀숲 · 콩), 한도 막대 두 줄(색, 회색 바탕), 몬스터볼은 메뉴바 다크/라이트 색 (STA-24, #108)",
+      "what": "메뉴바 아이콘 그림 — GIF 프레임(gif.cjs) 잘라 22pt, 표시(! · 풀숲 · 콩), 몬스터볼은 템플릿 그림 (STA-24, #108)",
       "files": ["electron/gif.cjs", "electron/tray.cjs", "electron/main.cjs"],
       "selectors": [],
       "functions": ["leadFrames", "leadIcon", "ballIcon", "drawGauge", "gaugeOf", "leadTick", "leadImage", "ballImage"],
