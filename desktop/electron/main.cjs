@@ -1074,13 +1074,13 @@ function trayUpdate() {
 // GIF (never downloaded for this — POL-ASSET-01) instead of the Poké Ball, always playing (5 pictures a second; 10 while tabs
 // work — more frames a picture with more of them — or a wild one is out; half on battery): a red ! when one needs you, grass
 // at its feet and the seconds left while a wild one is out, a hop and "+n" for coins. "5시간 한도" beside it: two small bars
-// and the % left drawn into the picture (rule 8). macOS's 동작 줄이기: the marks, no playing. Frames are made once per lead,
+// drawn into the picture, the % left as its title (rule 8). macOS's 동작 줄이기: the marks, no playing. Frames are made once per lead,
 // each picture once (cached until the gauge's numbers or the menu bar's appearance change) ─────────────────────────────
 const leadAnim = { gif: null, lead: null, cache: new Map(), sig: "", i: 0, timer: null, hopUntil: 0, gain: 0, gainUntil: 0, base: "", gauge: null, title: null, img: null, shown: null, ticks: 0, sets: 0, made: 0 };
 let leadSink = null; // tests: told what a Tray would be given (a test app puts no icon on the menu bar)
 const reducedMotion = () => { if (TEST && process.env.CVIM_TEST_REDUCED_MOTION) return true; try { return !!systemPreferences.getAnimationSettings().prefersReducedMotion; } catch { return false; } };
 const onBattery = () => { if (TEST) return !!process.env.CVIM_TEST_BATTERY; try { return powerMonitor.isOnBatteryPower(); } catch { return false; } }; // tests: not the Mac's own power (a run on battery saw half speed)
-// the menu bar's own appearance (macOS's dark / light — not the app's theme setting): the gauge's colours
+// the menu bar's own appearance (macOS's dark / light — not the app's theme setting): the bars' and the Poké Ball's colours
 const menuDark = () => { if (TEST) return process.env.CVIM_TEST_MENU_LIGHT ? false : true; try { return systemPreferences.getUserDefault("AppleInterfaceStyle", "string") === "Dark"; } catch { return true; } };
 // the title and the gauge, from the menu bar's model (when it changes — not each picture)
 function leadModel() { const m = trayNow(); leadAnim.base = m.title; leadAnim.gauge = m.gauge || null; }

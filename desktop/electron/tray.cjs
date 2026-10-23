@@ -29,9 +29,9 @@ function tabRow(t) {
 function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null, limits = null, now = Date.now() }) {
   const mb = settings.menubar, o = settings.overlay;
   const waiting = tabs.filter((t) => t.state === "waiting").length;
-  // beside the icon: who waits — or the limits as a gauge drawn into the icon's picture (STA-24 rule 8), no text then
-  const title = mb.text === "waiting" ? (waiting ? String(waiting) : "") : "";
+  // beside the icon: who waits — or the limits: two bars drawn into the icon's picture and the % left as text (STA-24 rule 8)
   const gauge = mb.text === "limit" ? gaugeOf(usage, now) || { agent: null, five: null, week: null } : null;
+  const title = mb.text === "waiting" ? (waiting ? String(waiting) : "") : gauge ? gaugeTitle(gauge) : "";
 
   const items = [];
   const rows = tabs.map(tabRow).sort((a, b) => a.rank - b.rank);
@@ -169,41 +169,39 @@ function canvas(W, H) {
   };
   return { put, out, W, H };
 }
-// ── the limit gauge (rule 8 — 2026-10-22: "PokeTokenBar와 같이 더 직관적인 표시"): two rows beside the icon, 5 hours over
-// the week — a bar filled to what's left and the % left, coloured as the dashboard's. Digits from a 5 × 7 pixel font drawn
-// at 2× (no font file); colours for the menu bar's own appearance (dark / light — macOS's, not the app's theme) ─────────
-const FONT = {
-  0: ["01110", "10001", "10011", "10101", "11001", "10001", "01110"], 1: ["00100", "01100", "00100", "00100", "00100", "00100", "01110"],
-  2: ["01110", "10001", "00001", "00010", "00100", "01000", "11111"], 3: ["11111", "00010", "00100", "00010", "00001", "10001", "01110"],
-  4: ["00010", "00110", "01010", "10010", "11111", "00010", "00010"], 5: ["11111", "10000", "11110", "00001", "00001", "10001", "01110"],
-  6: ["00110", "01000", "10000", "11110", "10001", "10001", "01110"], 7: ["11111", "00001", "00010", "00100", "01000", "01000", "01000"],
-  8: ["01110", "10001", "10001", "01110", "10001", "10001", "01110"], 9: ["01110", "10001", "10001", "01111", "00001", "00010", "01100"],
-  "%": ["11000", "11001", "00010", "00100", "01000", "10011", "00011"], "-": ["00000", "00000", "00000", "11111", "00000", "00000", "00000"],
-};
-const GLYPH = 2, ADV = 5 * GLYPH + 2, BAR_W = 30, BAR_H = 6, ROWS = [4, 24]; // glyph scale, advance, bar, the rows' tops in 44 px
+// ── the limit gauge (rule 8 — 2026-10-22: "PokeTokenBar와 같이 더 직관적인 표시"): two bars beside the icon, 5 hours over
+// the week, filled to what's left and coloured as the dashboard's; the % left is the title beside it (gaugeTitle) — macOS
+// draws that in its own font and colour (2026-10-23: the bars' pixel digits were "가독성이 너무 떨어짐") ─────────────────
+const BAR_W = 34, BAR_H = 10, ROWS = [9, 25]; // the bars (a pill each) and their tops in 44 px
 // [dark menu bar, light menu bar] — the dashboard's levels (STA-22: ≤ 20 % left red, ≤ 50 % yellow)
-const LEVEL = { ok: [[96, 206, 120], [27, 128, 56]], warn: [[242, 186, 72], [168, 108, 0]], bad: [[242, 104, 100], [206, 46, 52]], none: [[150, 150, 156], [118, 118, 124]] };
-const levelOf = (left) => (left == null ? "none" : left <= 20 ? "bad" : left <= 50 ? "warn" : "ok");
-const gaugeText = (left) => (left == null ? "-" : `${left}%`);
-const gaugeWidth = (g) => 6 + BAR_W + 5 + Math.max(...[g.five, g.week].map((w) => gaugeText(w?.left).length)) * ADV - 2 + 2;
+const LEVEL = { ok: [[96, 206, 120], [27, 128, 56]], warn: [[242, 186, 72], [168, 108, 0]], bad: [[242, 104, 100], [206, 46, 52]] };
+const levelOf = (left) => (left <= 20 ? "bad" : left <= 50 ? "warn" : "ok");
+const gaugeWidth = () => 6 + BAR_W + 2;
 function drawGauge(c, x0, g, dark) {
+  const R = BAR_H / 2;
   [g.five, g.week].forEach((w, row) => {
-    const left = w?.left ?? null, [r, gg, b] = LEVEL[levelOf(left)][dark ? 0 : 1], top = ROWS[row], by = top + 4;
-    for (let y = 0; y < BAR_H; y++) for (let x = 0; x < BAR_W; x++) { // the track, then what's left
-      const edge = (x === 0 || x === BAR_W - 1) && (y === 0 || y === BAR_H - 1); // a little rounding
-      if (edge) continue;
-      if (left != null && x < Math.round((BAR_W * left) / 100)) c.put(x0 + 6 + x, by + y, r, gg, b, 255);
-      else c.put(x0 + 6 + x, by + y, dark ? 255 : 0, dark ? 255 : 0, dark ? 255 : 0, dark ? 60 : 46);
+    const left = w?.left ?? null, fill = left ? Math.max(2, Math.round((BAR_W * left) / 100)) : 0, [r, gg, b] = left == null ? [0, 0, 0] : LEVEL[levelOf(left)][dark ? 0 : 1];
+    for (let y = 0; y < BAR_H; y++) for (let x = 0; x < BAR_W; x++) {
+      let n = 0; // how much of the pixel the pill covers (4 × 4 samples): round ends
+      for (let sy = 0; sy < 4; sy++) for (let sx = 0; sx < 4; sx++) {
+        const px = x + (sx + 0.5) / 4, py = y + (sy + 0.5) / 4, cx = Math.min(Math.max(px, R), BAR_W - R);
+        if (Math.hypot(px - cx, py - R) <= R) n++;
+      }
+      if (!n) continue;
+      const a = Math.round((255 * n) / 16);
+      if (x < fill) c.put(x0 + 6 + x, ROWS[row] + y, r, gg, b, a); // what's left
+      else c.put(x0 + 6 + x, ROWS[row] + y, 142, 142, 147, Math.round(a * 0.45)); // the track: a grey either menu bar shows
     }
-    [...gaugeText(left)].forEach((ch, k) => (FONT[ch] || []).forEach((line, y) => [...line].forEach((bit, x) => {
-      if (bit !== "1") return;
-      for (let sy = 0; sy < GLYPH; sy++) for (let sx = 0; sx < GLYPH; sx++) c.put(x0 + 6 + BAR_W + 5 + k * ADV + x * GLYPH + sx, top + y * GLYPH + sy, r, gg, b, 255);
-    })));
   });
+}
+// the % left beside the bars — 5 hours · the week, "–" for one not known; none known → no text
+function gaugeTitle(g) {
+  const a = g?.five?.left ?? null, b = g?.week?.left ?? null;
+  return a == null && b == null ? "" : `${a ?? "–"} · ${b ?? "–"}%`;
 }
 // one picture of the icon: a frame of the lead with the state drawn on, the gauge beside it → BGRA premultiplied, at 2×
 function leadIcon(lead, i, { badge = false, grass = false, hop = false } = {}, gauge = null, dark = true) {
-  const LW = Math.max(lead.w + 8, 24), W = LW + (gauge ? gaugeWidth(gauge) : 0), H = ICON_H, c = canvas(W, H), src = lead.frames[i % lead.frames.length];
+  const LW = Math.max(lead.w + 8, 24), W = LW + (gauge ? gaugeWidth() : 0), H = ICON_H, c = canvas(W, H), src = lead.frames[i % lead.frames.length];
   const ox = Math.floor((LW - lead.w) / 2) - (badge ? 2 : 0), oy = H - lead.h - 4 - (hop ? HOP : 0);
   for (let y = 0; y < lead.h; y++) for (let x = 0; x < lead.w; x++) {
     const s = (y * lead.w + x) * 4;
@@ -223,7 +221,7 @@ function leadIcon(lead, i, { badge = false, grass = false, hop = false } = {}, g
 }
 // the Poké Ball with the gauge (not a template picture then: drawn in the menu bar's text colour)
 function ballIcon(gauge, dark) {
-  const { buf: ball, size } = trayIconBitmap(36), W = 40 + gaugeWidth(gauge), c = canvas(W, ICON_H), v = dark ? 255 : 0;
+  const { buf: ball, size } = trayIconBitmap(36), W = 40 + gaugeWidth(), c = canvas(W, ICON_H), v = dark ? 255 : 0;
   for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) { const a = ball[(y * size + x) * 4 + 3]; if (a) c.put(2 + x, 4 + y, v, v, v, a); }
   drawGauge(c, 40, gauge, dark);
   return c.out();
@@ -245,4 +243,4 @@ function leadState({ tabs = [], wild = null, now = Date.now() }) {
     wildLeft: wild && !wild.big && wild.until ? Math.max(0, Math.ceil((wild.until - now) / 1000)) : null };
 }
 
-module.exports = { trayModel, trayIcon, trayIconBitmap, AGENTS, leadFrames, leadIcon, ballIcon, leadState, gaugeOf };
+module.exports = { trayModel, trayIcon, trayIconBitmap, AGENTS, leadFrames, leadIcon, ballIcon, leadState, gaugeOf, gaugeTitle };
