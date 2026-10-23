@@ -11,7 +11,7 @@ const { HOME, CACHE, STATE, TABS, ROOT, writeFile, mkdirPrivate, tighten, pruneT
 const agents = require("./core/agents.cjs");
 const partner = require("./core/partner.cjs");
 const wild = require("./core/wild.cjs");
-const { trayModel, trayIcon, AGENTS: TRAY_AGENTS, leadFrames, leadIcon, leadState } = require("./tray.cjs");
+const { trayModel, trayIcon, AGENTS: TRAY_AGENTS, leadFrames, leadIcon, ballIcon, leadState } = require("./tray.cjs");
 const gif = require("./gif.cjs"); // the party lead's frames on the menu bar (STA-24, #108)
 const prices = require("./core/prices.cjs");
 const stats = require("./core/stats.cjs");
@@ -1055,7 +1055,7 @@ const trayTemplate = (items) => items.map(({ act, submenu, ...it }) => ({ ...it,
 function trayUpdate() {
   // a test app never puts an icon on the menu bar (it would sit on the tester's own) — tray_test reads the model,
   // lead_test the icon's (STA-24)
-  if (TEST && app.isReady()) { leadAnim.base = trayNow().title; leadKick(); }
+  if (TEST && app.isReady()) { leadModel(); leadKick(); }
   if (TEST || draining || !app.isReady()) return;
   if (!settings.menubar.on) { if (tray) { tray.destroy(); tray = null; } leadStop(); return; }
   if (!tray) {
@@ -1066,19 +1066,24 @@ function trayUpdate() {
     tray.on("right-click", open);
     leadAnim.img = null; leadAnim.title = null; leadAnim.shown = "ball"; // a new icon: drawn again below
   }
-  leadAnim.base = trayNow().title;
+  leadModel();
   leadKick();
 }
 
 // ── 메뉴바 아이콘 — 움직이는 파티 선두 (STA-24, #108): with 설정 › 메뉴바 "아이콘: 파티 선두", the lead's cached
-// GIF (never downloaded for this — POL-ASSET-01) instead of the Poké Ball: playing while tabs work (faster with more),
-// still with a red ! when one needs you, dimmed with a z at rest, grass at its feet and the seconds left while a wild
-// one is out, a hop and "+n" for coins. Ticks only while something moves (10 a second, 5 on battery); none with
-// macOS's 동작 줄이기 — the marks stay. Frames are made once per lead, each picture once (cached) ──────────────
-const leadAnim = { gif: null, lead: null, cache: new Map(), i: 0, timer: null, hopUntil: 0, gain: 0, gainUntil: 0, base: "", title: null, img: null, shown: null, ticks: 0, sets: 0, made: 0 };
+// GIF (never downloaded for this — POL-ASSET-01) instead of the Poké Ball, always playing (5 pictures a second; 10 while tabs
+// work — more frames a picture with more of them — or a wild one is out; half on battery): a red ! when one needs you, grass
+// at its feet and the seconds left while a wild one is out, a hop and "+n" for coins. "5시간 한도" beside it: two small bars
+// and the % left drawn into the picture (rule 8). macOS's 동작 줄이기: the marks, no playing. Frames are made once per lead,
+// each picture once (cached until the gauge's numbers or the menu bar's appearance change) ─────────────────────────────
+const leadAnim = { gif: null, lead: null, cache: new Map(), sig: "", i: 0, timer: null, hopUntil: 0, gain: 0, gainUntil: 0, base: "", gauge: null, title: null, img: null, shown: null, ticks: 0, sets: 0, made: 0 };
 let leadSink = null; // tests: told what a Tray would be given (a test app puts no icon on the menu bar)
 const reducedMotion = () => { if (TEST && process.env.CVIM_TEST_REDUCED_MOTION) return true; try { return !!systemPreferences.getAnimationSettings().prefersReducedMotion; } catch { return false; } };
-const onBattery = () => { try { return powerMonitor.isOnBatteryPower(); } catch { return false; } };
+const onBattery = () => { if (TEST) return !!process.env.CVIM_TEST_BATTERY; try { return powerMonitor.isOnBatteryPower(); } catch { return false; } }; // tests: not the Mac's own power (a run on battery saw half speed)
+// the menu bar's own appearance (macOS's dark / light — not the app's theme setting): the gauge's colours
+const menuDark = () => { if (TEST) return process.env.CVIM_TEST_MENU_LIGHT ? false : true; try { return systemPreferences.getUserDefault("AppleInterfaceStyle", "string") === "Dark"; } catch { return true; } };
+// the title and the gauge, from the menu bar's model (when it changes — not each picture)
+function leadModel() { const m = trayNow(); leadAnim.base = m.title; leadAnim.gauge = m.gauge || null; }
 function leadPick() {
   if (settings.menubar.icon !== "poke") return null;
   const m = partyLite().list[0];
@@ -1090,17 +1095,31 @@ function leadLoad(file) {
   try { leadAnim.lead = leadFrames(gif.decode(fs.readFileSync(file))); } catch (e) { leadAnim.lead = null; logLine(`menubar lead unreadable ${String(e?.message || e).slice(0, 60)}`); }
   return leadAnim.lead;
 }
+// the pictures are kept per gauge numbers and appearance: those changing starts a new set
+function leadCache() {
+  const sig = `${JSON.stringify(leadAnim.gauge)}|${menuDark()}`;
+  if (sig !== leadAnim.sig) { leadAnim.sig = sig; leadAnim.cache.clear(); }
+  return leadAnim.cache;
+}
 function leadImage(i, marks) {
-  const key = `${i}${marks.dim ? "d" : ""}${marks.z ? "z" : ""}${marks.badge ? "!" : ""}${marks.grass ? "g" : ""}${marks.hop ? "h" : ""}`;
-  let img = leadAnim.cache.get(key);
-  if (!img) { const { buf, width, height } = leadIcon(leadAnim.lead, i, marks); img = nativeImage.createFromBitmap(buf, { width, height, scaleFactor: 2 }); leadAnim.cache.set(key, img); leadAnim.made++; }
+  const cache = leadCache(), key = `${i}${marks.badge ? "!" : ""}${marks.grass ? "g" : ""}${marks.hop ? "h" : ""}`;
+  let img = cache.get(key);
+  if (!img) { const { buf, width, height } = leadIcon(leadAnim.lead, i, marks, leadAnim.gauge, menuDark()); img = nativeImage.createFromBitmap(buf, { width, height, scaleFactor: 2 }); cache.set(key, img); leadAnim.made++; }
+  return img;
+}
+// the Poké Ball: the template picture — or, with the gauge beside it, drawn in the menu bar's colour
+function ballImage() {
+  if (!leadAnim.gauge) return trayIcon(nativeImage);
+  const cache = leadCache();
+  let img = cache.get("ball");
+  if (!img) { const { buf, width, height } = ballIcon(leadAnim.gauge, menuDark()); img = nativeImage.createFromBitmap(buf, { width, height, scaleFactor: 2 }); cache.set("ball", img); leadAnim.made++; }
   return img;
 }
 // what the icon shows now — as data (lead_test)
 function leadNow(now = Date.now()) {
   const st = leadState({ tabs: [...workspaces.values()].map((w) => ({ state: w.state })), wild: wild.current(), now });
-  const reduced = reducedMotion();
-  return { ...st, reduced, hop: !reduced && now < leadAnim.hopUntil, gain: now < leadAnim.gainUntil ? leadAnim.gain : 0, fps: onBattery() ? 5 : 10 };
+  const reduced = reducedMotion(), slow = onBattery() ? 2 : 1;
+  return { ...st, reduced, hop: !reduced && now < leadAnim.hopUntil, gain: now < leadAnim.gainUntil ? leadAnim.gain : 0, fps: (st.fast ? 10 : 5) / slow };
 }
 // the dashboard asks once (rule 2): the Poké Ball still, never asked, a lead whose picture is here
 function leadAsk() {
@@ -1120,26 +1139,28 @@ function leadTick() {
   leadAnim.timer = null;
   const m = leadPick(), L = m && leadLoad(m.gif);
   if (!L) { // the Poké Ball (the setting, no lead, or its picture isn't here)
-    if (leadAnim.shown !== "ball") { leadAnim.shown = "ball"; leadAnim.img = null; if (tray) tray.setImage(trayIcon(nativeImage)); leadAnim.sets++; }
+    const img = ballImage();
+    if (img !== leadAnim.img || leadAnim.shown !== "ball") { leadAnim.shown = "ball"; leadAnim.img = img; tray?.setImage(img); leadAnim.sets++; }
     if (leadAnim.title !== leadAnim.base) { leadAnim.title = leadAnim.base; tray?.setTitle(leadAnim.base, { fontType: "monospacedDigit" }); }
-    leadSink?.({ kind: "ball", title: leadAnim.base });
+    leadSink?.({ kind: "ball", title: leadAnim.base, gauge: leadAnim.gauge, w: img.getSize().width, h: img.getSize().height });
     return;
   }
-  const now = Date.now(), s = leadNow(now), moving = !s.reduced && s.step > 0;
+  const now = Date.now(), s = leadNow(now), moving = !s.reduced;
   leadAnim.ticks++;
   if (moving) leadAnim.i = (leadAnim.i + s.step) % L.frames.length;
   const frame = moving ? leadAnim.i : 0;
-  const marks = { badge: s.state === "waiting", grass: s.state === "wild", dim: s.state === "rest", z: s.state === "rest", hop: s.hop };
+  const marks = { badge: s.state === "waiting", grass: s.state === "wild", hop: s.hop };
   const img = leadImage(frame, marks);
   if (img !== leadAnim.img) { leadAnim.img = img; leadAnim.shown = "poke"; tray?.setImage(img); leadAnim.sets++; }
   const title = [leadAnim.base, s.state === "wild" ? `🌿${s.wildLeft ?? ""}` : "", s.gain ? `+${s.gain}` : ""].filter(Boolean).join(" ");
   if (title !== leadAnim.title) { leadAnim.title = title; tray?.setTitle(title, { fontType: "monospacedDigit" }); }
   leadSink?.({ kind: "poke", name: m.name, state: s.state, step: s.step, frame, frames: L.frames.length, w: img.getSize().width, h: img.getSize().height, title, reduced: s.reduced, fps: s.fps,
-    marks: Object.keys(marks).filter((k) => marks[k]).join(",") });
-  // the next tick: while it plays, a hop or "+n" is on, or the wild one's seconds count down
-  const wait = moving || s.hop ? 1000 / s.fps : s.gain || s.wildLeft != null ? 1000 : 0;
+    marks: Object.keys(marks).filter((k) => marks[k]).join(","), gauge: leadAnim.gauge });
+  // the next picture: it plays — unless 동작 줄이기, when only the wild one's seconds and "+n" need ticks
+  const wait = moving ? 1000 / s.fps : s.gain || s.wildLeft != null ? 1000 : 0;
   if (wait) leadAnim.timer = setTimeout(leadTick, wait);
 }
+
 // ── 채팅 없이 한도 (STA-21, #104 — POL-AGENT-02 rules 1 … 1-6) ──────────────────────────────────
 // Codex: its app server, on a timer too. Claude: only when turned on (asked once); the login read by the core
 // when it's turned on, when the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d · the dashboard),
@@ -2196,6 +2217,29 @@ async function catchRead() {
   const b = catchWin.getBounds(), o = overlay && !overlay.isDestroyed() ? overlay.getBounds() : null;
   return { open: true, ...page, beside: !!o && (b.x + b.width <= o.x || b.x >= o.x + o.width), win: !!win && !win.isDestroyed(), bounds: b, overlay: o };
 }
+// a scene's picture in $CVIM_DESKTOP_SHOTS/<name>.png, and how much of it differs from $CVIM_UI_BASELINE/<name>.png (share
+// of pixels whose colour moved more than a little) — a window's page, or the menu bar icon (STA-24)
+function shotCompare(name, img) {
+  const n = String(name).replace(/[^\w-]/g, "");
+  if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${n}.png`), img.toPNG());
+  const basePath = process.env.CVIM_UI_BASELINE && path.join(process.env.CVIM_UI_BASELINE, `${n}.png`);
+  if (!basePath || !fs.existsSync(basePath)) return { name: n, diff: null };
+  const base = nativeImage.createFromPath(basePath), a = img.getSize(), b = base.getSize();
+  if (a.width !== b.width || a.height !== b.height) return { name: n, diff: 1, note: `size ${b.width}x${b.height} → ${a.width}x${a.height}` };
+  const x = img.toBitmap(), y = base.toBitmap();
+  // also where: a few changed words are a tiny share of the window but crowd one spot (2026-10-06:
+  // "· 4분째" in the top bar was 0.08 % — "same"). block = the most changed 24-pixel square's share
+  const B = 24, cols = Math.ceil(a.width / B), blocks = new Uint32Array(cols * Math.ceil(a.height / B));
+  let changed = 0;
+  for (let i = 0; i < x.length; i += 4) {
+    if (Math.max(Math.abs(x[i] - y[i]), Math.abs(x[i + 1] - y[i + 1]), Math.abs(x[i + 2] - y[i + 2])) > 24) {
+      changed++;
+      const p = i / 4;
+      blocks[Math.floor(Math.floor(p / a.width) / B) * cols + Math.floor((p % a.width) / B)]++;
+    }
+  }
+  return { name: n, diff: changed / (x.length / 4), block: Math.max(...blocks) / (B * B) };
+}
 const testCommands = {
   // put the focused element into IME composition (as if typing Hangul) via DevTools protocol
   async ime_compose({ text, target }) {
@@ -2215,28 +2259,9 @@ const testCommands = {
   // a UI scene: this window as a picture in $CVIM_DESKTOP_SHOTS/<name>.png, and how much of it differs
   // from $CVIM_UI_BASELINE/<name>.png (share of pixels whose colour moved more than a little)
   async ui_shot({ name, target }) {
-    const n = String(name).replace(/[^\w-]/g, "");
     const wc = (target === "overlay" && overlay ? overlay : target === "popover" && popover ? popover : ownWin(target) || win).webContents; // the overlay's own page (STA-20) · the dashboard's (#105) · a window of its own (APP-22)
     wc.invalidate(); await new Promise((r) => setTimeout(r, 120)); // paint the current scene first, not a stale frame
-    const img = await wc.capturePage();
-    if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${n}.png`), img.toPNG());
-    const basePath = process.env.CVIM_UI_BASELINE && path.join(process.env.CVIM_UI_BASELINE, `${n}.png`);
-    if (!basePath || !fs.existsSync(basePath)) return { name: n, diff: null };
-    const base = nativeImage.createFromPath(basePath), a = img.getSize(), b = base.getSize();
-    if (a.width !== b.width || a.height !== b.height) return { name: n, diff: 1, note: `size ${b.width}x${b.height} → ${a.width}x${a.height}` };
-    const x = img.toBitmap(), y = base.toBitmap();
-    // also where: a few changed words are a tiny share of the window but crowd one spot (2026-10-06:
-    // "· 4분째" in the top bar was 0.08 % — "same"). block = the most changed 24-pixel square's share
-    const B = 24, cols = Math.ceil(a.width / B), blocks = new Uint32Array(cols * Math.ceil(a.height / B));
-    let changed = 0;
-    for (let i = 0; i < x.length; i += 4) {
-      if (Math.max(Math.abs(x[i] - y[i]), Math.abs(x[i + 1] - y[i + 1]), Math.abs(x[i + 2] - y[i + 2])) > 24) {
-        changed++;
-        const p = i / 4;
-        blocks[Math.floor(Math.floor(p / a.width) / B) * cols + Math.floor((p % a.width) / B)]++;
-      }
-    }
-    return { name: n, diff: changed / (x.length / 4), block: Math.max(...blocks) / (B * B) };
+    return shotCompare(name, await wc.capturePage());
   },
   // the Pokédex on a species, as the wild card's "도감에서 보기" (#25) asks
   wild_dex_test({ id }) { pokeOpen({ view: "dex", sel: id }); },
@@ -2252,7 +2277,13 @@ const testCommands = {
   own_up_test: ({ name }) => !!ownWin(name),
   // 메뉴바 아이콘 (STA-24): what a Tray would be given now, as data (a test app puts no icon on the menu bar) — and, over
   // ms, the main process's CPU while the lead plays, the ticks, the pictures set and made
-  lead_test() { let v = null; leadSink = (x) => { v = x; }; leadKick(); return { ...v, ask: leadAsk() }; },
+  lead_test() { let v = null; leadSink = (x) => { v = x; }; leadModel(); leadKick(); return { ...v, ask: leadAsk() }; },
+  // a scene of the icon (ui:shots): frame 0 with a state's marks and the gauge, as a picture, compared like the windows'
+  lead_shot_test({ name, marks = {} }) {
+    leadModel();
+    const L = leadPick() && leadLoad(leadPick().gif), img = L ? leadImage(0, marks) : ballImage();
+    return shotCompare(name, nativeImage.createFromBuffer(img.toPNG({ scaleFactor: 2 }))); // its 2× pixels, always (the default picks a scale by itself)
+  },
   async lead_cpu_test({ ms = 3000 } = {}) {
     leadSink = () => {}; leadKick();
     const a = process.cpuUsage(), t0 = Date.now(), n0 = { ticks: leadAnim.ticks, sets: leadAnim.sets, made: leadAnim.made };

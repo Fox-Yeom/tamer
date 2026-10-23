@@ -2647,6 +2647,16 @@ async function uiScenes(set) {
       }
       await invoke("popover_click_test", { sel: "#pop-nav [data-page='home']" });
       await invoke("popover_test", { open: false });
+      // 메뉴바 아이콘 (#108, STA-24): the party's lead with the limit gauge (Claude 58 % · 14 % left), the Poké Ball with it — a
+      // dark menu bar; frame 0 (a test app puts no icon on the menu bar: the picture it would be given)
+      await invoke("settings_set", { patch: { menubar: { icon: "poke", text: "limit" } } }); await wait(300);
+      for (const [name, marks] of [["menubar-icon", {}], ["menubar-icon-waiting", { badge: true }]]) {
+        const r = await invoke("lead_shot_test", { name, marks });
+        await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
+      }
+      await invoke("settings_set", { patch: { menubar: { icon: "ball" } } }); await wait(300);
+      { const r = await invoke("lead_shot_test", { name: "menubar-icon-ball" }); await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`); }
+      await invoke("settings_set", { patch: { menubar: { text: "waiting" } } });
       // 야생 잡기 창 (#119, PKM-08): the card the overlay's notice opens beside it — a seeded sprite stands in, no timer
       { const m = (await invoke("box_list", { ws: tab.id }))[0];
         await invoke("catch_test", { open: true, scene: { token: "scene", id: m.id, name: m.name, gif: m.gif, shiny: false } }); await wait(1800);

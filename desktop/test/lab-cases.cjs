@@ -1992,13 +1992,14 @@ sleep 40
     },
   },
   {
-    id: "menubar-lead", tags: ["smoke", "app", "poke"], what: "메뉴바 아이콘 = 파티 선두(STA-24, #108): 기본은 몬스터볼 + 대시보드 한 번 안내, 설정으로 바꾸면 선두 그림 — 쉼(흐리게·z, 멈춤) · 작업 중(재생, 일하는 탭 2개면 2배) · 입력 필요(멈춤 + !) · 완료 코인 +n·야생 풀숲 + 남은 초, 재생할 때만 틱 · CPU 기준 · 다시 몬스터볼",
+    id: "menubar-lead", tags: ["smoke", "app", "poke"], what: "메뉴바 아이콘 = 파티 선두(STA-24, #108): 기본은 몬스터볼 + 대시보드 한 번 안내, [데려가기]면 선두 그림 — 늘 재생(쉼 초당 5장 · 작업 중 10장, 일하는 탭 2개면 2배) · 입력 필요 ! · 완료 코인 +n·야생 풀숲 + 남은 초 · CPU 기준 · \"5시간 한도\"는 막대 두 줄 + 남은 %(글자 없음) · 다시 몬스터볼(막대는 그대로)",
     data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1", CVIM_WILD_COOLDOWN: "0", CVIM_WILD_COOLDOWN_EMPTY: "0" },
     setup: (box) => { putEcon(box, { "state.json": { startSeen: true } }); fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })); },
     steps: [{ until: "tabs.1" }, { until: "partnerKnown", timeout: 8000 }, { invoke: "party_test", args: { n: 3 } }, { wait: 300 },
       { invoke: "lead_test", log: true }, // 1 ball + ask
       { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_read_test", log: true }, // the dashboard asks once
       { invoke: "popover_click_test", args: { sel: "#pop-lead-yes" } }, { wait: 600 }, { invoke: "lead_test", log: true }, // 2 rest
+      { invoke: "lead_cpu_test", args: { ms: 2000 }, log: true }, // resting: still plays, slower
       { invoke: "popover_read_test", log: true }, { invoke: "popover_test", args: { open: false } },
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "coding", hold: true } }, { wait: 300 }, { invoke: "lead_test", log: true }, { wait: 700 }, { invoke: "lead_test", log: true }, // 3·4 working
       { invoke: "lead_cpu_test", args: { ms: 3000 }, log: true },
@@ -2006,27 +2007,32 @@ sleep 40
       { invoke: "agent_state_test", args: { ws: "$ws", from: "coding", to: "waiting", hold: true } }, { wait: 300 }, { invoke: "lead_test", log: true }, { wait: 600 }, { invoke: "lead_test", log: true }, // 5·6 waiting
       { invoke: "agent_state_test", args: { ws: "$ws", from: "waiting", to: "idle" } }, { wait: 300 },
       ...DONE("$ws"), { wait: 800 }, { invoke: "lead_test", log: true }, // 7 wild + coins
-      { invoke: "settings_set", args: { patch: { menubar: { icon: "ball" } } } }, { wait: 300 }, { invoke: "lead_test", log: true }, { invoke: "settings_get", log: true }], // 8 ball
+      { invoke: "usage_seen", args: { key: "claude", five_hour: { pct: 42, resets_at: 4102444800 }, seven_day: { pct: 86 } } },
+      { invoke: "usage_seen", args: { key: "codex", five_hour: { pct: 30 }, seven_day: { pct: 10 } } },
+      { invoke: "settings_set", args: { patch: { menubar: { text: "limit" } } } }, { wait: 300 }, { invoke: "lead_test", log: true }, // 8 the gauge
+      { invoke: "settings_set", args: { patch: { menubar: { icon: "ball" } } } }, { wait: 300 }, { invoke: "lead_test", log: true }, { invoke: "settings_get", log: true }], // 9 ball (+ gauge)
     check: ({ log }) => {
       const L = [...log.matchAll(/^lab-invoke lead_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
-      const cpu = JSON.parse(log.match(/^lab-invoke lead_cpu_test (.*)$/m)?.[1] || "null"), st = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
-      const [ball, rest, w1, w2, two, wait1, wait2, done, back] = L;
+      const [restCpu, cpu] = [...log.matchAll(/^lab-invoke lead_cpu_test (.*)$/gm)].map((m) => JSON.parse(m[1])), st = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
+      const [ball, rest, w1, w2, two, wait1, wait2, done, gauge, back] = L;
       const [asked, after] = [...log.matchAll(/^lab-invoke popover_read_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       return [
         ok(ball?.kind === "ball" && ball?.ask?.name, `처음은 몬스터볼 + 대시보드 한 번 안내(선두 이름) ${JSON.stringify(ball)}`),
         ok(/메뉴바에 데려갈까요\?/.test(asked?.text || "") && !/데려갈까요/.test(after?.text || ""), `대시보드 홈 "○○를 메뉴바에 데려갈까요?" → [데려가기] 뒤 사라짐 ${JSON.stringify([asked?.text?.match(/🐾[^\n]*/)?.[0], /데려갈까요/.test(after?.text || "")])}`),
         ok(two?.state === "working" && two.step === 2, `일하는 탭 2개 = 2배 ${JSON.stringify(two)}`),
-        ok(rest?.kind === "poke" && rest.state === "rest" && rest.marks === "dim,z" && rest.frame === 0 && rest.h === 22 && rest.frames > 10 && rest.ask === null, `파티 선두 — 쉼: 흐리게·z, 첫 프레임, 높이 22pt(44px), 안내는 다시 안 뜸 ${JSON.stringify(rest)}`),
+        ok(rest?.kind === "poke" && rest.state === "rest" && rest.marks === "" && rest.fps === 5 && rest.h === 22 && rest.frames > 10 && rest.ask === null, `파티 선두 — 쉼: 표시 없이 초당 5장, 높이 22pt(44px), 안내는 다시 안 뜸 ${JSON.stringify(rest)}`),
+        ok(restCpu && restCpu.ticks >= 7 && restCpu.ticks <= 13 && restCpu.cpu < 5, `쉬어도 재생(2초에 10장쯤)·CPU 5% 밑 ${JSON.stringify(restCpu)}`),
         ok(w1?.state === "working" && w1.step === 1 && w2?.state === "working" && w2.frame !== w1.frame && !w1.marks, `작업 중: 재생(프레임이 바뀜) ${JSON.stringify([w1?.frame, w2?.frame, w1?.marks])}`),
         ok(cpu && cpu.ticks >= 20 && cpu.ticks <= 40 && cpu.made <= (w1?.frames || 0) + 5 && cpu.cpu < 5, `재생 중 틱 초당 10번쯤·그림은 한 번씩만 만듦·메인 프로세스 CPU 5% 밑 ${JSON.stringify(cpu)}`),
-        ok(wait1?.state === "waiting" && wait1.marks === "badge" && wait1.frame === 0 && wait2?.frame === 0, `입력 필요: 멈춤 + 빨간 ! ${JSON.stringify([wait1, wait2?.frame])}`),
+        ok(wait1?.state === "waiting" && wait1.marks === "badge" && wait2?.marks === "badge" && wait2.frame !== wait1.frame, `입력 필요: 빨간 ! (그림은 계속 재생) ${JSON.stringify([wait1, wait2?.frame])}`),
         ok(done?.state === "wild" && /grass/.test(done.marks || "") && /🌿\d+/.test(done.title || "") && /\+\d+/.test(done.title || ""), `완료: 코인 +n · 야생이 나와 풀숲 + 남은 초 ${JSON.stringify(done)}`),
-        ok(back?.kind === "ball" && back?.ask === null && st.menubar?.icon === "ball" && st.menubar?.iconAsked === true, `다시 몬스터볼, 고른 뒤엔 안 물음 ${JSON.stringify([back, st.menubar])}`),
+        ok((gauge?.title ?? "x").replace(/🌿\d*|\+\d+/g, "").trim() === "" && gauge?.gauge?.agent === "claude" && gauge.gauge.five?.left === 58 && gauge.gauge.week?.left === 14 && gauge.w > rest.w + 30, `"5시간 한도": 글자 없이 막대 두 줄 — 5시간을 더 쓴 Claude 58% · 14% 남음, 그림이 넓어짐 ${JSON.stringify(gauge && { title: gauge.title, g: gauge.gauge, w: [rest?.w, gauge.w] })}`),
+        ok(back?.kind === "ball" && back?.ask === null && back?.gauge?.five?.left === 58 && back.w > 30 && st.menubar?.icon === "ball" && st.menubar?.iconAsked === true, `다시 몬스터볼(막대는 그대로), 고른 뒤엔 안 물음 ${JSON.stringify([back, st.menubar])}`),
       ];
     },
   },
   {
-    id: "menubar-lead-reduced", tags: ["smoke", "app"], what: "메뉴바 아이콘 = 파티 선두, macOS 동작 줄이기(시험: CVIM_TEST_REDUCED_MOTION): 작업 중에도 재생·틱 없이 첫 프레임, 표시는 그대로(! · z) (STA-24 규칙 6, #108)",
+    id: "menubar-lead-reduced", tags: ["smoke", "app"], what: "메뉴바 아이콘 = 파티 선두, macOS 동작 줄이기(시험: CVIM_TEST_REDUCED_MOTION): 작업 중에도 재생·틱 없이 첫 프레임, 표시는 그대로(!) (STA-24 규칙 6, #108)",
     data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_REDUCED_MOTION: "1" },
     steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { invoke: "party_test", args: { n: 2 } },
       { invoke: "settings_set", args: { patch: { menubar: { icon: "poke" } } } },
@@ -2044,7 +2050,7 @@ sleep 40
     },
   },
   {
-    id: "menubar", tags: ["smoke", "app"], what: "메뉴바: 기다리는 탭 수·5시간 한도 글자, 탭 상태 줄·한도 줄, 메뉴로 설정 바꾸기·아이콘 숨기기, 시험 앱은 아이콘을 안 띄움 (STA-19, #64)",
+    id: "menubar", tags: ["smoke", "app"], what: "메뉴바: 기다리는 탭 수 글자·5시간 한도 막대(#108), 탭 상태 줄·한도 줄, 메뉴로 설정 바꾸기·아이콘 숨기기, 시험 앱은 아이콘을 안 띄움 (STA-19, #64)",
     data: "owner", mode: "direct", folders: ["a", "b"],
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
       { invoke: "tray_test", log: true },
@@ -2071,7 +2077,7 @@ sleep 40
         ok(labels(idle).includes("🪙 포켓코인 54 · 오늘 +0") && !/54/.test(idle?.title || ""), `코인 한 줄(시작 코인 27 × 2)이 메뉴에, 아이콘 글자엔 없음 ${JSON.stringify(labels(idle).filter((l) => /포켓코인/.test(l)))}`),
         ok(idle?.title === "" && labels(idle).filter((l) => / — /.test(l)).length === 2, `처음: 글자 없음, 탭 줄 2개 ${JSON.stringify(idle?.title)} ${JSON.stringify(labels(idle).slice(0, 3))}`),
         ok(waiting?.title === "1" && /^❗ /.test(labels(waiting)[0]), `입력 필요 1개면 "1"·첫 줄 ❗ ${JSON.stringify(waiting?.title)} ${labels(waiting)[0]}`),
-        ok(limit?.title === "42%" && labels(limit).some((l) => /Claude Code\s+5시간 42%.*주간 18%/.test(l)) && !labels(limit).some((l) => /Codex|77/.test(l)), `한도 글자 42%·Claude 줄, 지난 Codex·모르는 에이전트는 없음 ${JSON.stringify(limit?.title)} ${JSON.stringify(labels(limit).filter((l) => /%/.test(l)))}`),
+        ok(limit?.title === "" && limit?.gauge?.agent === "claude" && limit.gauge.five?.left === 58 && limit.gauge.week?.left === 82 && labels(limit).some((l) => /Claude Code\s+5시간 42%.*주간 18%/.test(l)) && !labels(limit).some((l) => /Codex|77/.test(l)), `"5시간 한도" = 막대(Claude 58%·82% 남음, 글자 없음 — #108)·Claude 줄, 지난 Codex·모르는 에이전트는 없음 ${JSON.stringify(limit?.title)} ${JSON.stringify(labels(limit).filter((l) => /%/.test(l)))}`),
         ok(JSON.stringify(clicks) === '["true","true","true"]' && got.overlay?.partner === false && got.overlay?.minimal === "always" && got.menubar?.on === false, `메뉴로 바꾼 설정 ${JSON.stringify(clicks)} ${JSON.stringify(got.overlay)} ${JSON.stringify(got.menubar)}`),
         ok(saved?.menubar?.on === true && saved?.menubar?.text === "waiting", `설정 창에서 다시 켜고, 모르는 글자 값은 기본(waiting)이어야 ${JSON.stringify(saved?.menubar)}`),
         ok(last?.title === "1", `기본으로 돌아간 글자 ${JSON.stringify(last?.title)}`),
