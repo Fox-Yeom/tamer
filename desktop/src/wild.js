@@ -24,7 +24,7 @@ export function createWild(root, { invoke, partnerButton, dexButton, log = () =>
       <div class="wild-text"></div>
       <div class="wild-balls" hidden></div>
       <div class="wild-actions"><button class="wild-throw" tabindex="-1">⚾ 몬스터볼 <span class="k">⌘B</span></button>
-        <button class="wild-partner" tabindex="-1" hidden>이 탭의 파트너로</button>
+        <button class="wild-partner" tabindex="-1" hidden>파티에 넣기</button>
         <button class="wild-dex" tabindex="-1" hidden>📕 도감에서 보기</button><span class="wild-timer dim"></span></div>
     </div>`;
   const $ = (s) => root.querySelector(s);

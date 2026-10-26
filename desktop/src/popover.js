@@ -54,28 +54,33 @@ function drawDot() {
   $("#pop-nav .pop-dot").hidden = page === "home" || !(wildOut() || (r?.evolved && r.at > seen));
 }
 
+// a row that opens its place in the Pokémon window when pressed (#121, rule 15): the class, its view, the › at its end
+const GO = '<span class="pop-go" aria-hidden="true">›</span>';
+function linkTo(el, view, title) { el.classList.add("pop-link"); el.dataset.poke = view; el.title = title; el.tabIndex = 0; el.setAttribute("role", "link"); }
+
 async function drawPartner(m) {
   const p = m.partner, root = $("#pop-partner");
-  if (!p) { root.innerHTML = `<div class="pop-none">${m.folder ? `${esc(m.folder)} — 이 탭엔 파트너가 없어요` : "열린 탭이 없어요"}</div>`; return; }
+  linkTo(root, "home", "포켓몬 창 홈에서 보기");
+  if (!p) { root.innerHTML = '<div class="pop-none">포켓몬이 없어요 <button id="pop-choose">포켓몬 고르기</button></div>'; return; } // an empty party (#122): the 포켓몬 고르기 window
   const goal = p.final || p.grad ? 100 : p.next?.level || null;
   const pct = goal && p.lv ? Math.min(100, Math.round((p.lv / goal) * 100)) : null;
   root.innerHTML = `<div class="pop-sprite"><img alt="" /></div>
     <div class="pop-who"><div><span class="pop-name">${esc(p.name)}${p.shiny ? " ✨" : ""}</span> <span class="pop-lv">${esc(lvLine(p))}</span></div>
       ${pct != null ? `<div class="pop-bar"><i style="width:${pct}%"></i></div>` : ""}
-      <div class="pop-chips"><span>${esc(m.folder || "")}</span></div></div>`;
+      <div class="pop-chips"><span>메인 파트너</span></div></div>${GO}`; // the party's first, the same in every tab (#122)
   const src = await sprite(p.gif);
   const img = root.querySelector("img");
   if (src && img) img.src = src;
 }
 
-// 파티 (PKM-31, #107): who grows from folders without a partner and from work outside Tamer — and the last such finish
+// 파티 (PKM-31, #107 · #122): up to 5 that grow in turn from every finish, in Tamer or outside — and the last such finish
 async function drawParty(m) {
   const p = m.party || { list: [] }, r = m.recent?.[0], root = $("#pop-party");
-  const head = `<div class="pop-h"><span>파티${m.outside ? " · Tamer 밖 작업도" : ""}</span><button id="pop-party-go">${p.list.length ? "바꾸기" : "파티 고르기"}</button></div>`;
+  const head = `<div class="pop-h"><span>파티 ${p.list.length} / ${p.max || 5}${m.outside ? " · Tamer 밖 작업도" : ""}</span><button id="pop-party-go">${p.list.length ? "바꾸기" : "내 포켓몬"}</button></div>`;
   const last = r ? `<div class="pop-recent">${r.outside ? "밖에서" : "탭"} · ${esc(r.folder)} · +${r.coins || 0}${r.mon?.name ? ` · ${esc(r.mon.name)}${r.mon.lv ? ` Lv ${r.mon.lv}` : ""}` : ""}${r.evolved ? ` · 진화!` : ""}</div>` : "";
-  if (!p.list.length) { root.innerHTML = head + '<div class="pop-none">파티가 비어 있어요 — 파트너 없는 폴더와 Tamer 밖 작업은 파티가 키워요</div>' + last; return; }
+  if (!p.list.length) { root.innerHTML = head + '<div class="pop-none">파티가 비어 있어요 — 어디서 작업을 끝내도 파티가 차례로 커요</div>' + last; return; }
   // three to a row, the picture big enough to see (#117)
-  root.innerHTML = head + `<div class="pop-party">${p.list.map((x, i) => `<span class="pop-mon${i === p.next ? " next" : ""}${i ? "" : " lead"}" data-uid="${x.uid}" title="${esc(x.name)} Lv ${x.lv ?? "?"}${i === p.next ? " · 다음 차례" : ""}${i ? " — 눌러서 선두로" : " · 선두"}"><img alt="" data-gif="${esc(x.gif || "")}" /><b class="nm">${esc(x.name)}${x.shiny ? " ✨" : ""}</b><small>Lv ${x.lv ?? "?"}</small></span>`).join("")}</div>` + last;
+  root.innerHTML = head + `<div class="pop-party">${p.list.map((x, i) => `<span class="pop-mon${i === p.next ? " next" : ""}${i ? "" : " lead"}" data-uid="${x.uid}" title="${esc(x.name)} Lv ${x.lv ?? "?"}${i === p.next ? " · 다음 차례" : ""}${i ? " — 눌러서 메인 파트너로" : " · 메인 파트너"}"><img alt="" data-gif="${esc(x.gif || "")}" /><b class="nm">${esc(x.name)}${x.shiny ? " ✨" : ""}</b><small>Lv ${x.lv ?? "?"}</small></span>`).join("")}</div>` + last;
   for (const img of root.querySelectorAll("img[data-gif]")) sprite(img.dataset.gif).then((u) => { if (u) img.src = u; });
 }
 
@@ -86,20 +91,21 @@ function drawProg(m) {
   const kind = e.egg > 0 ? "egg" : e.egg2 > 0 ? "egg2" : null; // an ordinary egg first
   const put = kind ? `<button id="pop-egg-in" data-kind="${kind}" title="가방의 ${kind === "egg" ? "알" : "희귀 알"}을 부화기에 — 작업을 끝낼 때마다 부화가 가까워져요">알 넣기 <span class="dim">가방 ${e.egg + e.egg2}</span></button>` : "";
   const inc = a
-    ? `<div class="pop-inc${a.soon ? " soon" : ""}"><i class="pk-egg mid${a.kind === "egg2" ? " rare" : ""}"></i><div class="pop-inc-what">
+    ? `<div class="pop-inc pop-link${a.soon ? " soon" : ""}" data-poke="bag" role="link" tabindex="0" title="가방의 부화기에서 보기"><i class="pk-egg mid${a.kind === "egg2" ? " rare" : ""}"></i><div class="pop-inc-what">
         <b>${esc(a.name || "알")} ${a.have}/${a.need}</b><div class="pop-bar"><i style="width:${Math.round((a.have / a.need) * 100)}%"></i></div>
-        <span class="dim">${a.soon ? "곧 태어나요 — 작업 1번" : `작업 ${a.need - a.have}번 남음`}${a.waiting ? ` · 대기 ${a.waiting}` : ""}</span></div></div>`
-    : `<div class="pop-inc empty"><i class="pk-egg mid empty"></i><div class="pop-inc-what"><b>부화기가 비어 있어요</b>
-        <span class="dim">${kind ? "알을 넣으면 작업을 끝낼 때마다 자라요" : "알은 🛒 상점에서 (알 500 · 희귀 알 2,000)"}</span></div></div>`;
+        <span class="dim">${a.soon ? "곧 태어나요 — 작업 1번" : `작업 ${a.need - a.have}번 남음`}${a.waiting ? ` · 대기 ${a.waiting}` : ""}</span></div>${GO}</div>`
+    : `<div class="pop-inc empty pop-link" data-poke="${kind ? "bag" : "shop"}" role="link" tabindex="0" title="${kind ? "가방의 부화기에서 보기" : "상점에서 알 사기"}"><i class="pk-egg mid empty"></i><div class="pop-inc-what"><b>부화기가 비어 있어요</b>
+        <span class="dim">${kind ? "알을 넣으면 작업을 끝낼 때마다 자라요" : "알은 🛒 상점에서 (알 500 · 희귀 알 2,000)"}</span></div>${GO}</div>`;
   const more = [p.stamps && `⭐ ${soon(p.stamps)}스탬프 ${p.stamps.n}/${p.stamps.need}`, p.research && `✦ ${soon(p.research)}리서치 ${p.research.done}/${p.research.of}`].filter(Boolean);
-  $("#pop-prog").innerHTML = `<div class="pop-h"><span>부화기 · 진행</span>${put}</div>${inc}${more.length ? `<div class="pop-progline">${more.join(" · ")}</div>` : ""}`;
+  $("#pop-prog").innerHTML = `<div class="pop-h"><span>부화기 · 진행</span>${put}</div>${inc}${more.length ? `<div class="pop-progline pop-link" data-poke="home" role="link" tabindex="0" title="포켓몬 창 홈에서 보기"><span>${more.join(" · ")}</span>${GO}</div>` : ""}`;
 }
 
 function drawToday(m) {
   const t = m.today || {}, c = m.coins;
+  linkTo($("#pop-today"), "home", "포켓몬 창 홈에서 보기 — 최근 7일 · 스탬프");
   $("#pop-today").innerHTML = `<div class="pop-stat"><small>오늘 완료</small><b>${t.today ?? 0}</b></div>
     <div class="pop-stat"><small>연속</small><b>${t.streak ?? 0}일</b></div>
-    <div class="pop-stat"><small>오늘 코인</small><b class="pop-coin">${c ? `+${c.today.earned.toLocaleString("en-US")}` : "—"}</b></div>`;
+    <div class="pop-stat"><small>오늘 코인</small><b class="pop-coin">${c ? `+${c.today.earned.toLocaleString("en-US")}` : "—"}</b></div>${GO}`;
 }
 
 // 한도 칸 (#115, STA-22 rule 10 — PokeTokenBar's "Limits"): per agent, each window a row — the bar fills with
@@ -184,11 +190,11 @@ function draw(m) {
   drawDot();
 }
 
-// 야생 (rule 3): the wild card as in the main window — throw here (click / ⌘B); "도감에서 보기" opens Tamer
+// 야생 (rule 3): the wild card as in the main window — throw here (click / ⌘B); "도감에서 보기" opens the Pokémon window's 도감
 const wild = createWild($("#pop-wild"), {
   invoke,
   log: (line) => invoke("popover_log", { line }).catch(() => {}),
-  dexButton: (e) => invoke("popover_dex", { id: e.id }),
+  dexButton: (e) => invoke("popover_poke", { view: "dex", sel: e.id }),
 });
 listen("wild", (e) => { wild.show(e.payload); drawDot(); });
 listen("wild-throw", (e) => wild.play(e.payload));
@@ -197,16 +203,20 @@ listen("popover", (e) => draw(e.payload));
 listen("party", () => invoke("popover_state").then(draw).catch(() => {}));
 
 document.addEventListener("click", (e) => {
-  // 선두 바꾸기 right here (#112): a party member's picture → first in the party
+  // 메인 파트너 바꾸기 right here (#112 · #122): a party member's picture → first in the party
   const mon = e.target.closest(".pop-mon[data-uid]:not(.lead)");
   if (mon && model?.party) { const u = Number(mon.dataset.uid); return invoke("party_set", { uids: [u, ...model.party.list.map((m) => m.uid).filter((x) => x !== u)] }).then(() => invoke("popover_state")).then(draw).catch(() => {}); }
+  // a button inside a row is its own (알 넣기 …); the row itself, or 포켓몬 창's buttons → the Pokémon window there (#121)
+  const go = e.target.closest("[data-poke]");
+  if (go && (go.tagName === "BUTTON" || !e.target.closest("button"))) return invoke("popover_poke", { view: go.dataset.poke });
   const t = e.target.closest("button");
   if (!t) return;
   if (t.id === "pop-refresh") { t.textContent = "↻ 읽는 중…"; invoke("limits_refresh", { user: true }).catch(() => {}); }
   else if (t.id === "pop-open") invoke("popover_open");
   else if (t.id === "pop-settings") invoke("popover_settings");
   else if (t.id === "pop-quit") invoke("popover_quit");
-  else if (t.id === "pop-party-go") invoke("popover_party"); // 포켓몬 창의 ⭐ 파티 (#107)
+  else if (t.id === "pop-party-go") invoke("popover_poke", { view: "box" }); // 내 포켓몬's party row (#107 → #121)
+  else if (t.id === "pop-choose") invoke("popover_choose"); // the 포켓몬 고르기 window (#122)
   else if (t.id === "pop-lead-yes" || t.id === "pop-lead-no") invoke("lead_icon", { on: t.id === "pop-lead-yes" }).then(() => invoke("popover_state")).then(draw).catch(() => {}); // STA-24
   else if (t.id === "pop-egg-in") invoke("egg_in", { kind: t.dataset.kind }).then(() => invoke("popover_state")).then(draw).catch(() => {}); // 🥚 (#116) // 완전히 끄기 (#106 — the right-click menu's "Tamer 종료" too)
   else if (t.dataset.page) showPage(t.dataset.page); // 위쪽 탭 (#118)
@@ -214,6 +224,7 @@ document.addEventListener("click", (e) => {
   else if (t.dataset.ws) invoke("popover_tab", { ws: t.dataset.ws });
 });
 document.addEventListener("keydown", (e) => {
+  if ((e.key === "Enter" || e.key === " ") && e.target.matches?.(".pop-link[data-poke]")) { e.preventDefault(); return invoke("popover_poke", { view: e.target.dataset.poke }); } // a row with the keyboard
   if (e.key === "Escape") invoke("popover_hide");
   else if (e.metaKey && e.key.toLowerCase() === "b") { e.preventDefault(); if (wildOut()) showPage("home"); wild.throwBall(); } // the throw shown where the card is
 });

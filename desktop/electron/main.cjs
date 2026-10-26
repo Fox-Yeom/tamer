@@ -76,7 +76,7 @@ const tabOf = (s) => s.parent || s;
 const pendingOpen = []; // folders handed to the app (Dock / Finder) before the window was ready
 
 // what the Pokémon window hears of the main window's events — coins, progress, the box, this tab's partner (APP-22 rule 3)
-const POKE_EVENTS = new Set(["economy", "progress", "incubator", "hatched", "partner", "partner-choose", "partner-today"]);
+const POKE_EVENTS = new Set(["economy", "progress", "incubator", "hatched"]); // the Pokémon window draws nothing for a tab any more (#122)
 function send(event, payload) {
   if (win && !win.isDestroyed()) win.webContents.send("host-event", { event, payload });
   if (pokeWin && !pokeWin.isDestroyed() && POKE_EVENTS.has(event)) pokeWin.webContents.send("host-event", { event, payload });
@@ -231,9 +231,10 @@ function openWorkspace(cwd) {
   sessions.set(ws.id, ws);
   logLine(`workspace id=${ws.id} agent=${agent} cwd=${cwd}`);
   ws.opened = core.request("open", { ws: ws.id, kind: agents.stateOf(agent), cwd, tabs: TABS });
-  // kept for the UI to ask for: assign() can finish before the UI listens for "partner"
-  ws.partnerReady = partner.assign(cwd).then((p) => {
-    if (p?.choose) { noPartner(ws); return { ws: ws.id, choose: true }; }
+  // kept for the UI to ask for: assign() can finish before the UI listens for "partner". Every tab shows the 메인 파트너
+  // (#122) — none in the party: "포켓몬이 없어요 [포켓몬 고르기]"
+  ws.partnerReady = partner.assign().then((p) => {
+    if (p?.choose) { ws.partner = null; send("partner-choose", { ws: ws.id }); overlayUpdate(); return { ws: ws.id, choose: true }; }
     ws.partner = p; send("partner", { ws: ws.id, ...p }); overlayUpdate(); return p;
   })
     .catch((e) => { logLine(`partner error ${e}`); return null; });
@@ -267,36 +268,36 @@ function closeWorkspace(id) {
   logLine(`workspace closed id=${id}`);
 }
 
-// ── choosing a partner (box rules, partner.cjs): the first partner's starters, a resting one,
-// or another folder's (that folder is left without one) ──────────────────────────────────
-// a folder without a partner: the dialog (and an empty state in the avatar pane / overlay)
-function noPartner(ws, freed) {
-  ws.partner = null;
-  send("partner-choose", { ws: ws.id, freed: !!freed });
-  overlayUpdate();
+// ── 메인 파트너 (#122, PKM-31): the party's first is every tab's partner pane, the overlay's, the dashboard's and the menu
+// bar's — when the party changes (메인 · add · remove · the first Pokémon · a suggestion taken) every tab hears it ───────
+async function mainSync() {
+  const p = await partner.mainPartner().catch(() => null);
+  for (const ws of workspaces.values()) {
+    ws.partner = p; ws.partnerReady = Promise.resolve(p || { choose: true });
+    if (p) send("partner", { ws: ws.id, ...p }); else send("partner-choose", { ws: ws.id });
+  }
+  overlayUpdate(); popoverUpdate(); trayUpdateSoon();
+  return p;
 }
-
-function partnerTake(ws, choice) {
-  const { partner: p, freed } = partner.take(ws.cwd, choice);
-  ws.partner = p;
-  ws.partnerReady = Promise.resolve(p);
-  logLine(`partner-take ws=${ws.id} ${JSON.stringify(choice)} -> ${p?.id}#${p?.uid} freed=${freed ? path.basename(freed) : "-"}`);
-  send("partner", { ws: ws.id, ...p });
-  // the folder it came from (if open) has no partner now
-  for (const o of workspaces.values()) {
-    if (o !== ws && o.cwd === freed) noPartner(o, true);
+// an individual grew / evolved / got a candy or a stone: when it's the 메인 파트너, every tab's pane shows it as after a finish
+function mainProgress(uid, info) {
+  const main = partner.party().list[0];
+  if (!main || main.uid !== uid) return;
+  const pr = partner.progress();
+  for (const x of workspaces.values()) {
+    if (info.evolved || info.hatched) x.partner = { ...(info.evolved || info.hatched), ...pr };
+    send("partner-progress", { ws: x.id, ...pr, ...info });
   }
   overlayUpdate();
-  return p && { ws: ws.id, ...p };
 }
 
 // the first partner's 3 starters: downloaded at start while the box is empty (dialog shows progress)
 let starterLoading = null;
 function loadStarter() {
   if (!starterLoading) {
-    starterLoading = partner.fillStarter((n) => send("partner-today", { n })).finally(() => {
+    starterLoading = partner.fillStarter(() => chooseSend("choose", chooseModel())).finally(() => {
       starterLoading = null;
-      send("partner-today", { done: true });
+      chooseSend("choose", chooseModel());
     });
   }
   return starterLoading;
@@ -549,9 +550,8 @@ function finishGame({ ws = null, cwd, agent = null, took = null, turnAt = null, 
     leadGain(coins.gained); // the menu bar's lead hops, "+5" beside it (STA-24)
   }
   // sometimes a wild Pokémon comes out (PLAN 3.6) — where and during whose task it showed up: kept with the
-  // individual if it's caught (#44). A folder without a partner: more often (PKM-06)
-  const empty = ws ? !ws.partner : partner.progress(cwd).lv == null;
-  const w = guess ? null : wild.onDone(ws ? ws.id : null, { empty, folder: cwd, agent, incense: !!economy.incenseUntil() });
+  // individual if it's caught (#44). One chance everywhere (#122, PKM-06)
+  const w = guess ? null : wild.onDone(ws ? ws.id : null, { folder: cwd, agent, incense: !!economy.incenseUntil() });
   if (w) { logLine(`wild appeared ${w.id}${w.shiny ? "s" : ""} ${ws ? `ws=${ws.id}` : "outside"}`); broadcast("wild", { ...w, balls: ballsOwned() }); overlayUpdate(); }
   // 🥚 the incubator (#85): every finished task anywhere — the first egg one closer, maybe a hatch into the box
   partner.incubatorStep().then((r) => {
@@ -567,10 +567,10 @@ function finishGame({ ws = null, cwd, agent = null, took = null, turnAt = null, 
     send("incubator", partner.incubator());
     progressBump(); // the stamp of the day too (stats are in by now)
   }).catch((e) => logLine(`incubator error ${e}`));
-  // EXP for the folder's partner — none there: the party's next in turn (PKM-31) — maybe an evolution
+  // the party's next in turn grows (#122, PKM-31 rule 3) — maybe an evolution
   const t0 = Date.now();
-  partner.onDone(cwd).then(({ evolved, from, miles = [], hatched, newdex, graduated, evoNew, via, uid }) => {
-    logLine(`exp ${ws ? `ws=${ws.id}` : "outside"} via=${via || "-"} ${JSON.stringify(via === "party" ? { uid } : partner.progress(cwd))} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"}${hatched ? ` hatched=${hatched.id}${hatched.shiny ? "s" : ""}` : ""}${graduated ? " graduated" : ""} ${Date.now() - t0}ms`);
+  partner.onDone().then(({ evolved, from, miles = [], hatched, newdex, graduated, evoNew, via, uid }) => {
+    logLine(`exp ${ws ? `ws=${ws.id}` : "outside"} via=${via || "-"} ${JSON.stringify({ uid })} evolved=${evolved?.id ?? "-"} miles=${miles.join(",") || "-"}${hatched ? ` hatched=${hatched.id}${hatched.shiny ? "s" : ""}` : ""}${graduated ? " graduated" : ""} ${Date.now() - t0}ms`);
     const newCoins = evolved && evoNew ? economy.onNewDex() : 0; // 🪙 a species new to the Pokédex by evolving: +30 more (#94)
     const evoCoins = (evolved ? economy.onEvolve() : hatched && newdex ? economy.onNewDex() : 0) + newCoins; // 🪙 +30 (#72) · a new species out of an egg (#84)
     if (evolved && research.onEvolve(caughtSet().size)) researchCheck(); // ✦ "진화 3번" (#86)
@@ -580,18 +580,12 @@ function finishGame({ ws = null, cwd, agent = null, took = null, turnAt = null, 
     if (evolved) progressBump(); // ✦ "진화 3번"
     // 진화 연출 off the main window (#111): with no window, or Tamer not in front, the overlay shows it
     if (evolved && (!win || win.isDestroyed() || !win.isFocused())) {
-      broadcast("evolved", { from: from?.name || null, to: evolved.name, shiny: !!evolved.shiny, gif: evolved.gif || null, coins: evoCoins, outside, via: via || null });
+      broadcast("evolved", { id: evolved.id, from: from?.name || null, to: evolved.name, shiny: !!evolved.shiny, gif: evolved.gif || null, coins: evoCoins, outside, via: via || null });
       logLine(`overlay evolved ${evolved.id}`);
     }
-    // the tabs showing this individual (the folder's own tab; a party member may be some folder's partner too)
-    const grown = via === "party" ? partner.party().list.find((m) => m.uid === uid) : null;
-    const tabs = [...workspaces.values()].filter((x) => (via === "folder" ? x.cwd === cwd : grown?.folder && x.cwd === grown.folder));
-    for (const x of tabs) {
-      if (evolved || hatched) { x.partner = { ...(evolved || hatched), ...partner.progress(x.cwd) }; overlayUpdate(); }
-      send("partner-progress", { ws: x.id, ...partner.progress(x.cwd), evolved: evolved || null, from: from || null, coins: evoCoins, newCoins, mile: miles.at(-1) || null, mileCoins,
-        hatched: hatched || null, graduated: !!graduated, gradCoins });
-    }
-    // 파티 · 밖 작업 (#107): the dashboard, the overlay and the 파티 tab hear who grew
+    // the 메인 파트너 grew: every tab's pane shows it (#122)
+    if (uid != null) mainProgress(uid, { evolved: evolved || null, from: from || null, coins: evoCoins, newCoins, mile: miles.at(-1) || null, mileCoins, hatched: hatched || null, graduated: !!graduated, gradCoins });
+    // 파티 · 밖 작업 (#107): the dashboard, the overlay and 내 포켓몬's party row hear who grew
     if (via === "party" || outside) {
       const mon = via ? partner.mon(uid) : null; // who grew — by name, also a folder partner with no tab open (#111)
       const note = { at: Date.now(), outside, folder: path.basename(cwd), agent, via: via || null, coins: coins?.gained || 0,
@@ -604,7 +598,7 @@ function finishGame({ ws = null, cwd, agent = null, took = null, turnAt = null, 
   }).catch((e) => logLine(`exp error ${e}`));
 }
 const recentDone = []; // the last few finishes done outside Tamer or grown by the party — memory only (#107)
-const partyLite = () => { try { const p = partner.party(); return { list: p.list.map((m) => ({ uid: m.uid, name: m.name, gif: m.gif, shiny: m.shiny, lv: m.lv })), next: p.next }; } catch { return { list: [], next: 0 }; } };
+const partyLite = () => { try { const p = partner.party(); return { list: p.list.map((m) => ({ uid: m.uid, name: m.name, gif: m.gif, shiny: m.shiny, lv: m.lv })), next: p.next, max: p.max }; } catch { return { list: [], next: 0, max: partner.PARTY_MAX }; } };
 
 // ── session restore (E1): the open tabs, reopened on the next launch with their agents resuming
 // (Claude --continue, Codex resume --last) — only when the app didn't end by the user's choice:
@@ -921,6 +915,7 @@ const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wil
   menubar: { on: true, text: "waiting", icon: "ball", iconAsked: false }, // 메뉴바 (STA-19, #64) · 아이콘: 몬스터볼 / 파티 선두 (STA-24, #108), asked once
   limits: { codex: true, claude: null }, // 채팅 없이 한도 (STA-21, #104): Codex app server · Claude usage API (null = not asked yet)
   background: true, loginOpen: false, backgroundSeen: false, // 백그라운드 (APP-21, #106): stay in the menu bar · open at login · the one-time notice
+  chooseAsked: false, // 포켓몬 고르기 opened by itself once (#122, PKM-32 rule 1)
   outside: null }; // Tamer 밖 작업도 포켓몬에 (STA-23, #107): null = not asked yet
 const MENUBAR_TEXT = ["waiting", "limit", "none"], MENUBAR_ICON = ["ball", "poke"];
 const MINIMAL = ["auto", "always", "never"];
@@ -940,7 +935,7 @@ function readSettings(raw = readJsonSafe(SETTINGS)) {
       icon: MENUBAR_ICON.includes(raw?.menubar?.icon) ? raw.menubar.icon : SETTINGS_DEFAULT.menubar.icon, iconAsked: b(raw?.menubar?.iconAsked, false) },
     theme: THEMES.includes(raw?.theme) ? raw.theme : SETTINGS_DEFAULT.theme,
     limits: { codex: b(raw?.limits?.codex, SETTINGS_DEFAULT.limits.codex), claude: typeof raw?.limits?.claude === "boolean" ? raw.limits.claude : null },
-    background: b(raw?.background, SETTINGS_DEFAULT.background), loginOpen: b(raw?.loginOpen, SETTINGS_DEFAULT.loginOpen), backgroundSeen: b(raw?.backgroundSeen, false),
+    background: b(raw?.background, SETTINGS_DEFAULT.background), loginOpen: b(raw?.loginOpen, SETTINGS_DEFAULT.loginOpen), backgroundSeen: b(raw?.backgroundSeen, false), chooseAsked: b(raw?.chooseAsked, false),
     outside: typeof raw?.outside === "boolean" ? raw.outside : null,
   };
 }
@@ -1046,6 +1041,7 @@ function trayAct(act) {
   else if (act?.set) setSettings(act.set);
   else if (act === "settings") settingsOpen(); // its own window — no terminal window (APP-22 rule 8)
   else if (act === "open") focusMain();
+  else if (act === "poke") pokeOpen({ view: "home" }); // 포켓몬 창 (#121, STA-19 rule 10) — no terminal window (APP-22 rule 8)
   else if (act === "hide") setSettings({ menubar: { on: false } });
   else if (act === "quit") app.quit();
   else if (act === "limits") limitsRefresh({ user: true });
@@ -1280,7 +1276,7 @@ const POP_W = 360;
 let popTestMaxH = 0; // tests: a short screen, to see the dashboard scroll (#117)
 let popoverClosedAt = 0;
 function popoverModel() {
-  const cur = workspaces.get(activeWs) || null, p = cur?.partner;
+  const cur = workspaces.get(activeWs) || null, p = (() => { try { return partner.party().list[0] || null; } catch { return null; } })(); // the 메인 파트너 (#122)
   return {
     folder: cur ? path.basename(cur.cwd) : null,
     partner: p ? { name: p.name, gif: p.gif, shiny: p.shiny, lv: p.lv, final: p.final, next: p.next, grad: p.grad, xp: p.xp, egg: p.egg } : null,
@@ -1422,17 +1418,76 @@ function settingsClose() {
   if (settingsWin && !settingsWin.isDestroyed()) { settingsWin.destroy(); logLine("settings closed"); }
   settingsWin = null;
 }
+// ── 포켓몬 고르기 창 (#122, PKM-32 · APP-22 rule 11): a titled window of its own (choose.html) — macOS's title bar moves it
+// (rule 7), it never makes or raises the terminal window (rule 8). The first Pokémon (3 starters, while the box is empty) or,
+// with an empty party, the suggestion (the former folder partners once, else the box). It opens by itself only once
+// (chooseAuto: the first launch, or the first after the update with an empty party), else from [포켓몬 고르기] ──────
+let chooseWin = null;
+const CHOOSE_W = 720, CHOOSE_H = 500;
+const chooseSend = (event, payload) => { if (chooseWin && !chooseWin.isDestroyed()) chooseWin.webContents.send("host-event", { event, payload }); };
+// load: start fetching the starters when they aren't all here — only when the window opens or its page asks, never from
+// the fetch's own progress (offline, that ended at once and started again forever: the main process starved)
+function chooseModel(load = false) {
+  const o = partner.options();
+  if (o.starter) { if (load && !o.starter.ready) loadStarter(); return { mode: "first", starter: o.starter, loading: !!starterLoading }; }
+  return { mode: "suggest", ...partner.suggestions() };
+}
+function chooseOpen() {
+  if (chooseWin && !chooseWin.isDestroyed()) { chooseSend("choose", chooseModel(true)); if (!TEST) { chooseWin.show(); chooseWin.focus(); } return; }
+  const area = ownArea();
+  chooseWin = new BrowserWindow({
+    title: "포켓몬 고르기", width: CHOOSE_W, height: CHOOSE_H, x: Math.round(area.x + (area.width - CHOOSE_W) / 2), y: Math.round(area.y + Math.max(0, (area.height - CHOOSE_H) / 3)),
+    show: false, resizable: false, minimizable: false, maximizable: false, fullscreenable: false, movable: true,
+    backgroundColor: nativeTheme.shouldUseDarkColors ? "#1a211d" : "#e3eedb", // --pk-bg
+    webPreferences: { preload: path.join(__dirname, "preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true, devTools: false },
+  });
+  chooseWin.on("closed", () => { chooseWin = null; });
+  chooseWin.webContents.on("will-navigate", (e) => e.preventDefault());
+  chooseWin.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  chooseWin.once("ready-to-show", () => { if (!chooseWin) return; if (TEST) chooseWin.showInactive(); else { chooseWin.show(); chooseWin.focus(); } });
+  chooseWin.loadFile(path.join(DIST, "choose.html"));
+  logLine(`choose open ${partner.boxEmpty() ? "first" : "suggest"}`);
+}
+function chooseClose() {
+  if (chooseWin && !chooseWin.isDestroyed()) { chooseWin.destroy(); logLine("choose closed"); }
+  chooseWin = null;
+}
+// by itself only once (PKM-32 rule 1, APP-22 rule 6): a first launch (an empty box), or the first launch after the update
+// for a party left empty (the former folder partners suggested) — after the main window is up (#122 J4)
+function chooseAuto() {
+  if (settings.chooseAsked) return;
+  const first = partner.boxEmpty(), suggest = !first && !partner.party().list.length && partner.hasSuggest();
+  if (!first && !suggest) return;
+  setSettings({ chooseAsked: true });
+  setTimeout(chooseOpen, TEST ? 200 : 800);
+}
+// the 포켓몬 고르기 window (choose.html, #122) may call only these (POL-SEC-02): its model, a starter, a suggestion, close
+const chooseCommands = {
+  choose_state: () => ({ ...chooseModel(true), test: TEST }),
+  choose_starter({ id }) { const v = partner.starterTake(Number(id)); logLine(`choose starter ${v.id}#${v.uid}`); chooseClose(); mainSync(); broadcast("party", partner.party()); return v; },
+  choose_suggest({ uids }) {
+    const v = partner.suggestTake((Array.isArray(uids) ? uids : []).slice(0, partner.PARTY_MAX).map(Number));
+    logLine(`choose suggest ${v.list.map((m) => m.uid).join(",") || "-"}`);
+    chooseClose(); mainSync(); broadcast("party", v);
+    return v;
+  },
+  choose_close: () => chooseClose(),
+  choose_log({ line }) { logLine(`choose ${String(line).slice(0, 120)}`); },
+  sprite_b64: (args) => commands.sprite_b64(args),
+};
+
 // the consent dialogs (limits · outside): over the 설정 창 when it's there, else the main window, else on their own (APP-22 rule 4)
 const dialogParent = () => (settingsWin && !settingsWin.isDestroyed() ? settingsWin : win && !win.isDestroyed() ? win : undefined);
 
-// ── 포켓몬 창 (PKM-09 · APP-22 rule 10, #113 P2): 홈 · 파트너 고르기 · 도감 · 내 포켓몬 · 파티 · 상점 · 가방 in a titled
-// window of its own — macOS's title bar moves it (rule 7), it never makes or raises the terminal window (rule 8).
-// "This tab" is the one on screen in the main window (activeWs, rule 2); closed = gone (rule 5), the last view and
-// the search kept here while the app runs (PKM-09 rule 2, PKM-13 rule 5) ─────
-const POKE_W = 1120, POKE_H = 740, POKE_VIEWS = ["home", "choose", "dex", "box", "party", "shop", "bag"];
+// ── 포켓몬 창 (PKM-09 · APP-22 rule 10, #113 P2): 홈 · 내 포켓몬 · 도감 · 상점 · 가방 in a titled window of its own —
+// macOS's title bar moves it (rule 7), it never makes or raises the terminal window (rule 8). Closed = gone (rule 5), the
+// last view and the search kept here while the app runs (PKM-09 rule 2, PKM-13 rule 5) ─────
+// the tabs (#121 · #122, PKM-09 rule 7): the old 파티 tab is 내 포켓몬's party row and 파트너 고르기 the 포켓몬 고르기 window
+// (choose.html), so "party" · "choose" open 내 포켓몬
+const POKE_W = 1120, POKE_H = 740, POKE_VIEWS = ["home", "dex", "box", "shop", "bag"];
 const pokeKept = { view: "dex", query: "" };
 let pokeWant = null; // what the window opens on: { view, sel }
-const pokeWantOf = (a = {}) => ({ view: POKE_VIEWS.includes(a.view) ? a.view : null, sel: Number(a.sel) > 0 ? Math.floor(Number(a.sel)) : null });
+const pokeWantOf = (a = {}) => { const v = a.view === "party" || a.view === "choose" ? "box" : a.view; return { view: POKE_VIEWS.includes(v) ? v : null, sel: Number(a.sel) > 0 ? Math.floor(Number(a.sel)) : null }; };
 function pokeOpen(a) {
   pokeWant = pokeWantOf(a);
   if (pokeWin && !pokeWin.isDestroyed()) {
@@ -1614,8 +1669,11 @@ const popoverCommands = {
   popover_tab({ ws }) { popoverHide(); focusMain(String(ws)); },
   popover_open() { popoverHide(); focusMain(); },
   popover_quit() { popoverHide(); logLine("popover quit"); app.quit(); }, // 완전히 끄기 — as ⌘Q / the menu's Tamer 종료
-  popover_party() { popoverHide(); pokeOpen({ view: "party" }); }, // ⭐ 파티 (#107) — the Pokémon window by itself (APP-22 rule 8)
-  party_set: (args) => commands.party_set(args), // 선두 바꾸기 right there (#112) — partner.partySet checks the list
+  // a row pressed → its place in the Pokémon window (#121, STA-22 rule 15): 홈 · 내 포켓몬 (the party row) · 가방 · 도감 · 상점 —
+  // the view from pokeWantOf's list, sel a species; the window by itself (APP-22 rule 8)
+  popover_poke({ view, sel } = {}) { popoverHide(); pokeOpen({ view, sel }); },
+  party_set: (args) => commands.party_set(args), // 메인 파트너 바꾸기 right there (#112 · #122) — partner.partySet checks the list
+  popover_choose() { popoverHide(); chooseOpen(); }, // [포켓몬 고르기] with an empty party (#122) — its own window
   // 🥚 알 넣기 right there (#116, PKM-30 rule 9): an egg from the bag into the incubator — eggs only, as the bag does it
   async egg_in({ kind }) {
     if (kind !== "egg" && kind !== "egg2") return { ok: false };
@@ -1625,7 +1683,6 @@ const popoverCommands = {
   },
   popover_settings() { popoverHide(); settingsOpen(); }, // ⚙: the 설정 창 by itself (APP-22 rule 8)
   lead_icon({ on }) { setSettings({ menubar: { icon: on ? "poke" : "ball" } }); logLine(`menubar icon ${on ? "poke" : "ball"} (asked)`); }, // the one-time line's answer (STA-24 rule 2)
-  popover_dex({ id }) { popoverHide(); pokeOpen({ view: "dex", sel: id }); }, // 도감에서 보기 — the Pokémon window, no terminal window (#113 P2)
   popover_log({ line }) { logLine(`popover ${String(line).slice(0, 120)}`); },
   limits_refresh: () => limitsRefresh({ user: true }), // pressed in the dashboard = the user's 새로 고침 (STA-21)
   sprite_b64: (args) => commands.sprite_b64(args),
@@ -1648,7 +1705,7 @@ const settingsCommands = {
   settings_get: () => settings,
   settings_set: (args) => commands.settings_set(args), // the same checks · consent dialogs
   settings_page({ page }) { if (SETTINGS_PAGES.includes(page)) settingsLastPage = page; },
-  // 미리보기 (#67): the tab in front's folder and partner, the other tabs' partners — names and pictures only (APP-22 rule 2)
+  // 미리보기 (#67): the tab in front's folder and the 메인 파트너, the other tabs (balls since #122) — names and pictures only (APP-22 rule 2)
   settings_preview() {
     const cur = workspaces.get(activeWs), lite = (p) => p && { name: p.name, shiny: p.shiny, gif: p.gif, types: p.types };
     return { folder: cur ? path.basename(cur.cwd) : null, partner: lite(cur?.partner) || null,
@@ -1662,25 +1719,18 @@ const settingsCommands = {
 
 // the 포켓몬 창 (poke.html, #113 P2) may call only these (POL-SEC-02): the box, the shop and the bag as the main
 // window could, "this tab" always the one on screen (APP-22 rule 2) — no terminal, file or settings command
-const thisWs = () => { if (!workspaces.has(activeWs)) throw new Error("열린 탭이 없어요"); return activeWs; };
 const pokeCommands = {
   poke_state: () => ({ want: pokeWant, kept: pokeKept, tab: pokeTab(), test: TEST ? { ui_scenes: !!process.env.CVIM_DESKTOP_UI_SCENES } : null }),
-  poke_keep({ view, query }) { if (POKE_VIEWS.includes(view) && view !== "choose") pokeKept.view = view; if (typeof query === "string") pokeKept.query = query.slice(0, 200); },
+  poke_keep({ view, query }) { if (POKE_VIEWS.includes(view)) pokeKept.view = view; if (typeof query === "string") pokeKept.query = query.slice(0, 200); },
   poke_tab: () => pokeTab(),
   poke_close: () => pokeClose(),
   poke_log({ line }) { logLine(`poke ${String(line).slice(0, 120)}`); },
-  poke_usage: () => usageSeen, // 🏠 홈's limits: what the menu bar shows too (PKM-10 rule 6)
   dex_list: () => commands.dex_list(),
   dex_viewed: (args) => commands.dex_viewed(args),
-  box_list: () => commands.box_list({ ws: workspaces.has(activeWs) ? activeWs : null }),
-  partner_options: () => (workspaces.has(activeWs) ? commands.partner_options({ ws: activeWs }) : null),
-  partner_state: () => commands.partner_state({ ws: thisWs() }),
-  // taken for this tab: the main window's pane shows it and reacts (💕, the toast) — the window closes; Tamer's isn't brought forward (rule 8)
-  partner_take({ starter, uid, from }) {
-    const ws = thisWs(), r = commands.partner_take({ ws, starter, uid });
-    if (r) send("partner-taken", { ws, from: typeof from === "string" ? from.slice(0, 80) : null });
-    return r;
-  },
+  box_list: () => commands.box_list(),
+  main_partner: () => partner.mainPartner(), // 🏠 홈's preview (#122)
+  party_add: (args) => commands.party_add(args), // [파티에 넣기] (#122)
+  choose_open: () => chooseOpen(), // [포켓몬 고르기] on 홈 with an empty party (#122)
   home_state: () => commands.home_state(),
   economy_state: () => commands.economy_state(),
   economy_start_seen: () => commands.economy_start_seen(),
@@ -1700,11 +1750,15 @@ const pokeCommands = {
 const overlayCommands = {
   overlay_state: () => overlayPayload(),
   overlay_click({ ws }) { focusMain(String(ws)); },
+  // the party card (#107): the Pokémon window's 홈 — not Tamer's window (#122 J2, APP-22 rule 8)
+  party_open() { pokeOpen({ view: "home" }); logLine("party open from overlay"); },
   // the wild notice (#66): the catch window beside it (#119) — not Tamer's window, which (closed, #106) would
   // come back with its tabs and terminals. rect: the notice in the overlay's page
   wild_open({ rect } = {}) { catchOpen(rect && { left: Number(rect.left), top: Number(rect.top), width: Number(rect.width) || 0, height: Number(rect.height) || 0 }); logLine("wild open from overlay"); },
   // the hatch notice (#88): 🎒 내 포켓몬 where the hatchling is — the Pokémon window, not Tamer's (#113 P2)
-  hatch_open() { pokeOpen({ view: "box" }); logLine("hatch open from overlay"); },
+  hatch_open({ sel } = {}) { pokeOpen({ view: "box", sel }); logLine("hatch open from overlay"); }, // the hatchling picked (#121)
+  // the evolution notice (#111): 내 포켓몬 on the one that evolved (#121, STA-15 — it opened Tamer's window, APP-22 rule 8)
+  evolve_open({ sel } = {}) { pokeOpen({ view: "box", sel }); logLine("evolve open from overlay"); },
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
   overlay_fit({ width, height }) {
     if (drag) return;
@@ -1765,7 +1819,7 @@ const commands = {
   limits_state: () => limitsView(),
   // 파티 (PKM-31, #107): the list and its changes (checked by partner.partySet); everyone showing it hears
   party_state: () => ({ ...partner.party(), recent: recentDone }),
-  party_set({ uids }) { const v = partner.partySet(uids); logLine(`party ${v.list.map((m) => m.uid).join(",") || "-"}`); broadcast("party", v); popoverUpdate(); overlayUpdate(); return v; },
+  party_set({ uids }) { const v = partner.partySet(uids); logLine(`party ${v.list.map((m) => m.uid).join(",") || "-"}`); broadcast("party", v); mainSync(); return v; }, // the first may be a new 메인 파트너 (#122)
   // 메뉴바 (STA-19): the last 5h · 7d the window remembers for an agent — numbers only, kept in memory
   usage_seen({ key, five_hour, seven_day, model }) {
     if (!TRAY_AGENTS.some(([k]) => k === key)) return;
@@ -1778,6 +1832,7 @@ const commands = {
   app_info() {
     uiReady = true;
     sessionKept = false; // this window shows the tabs now (#106)
+    chooseAuto(); // the first Pokémon / the party suggestion — once (#122)
     setTimeout(() => { for (const fn of uiQueue.splice(0)) fn(); }, 600);
     const start = TEST && process.env.CVIM_DESKTOP_DIRS ? process.env.CVIM_DESKTOP_DIRS.split(":")
       : process.env.CVIM_DESKTOP_DIR ? [process.env.CVIM_DESKTOP_DIR] : [];
@@ -1839,7 +1894,6 @@ const commands = {
         fake_bin: process.env.CVIM_DESKTOP_FAKE_BIN || null,
         fake_claude: process.env.CVIM_DESKTOP_FAKE_CLAUDE || null,
         drop_files: process.env.CVIM_DESKTOP_DROP_FILES ? process.env.CVIM_DESKTOP_DROP_FILES.split(":") : null,
-        newuser_test: !!process.env.CVIM_DESKTOP_NEWUSER_TEST, // empty box: starter, empty folders, wild bonus
       } : {},
     };
   },
@@ -2048,28 +2102,30 @@ const commands = {
     await ws.partnerReady;
     return ws.partner ? { ws: id, ...ws.partner } : { ws: id, choose: true };
   },
-  // 🎲 / 📕 / 📌 (right-click menu, Pokédex)
-  // the choose dialog: what can become this folder's partner (starters load meanwhile)
-  partner_options({ ws }) {
-    const o = partner.options(wsOf(ws).cwd);
-    if (o.starter && !o.starter.ready) loadStarter();
-    return { ...o, starterLoading: !!starterLoading };
-  },
-  // 🎓 the graduation band's answer (#84): keep it, or let it rest and choose a new partner
-  partner_grad({ ws: id, keep }) {
-    const ws = wsOf(id);
-    const ok = partner.gradChoice(ws.cwd, !!keep);
-    logLine(`grad ${keep ? "keep" : "rest"} ws=${ws.id} ${ok ? "ok" : "-"}`);
-    if (ok && !keep) noPartner(ws);
+  // 🎓 the graduation band's answer (#84 · #122): keep it as the 메인 파트너, or pick another — 내 포켓몬's party row opens
+  partner_grad({ keep }) {
+    const ok = partner.gradChoice();
+    logLine(`grad ${keep ? "keep" : "other"} ${ok ? "ok" : "-"}`);
+    if (ok) send("partner-grad-done", {});
+    if (!keep) pokeOpen({ view: "box" });
     return ok;
   },
-  // { starter: id } | { uid } — the rules are checked in partner.take
-  partner_take({ ws, starter, uid }) { return partnerTake(wsOf(ws), starter != null ? { starter } : { uid }); },
+  // [파티에 넣기] (#122): an individual (uid) or a species' newest one (id — the wild card after a catch); none when full
+  party_add({ uid, id }) {
+    const p = partner.party();
+    if (p.list.length >= p.max) return { ok: false, why: "full", ...p };
+    const box = partner.boxList();
+    const m = uid != null ? box.find((x) => x.uid === Number(uid)) : box.filter((x) => x.id === Number(id) && x.party == null && !x.egg).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+    if (!m || m.egg || m.party != null) return { ok: false, why: "no", ...p };
+    return { ok: true, ...commands.party_set({ uids: [...p.list.map((x) => x.uid), m.uid] }) };
+  },
+  // [포켓몬 고르기] (#122, PKM-32): its own window — the first Pokémon, or the party suggestion
+  choose_open: () => chooseOpen(),
   dex_list: () => partner.dex(),
   // model prices for an estimated cost (#23), fetched only when asked (an agent without its own cost)
   prices: () => prices.get(),
   dex_viewed: ({ id }) => partner.viewed(id),
-  box_list: ({ ws }) => partner.boxList(ws && workspaces.has(ws) ? wsOf(ws).cwd : null) // "내 포켓몬" (#27)
+  box_list: () => partner.boxList() // "내 포켓몬" (#27) — where each is: resting, or its place in the party (#122)
     .map((m) => (m.caughtBy ? { ...m, caughtBy: agents.all()[m.caughtBy]?.name || m.caughtBy } : m)), // the agent's name (#44)
   // 🏠 Home (#44): tasks finished today, the streak, the last 7 days
   // tests: a fixed "today" (CVIM_TEST_TODAY, YYYY-MM-DD) so the 7-day row's weekdays don't move with the calendar
@@ -2127,11 +2183,20 @@ const commands = {
       const coins = economy.onEvolve() + newCoins;
       if (research.onEvolve(caughtSet().size)) researchCheck();
       logLine(`bag use stone uid=${uid} to=${r.evolved.id}`);
-      const ws = r.folder && [...workspaces.values()].find((w) => w.cwd === r.folder);
-      if (ws) {
-        ws.partner = { ...r.evolved, ...partner.progress(ws.cwd) }; overlayUpdate();
-        send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved, from: r.from || null, coins, newCoins, mile: null, mileCoins: 0, graduated: false, gradCoins: 0 });
-      }
+      mainProgress(r.uid, { evolved: r.evolved, from: r.from || null, coins, newCoins, mile: null, mileCoins: 0, graduated: false, gradCoins: 0 });
+      send("economy", economy.summary()); progressBump();
+      return { ok: true, uid: r.uid, lv: r.lv, evolved: { id: r.evolved.id, name: r.evolved.name, gif: r.evolved.gif || null }, from: r.from ? { id: r.from.id, name: r.from.name, gif: r.from.gif || null } : null, coins, newCoins, ...shopNow() };
+    }
+    if (item === "cord") { // 🔗 연결의끈 (#122, PKM-21 rule 3): a trade evolution now — used up once it worked, as a stone
+      if (!(economy.bag().cord > 0)) return { ok: false, why: "none", ...shopNow() };
+      const r = await partner.useCord(uid);
+      if (!r || r.offline) { logLine(`bag use cord uid=${uid} ${r?.offline ? "offline" : "no"}`); return { ok: false, why: r?.offline ? "offline" : "no", ...shopNow() }; }
+      economy.use("cord");
+      let newCoins = 0; for (let i = 0; i < (r.evoNew || 0); i++) newCoins += economy.onNewDex(); // #94
+      const coins = economy.onEvolve() + newCoins;
+      if (research.onEvolve(caughtSet().size)) researchCheck();
+      logLine(`bag use cord uid=${uid} to=${r.evolved.id}`);
+      mainProgress(r.uid, { evolved: r.evolved, from: r.from || null, coins, newCoins, mile: null, mileCoins: 0, graduated: false, gradCoins: 0 });
       send("economy", economy.summary()); progressBump();
       return { ok: true, uid: r.uid, lv: r.lv, evolved: { id: r.evolved.id, name: r.evolved.name, gif: r.evolved.gif || null }, from: r.from ? { id: r.from.id, name: r.from.name, gif: r.from.gif || null } : null, coins, newCoins, ...shopNow() };
     }
@@ -2145,12 +2210,8 @@ const commands = {
     const gradCoins = r?.graduated ? economy.graduated() : 0; // 🎓 a candy to Lv 100 (#84)
     const mileCoins = (r?.miles || []).reduce((s) => s + economy.onMilestone(), 0);
     logLine(`bag use candy uid=${uid} lv=${r?.lv} evolved=${r?.evolved?.id ?? "-"} miles=${(r?.miles || []).join(",") || "-"}`);
-    // a folder's partner: its pane shows the new level (and the evolution) like after a finish
-    const ws = r?.folder && [...workspaces.values()].find((w) => w.cwd === r.folder);
-    if (ws) {
-      if (r.evolved) { ws.partner = { ...r.evolved, ...partner.progress(ws.cwd) }; overlayUpdate(); }
-      send("partner-progress", { ws: ws.id, ...partner.progress(ws.cwd), evolved: r.evolved || null, from: r.from || null, coins, newCoins, mile: r.miles.at(-1) || null, mileCoins, graduated: !!r.graduated, gradCoins });
-    }
+    // the 메인 파트너: every pane shows the new level (and the evolution) like after a finish (#122)
+    if (r) mainProgress(r.uid, { evolved: r.evolved || null, from: r.from || null, coins, newCoins, mile: r.miles.at(-1) || null, mileCoins, graduated: !!r.graduated, gradCoins });
     send("economy", economy.summary());
     return { ok: true, uid: r?.uid, lv: r?.lv, evolved: r?.evolved ? { id: r.evolved.id, name: r.evolved.name } : null, coins, newCoins, mileCoins, ...shopNow() };
   },
@@ -2184,7 +2245,8 @@ let backgroundTested = false;
 // 따로 뜨는 창 (APP-22): tests reach each by name — the same few commands for every window of its own, now and later
 const OWN = { catch: { win: () => catchWin, open: () => catchOpen(null), close: () => catchClose() },
   settings: { win: () => settingsWin, open: (a) => settingsOpen(a.page), close: () => settingsClose() },
-  poke: { win: () => pokeWin, open: (a) => pokeOpen(a), close: () => pokeClose() } };
+  poke: { win: () => pokeWin, open: (a) => pokeOpen(a), close: () => pokeClose() },
+  choose: { win: () => chooseWin, open: () => chooseOpen(), close: () => chooseClose() } };
 function ownWin(name) { const w = Object.hasOwn(OWN, name) ? OWN[name].win() : null; return w && !w.isDestroyed() ? w : null; }
 const ownJs = (name, js) => { const w = ownWin(name); return w ? w.webContents.executeJavaScript(js) : null; };
 // the page a test's key / click goes to: a window of its own by name (the Pokémon window has the keys while it's open — the lab
@@ -2353,8 +2415,8 @@ const testCommands = {
       popoverCommands.popover_settings(); await T(1800);
       logLine(`bg settings open=${!!settingsWin} movable=${!!settingsWin?.isMovable()} win=${!!win && !win.isDestroyed()}`);
       settingsClose(); await T(300);
-      // the dashboard's party (#113 P2): the Pokémon window by itself, on ⭐ 파티 — no terminal window made
-      popoverCommands.popover_party(); await T(2500);
+      // the dashboard's party (#113 P2): the Pokémon window by itself, on 내 포켓몬's party row (#121) — no terminal window made
+      popoverCommands.popover_poke({ view: "box" }); await T(2500);
       const pp = pokeWin ? await pokeWin.webContents.executeJavaScript("window.lab?.state()").catch(() => null) : null;
       logLine(`bg poke-party open=${!!pokeWin} view=${pp?.poke} tabs=${JSON.stringify(pp?.pokeTabs)} win=${!!win && !win.isDestroyed()}`);
       pokeClose(); await T(300);
@@ -2392,15 +2454,15 @@ const testCommands = {
     return true;
   },
   // 파티 (#107): the first n of the box as the party (a test can't pick uids)
-  party_test({ n = 2 }) { const b = partner.boxList(null).filter((m) => !m.egg).slice(0, Number(n)); return partner.partySet(b.map((m) => m.uid)); },
+  party_test({ n = 2 }) { const b = partner.boxList().filter((m) => !m.egg).slice(0, Number(n)); return commands.party_set({ uids: b.map((m) => m.uid) }); }, // the panes follow (#122)
   overlay_payload_test: () => ({ wants: overlayWants({ focused: false, quiet: false }), ...overlayPayload() }),
   // the overlay's page as drawn: its bubbles (and whether they pop again) and the evolution notice (#111 #114)
   overlay_pop_test: () => overlay.webContents.executeJavaScript(`({ bubbles: [...document.querySelectorAll("#cards .bubble")].map((b) => b.textContent.trim() + (b.classList.contains("seen") ? " [seen]" : "")),
     evolve: document.querySelector("#evolve .wild-note")?.innerText.replace(/\\s+/g, " ").trim() || null })`),
   // an evolution while Tamer isn't in front, as finishGame tells it (#111) — and the overlay's picture of it
-  async evolved_note_test({ from = "파이리", to = "리자드", gif = null } = {}) {
-    const g = gif || partner.boxList(null).find((m) => m.gif)?.gif || null;
-    broadcast("evolved", { from, to, gif: g, coins: 30, outside: true, via: "party" });
+  async evolved_note_test({ from = "파이리", to = "리자드", gif = null, id = null } = {}) {
+    const m0 = partner.boxList(null).find((m) => m.gif), g = gif || m0?.gif || null;
+    broadcast("evolved", { id: id ?? m0?.id ?? null, from, to, gif: g, coins: 30, outside: true, via: "party" });
     await new Promise((r) => setTimeout(r, 900));
     if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, "overlay-evolve.png"), (await overlay.webContents.capturePage()).toPNG());
     return true;
@@ -2639,7 +2701,8 @@ ipcMain.handle("host-invoke", async (e, cmd, args) => {
     : page === path.join(DIST, "popover.html") && e.sender === popover?.webContents ? popoverCommands
     : page === path.join(DIST, "catch.html") && e.sender === catchWin?.webContents ? catchCommands
     : page === path.join(DIST, "settings.html") && e.sender === settingsWin?.webContents ? settingsCommands
-    : page === path.join(DIST, "poke.html") && e.sender === pokeWin?.webContents ? pokeCommands : null;
+    : page === path.join(DIST, "poke.html") && e.sender === pokeWin?.webContents ? pokeCommands
+    : page === path.join(DIST, "choose.html") && e.sender === chooseWin?.webContents ? chooseCommands : null;
   if (!table) throw new Error("unexpected sender");
   const fn = Object.hasOwn(table, cmd) && table[cmd];
   if (!fn) throw new Error(`unknown command ${cmd}`);
@@ -2736,6 +2799,7 @@ app.on("browser-window-created", (_e, w) => w.on("closed", () => {
   catchClose();
   settingsClose();
   pokeClose();
+  chooseClose();
 }));
 function toBackground() {
   sessionKept = true; // closing the tabs below mustn't empty the saved ones
@@ -2773,7 +2837,12 @@ function appMenu() {
       { label: "오른쪽 칸 보이기 (⌘\\)", type: "checkbox", checked: settings.side, click: (m) => setSettings({ side: m.checked }) }, // #97 — the key is the window's (⌘\)
       { type: "separator" }, ...helpItems, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }, { role: "quit" }] },
     { label: "Edit", submenu: [{ role: "undo" }, { role: "redo" }, { type: "separator" }, { role: "cut" }, { role: "copy" }, { role: "paste" }, { role: "selectAll" }] },
-    { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "togglefullscreen" }] },
+    // the windows by name too (#121, APP-08 rule 4): a way in when macOS hides the menu bar icon. Their keys are shown, not
+    // taken (registerAccelerator: false) — ⌘P stays the windows' own (main window → 홈, Pokémon window → 홈)
+    { label: "Window", submenu: [{ role: "minimize" }, { role: "zoom" }, { role: "togglefullscreen" }, { type: "separator" },
+      { label: "Tamer", click: () => focusMain() }, // pressed: the terminal window is wanted (APP-22 rule 8)
+      { label: "포켓몬 창", accelerator: "Cmd+P", registerAccelerator: false, click: () => pokeOpen({ view: "home" }) },
+      { label: "설정…", accelerator: "Cmd+,", registerAccelerator: false, click: () => settingsOpen() }] },
   ]));
 }
 

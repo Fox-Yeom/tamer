@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <!-- 포켓몬 고르기 창 (PKM-32 · APP-22 rule 11, #122): the first Pokémon, or the party suggestion — our own files only (POLICY.md 11) -->
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-src 'none'" />
+    <title>포켓몬 고르기</title>
+    <link rel="stylesheet" href="/src/choose.css" />
+  </head>
+  <body>
+    <main id="choose">
+      <header><h1 id="ch-title"></h1><p id="ch-sub"></p></header>
+      <section id="ch-cards" role="listbox"></section>
+      <p id="ch-note"></p>
+      <footer><span id="ch-foot"></span><span id="ch-acts"></span></footer>
+      <p id="ch-help"></p>
+    </main>
+    <script type="module" src="/src/choose.js"></script>
+  </body>
+</html>

@@ -1,13 +1,6 @@
 {
   "about": "Tamer UI map (docs/UI_SYSTEM.md): components → the screens using them → the scenes npm run ui:shots captures. npm run ui:impact -- <name|file|class|function> reads this. Add a component / screen / scene here when you add one.",
   "screens": {
-    "party": {
-      "what": "포켓몬 창 ⭐ 파티 — 6칸(다음 차례 표시·선두로·빼기), 최근 파티·밖 작업 결과, 내 포켓몬에서 넣기 (PKM-31, #107)",
-      "entry": "partyRender",
-      "scenes": [
-        "party"
-      ]
-    },
     "wild-catch": {
       "what": "야생 잡기 창 — 바탕화면 오버레이의 야생 알림을 누르면 알림 옆 작은 패널: 야생 카드(볼 고르기·던지기·결과), ✕ (PKM-08, #119)",
       "entry": "catchOpen",
@@ -16,7 +9,7 @@
       ]
     },
     "menubar-icon": {
-      "what": "메뉴바 아이콘 — 파티 선두(늘 재생, 입력 필요 !, 야생 풀숲) 또는 몬스터볼, — 한도 남은 %는 그림이 아니라 메뉴바 글자 한 줄, 막대 없음 (STA-24, #108) — 시험 앱은 아이콘을 띄우지 않아 그 그림을 파일로",
+      "what": "메뉴바 아이콘 — 메인 파트너(늘 재생, 입력 필요 !, 야생 풀숲) 또는 몬스터볼, — 한도 남은 %는 그림이 아니라 메뉴바 글자 한 줄, 막대 없음 (STA-24, #108) — 시험 앱은 아이콘을 띄우지 않아 그 그림을 파일로",
       "entry": "leadTick",
       "scenes": [
         "menubar-icon",
@@ -33,11 +26,11 @@
       ]
     },
     "choose": {
-      "what": "파트너 고르기 — 포켓몬 창(poke.html, #113 P2) 탭: 파트너 칸 [파트너 고르기] · 🔄 파트너 바꾸기 · 졸업 띠 (저절로 안 뜸, A8)",
-      "entry": "pokeOpen(\"choose\")",
+      "what": "포켓몬 고르기 창 — 따로 창(choose.html, 720×500, 제목 줄로 옮김, 터미널 창 없이 — APP-22 규칙 11): 첫 포켓몬 셋(상자가 비면) / 파티 제안(파티가 비면 — 예전 폴더 파트너 한 번, 없으면 박스 최근 순). 첫 실행에 저절로 한 번, 그 뒤엔 [포켓몬 고르기]로 (PKM-32, #122)",
+      "entry": "chooseOpen",
       "scenes": [
-        "choose-starter",
-        "choose-box"
+        "choose-first",
+        "choose-suggest"
       ]
     },
     "dex": {
@@ -51,12 +44,13 @@
       ]
     },
     "box": {
-      "what": "내 포켓몬 (도감 탭 · M)",
+      "what": "내 포켓몬 (도감 탭 · M) — 맨 위 파티 줄 5칸(1번 = 메인 파트너, 다음 차례, 최근 3), 미리보기 [메인 파트너로] · [파티에 넣기] / [파티에서 빼기] (PKM-14 · PKM-31, #122)",
       "entry": "dexView(\"box\")",
       "scenes": [
         "box-cards",
         "box-search",
-        "box-empty"
+        "box-empty",
+        "box-party"
       ]
     },
     "wild": {
@@ -109,7 +103,8 @@
         "changes-branch-720",
         "bar-stall",
         "light-main",
-        "graduate"
+        "graduate",
+        "partner-main"
       ]
     },
     "overlay": {
@@ -126,7 +121,7 @@
       ]
     },
     "home": {
-      "what": "🏠 홈 (⌘P · 포켓몬 창 첫 탭): 지금 탭 파트너(미리보기) · 오늘 끝낸 작업·연속 일수·최근 7일 · 에이전트별 5시간·주간 남은 비율 (#44) · 🪙 오늘 번 코인·상한까지, 시작 코인 띠 (#72)",
+      "what": "🏠 홈 (⌘P · 포켓몬 창 첫 탭): 메인 파트너(미리보기, 파티가 비면 [포켓몬 고르기]) · 오늘 끝낸 작업·연속 일수·최근 7일 · 부화기(→ 가방) · 스탬프 · 리서치 · 전설의 길 · 🪙 오늘 번 코인·시작 코인 띠 (#44 #72) — 한도는 없음(#121)",
       "entry": "dexView(\"home\")",
       "scenes": [
         "home",
@@ -142,7 +137,7 @@
       ]
     },
     "bag": {
-      "what": "👜 가방 (I): 가진 아이템·켜진 효과, 사탕(이 탭 파트너 / 다른 포켓몬 고르기)·향 쓰기 (#76, PKM-23) · 맨 위 🥚 부화기 섹션 — 부화 칸·차례 카드·먼저 부화·빈 부화기 (#88, PKM-25) · 💎 진화의 돌 고르기(쓸 수 있는 마리·갈래 버튼)·✨ 빛나는부적 (#93, PKM-28)",
+      "what": "👜 가방 (I): 가진 아이템·켜진 효과, 사탕(메인 파트너 / 다른 포켓몬 고르기)·향 쓰기 (#76, PKM-23) · 맨 위 🥚 부화기 섹션 — 부화 칸·차례 카드·먼저 부화·빈 부화기 (#88, PKM-25) · 💎 진화의 돌 고르기(쓸 수 있는 마리·갈래 버튼)·✨ 빛나는부적 (#93, PKM-28)",
       "entry": "dexView(\"bag\")",
       "scenes": [
         "bag",
@@ -154,33 +149,154 @@
     }
   },
   "components": {
-    "pk-party": {
-      "what": "파티 화면 — 칸·다음 차례·넣기 목록 (#107)",
-      "files": ["src/poke/window.js", "src/poke/poke.css"],
-      "selectors": [".pk-party", ".pk-party-"],
-      "functions": ["partyRender", "partyChange"],
-      "screens": ["party"]
+    "pk-party-row": {
+      "what": "내 포켓몬 맨 위 파티 줄 — 5칸(1번 메인 파트너 · 다음 차례 · 빈 칸), 칸을 누르면 그 포켓몬, 미리보기 파티 단추 (PKM-31, #122)",
+      "files": [
+        "src/poke/window.js",
+        "src/poke/poke.css"
+      ],
+      "selectors": [
+        ".pk-pstrip",
+        ".pk-pslot",
+        ".pk-pslots",
+        ".pk-pnext",
+        ".pk-precent"
+      ],
+      "functions": [
+        "partyStrip",
+        "partyButtons",
+        "partyChange",
+        "partyRefresh",
+        "boxButton",
+        "boxTake"
+      ],
+      "screens": [
+        "box"
+      ]
+    },
+    "choose-win": {
+      "what": "포켓몬 고르기 창 페이지 — 제목·설명, 카드(첫 포켓몬 셋 · 제안 카드 넣고 빼기), [○○와 함께하기] / [나중에] [파티에 넣기 (n)], 도움말 줄 (PKM-32, #122)",
+      "files": [
+        "choose.html",
+        "src/choose.js",
+        "src/choose.css"
+      ],
+      "selectors": [
+        "#choose",
+        ".ch-card",
+        ".ch-n",
+        ".ch-types",
+        ".ch-ball",
+        ".ch-primary",
+        "#ch-cards",
+        "#ch-acts"
+      ],
+      "functions": [
+        "drawFirst",
+        "drawSuggest",
+        "draw",
+        "toggle"
+      ],
+      "screens": [
+        "choose"
+      ]
+    },
+    "partner-pane": {
+      "what": "터미널 창 파트너 칸 — 제목 \"메인 파트너\"(모든 탭 같음), 그림 · 이름 · Lv · 진행, 몬스터볼에서 나오는 연출, 빈 칸 \"포켓몬이 없어요 [포켓몬 고르기]\", 졸업 띠 (PKM-03 · PKM-19, #122)",
+      "files": [
+        "index.html",
+        "src/main.js",
+        "src/style.css"
+      ],
+      "selectors": [
+        ".pane-avatar",
+        ".poke-label",
+        ".need-partner",
+        ".empty-ball",
+        ".ball-out",
+        ".pk-grad"
+      ],
+      "functions": [
+        "showPartner",
+        "showMain",
+        "showChoose",
+        "gradBand",
+        "partyAdd"
+      ],
+      "screens": [
+        "main"
+      ]
     },
     "wild-catch-win": {
       "what": "야생 잡기 창 페이지 — 야생 카드를 창 가득, 닫기 ✕, 카드가 끝나면 창도 닫힘 (#119)",
-      "files": ["catch.html", "src/catch.js", "src/catch.css"],
-      "selectors": ["#catch"],
-      "functions": ["catchOpen", "catchPlace", "catchClose", "noteRect"],
-      "screens": ["wild-catch"]
+      "files": [
+        "catch.html",
+        "src/catch.js",
+        "src/catch.css"
+      ],
+      "selectors": [
+        "#catch"
+      ],
+      "functions": [
+        "catchOpen",
+        "catchPlace",
+        "catchClose",
+        "noteRect"
+      ],
+      "screens": [
+        "wild-catch"
+      ]
     },
     "menubar-lead": {
       "what": "메뉴바 아이콘 그림 — GIF 프레임(gif.cjs) 잘라 22pt, 표시(! · 풀숲 · 콩), 몬스터볼은 템플릿 그림 (STA-24, #108)",
-      "files": ["electron/gif.cjs", "electron/tray.cjs", "electron/main.cjs"],
+      "files": [
+        "electron/gif.cjs",
+        "electron/tray.cjs",
+        "electron/main.cjs"
+      ],
       "selectors": [],
-      "functions": ["leadFrames", "leadIcon", "ballIcon", "drawGauge", "gaugeOf", "leadTick", "leadImage", "ballImage"],
-      "screens": ["menubar-icon"]
+      "functions": [
+        "leadFrames",
+        "leadIcon",
+        "ballIcon",
+        "drawGauge",
+        "gaugeOf",
+        "leadTick",
+        "leadImage",
+        "ballImage"
+      ],
+      "screens": [
+        "menubar-icon"
+      ]
     },
     "pop-dash": {
-      "what": "메뉴바 대시보드 창 그리기 — 위쪽 탭(홈·작업, 점, #118)·메뉴바 아이콘 한 번 안내 줄(파티 선두를 데려갈까요? — STA-24 #108)·파트너 줄·파티 칸(그림 72px, #117)·작은 부화기(알 그림, #117)·오늘 칸 3개·한도 에이전트 칩(#118)·막대 줄·탭 줄·아래 버튼(⏻ ⚙ Tamer 열기), 화면보다 길면 스크롤 (#105 #117 #118)",
-      "files": ["popover.html", "src/popover.js", "src/popover.css"],
-      "selectors": ["#pop", ".pop-", "#pg-"],
-      "functions": ["draw", "drawLead", "drawPartner", "drawParty", "drawProg", "drawToday", "drawLimits", "drawTabs", "showPage", "drawDot", "popoverModel"],
-      "screens": ["menubar-dashboard"]
+      "what": "메뉴바 대시보드 창 그리기 — 위쪽 탭(홈·작업, 점, #118)·메뉴바 아이콘 한 번 안내 줄(메인 파트너를 데려갈까요? — STA-24 #108)·파트너 줄·파티 칸(그림 72px, #117)·작은 부화기(알 그림, #117)·오늘 칸 3개·한도 에이전트 칩(#118)·막대 줄·탭 줄·아래 버튼(⏻ ⚙ Tamer 열기), 화면보다 길면 스크롤 (#105 #117 #118)",
+      "files": [
+        "popover.html",
+        "src/popover.js",
+        "src/popover.css"
+      ],
+      "selectors": [
+        "#pop",
+        ".pop-",
+        "#pg-"
+      ],
+      "functions": [
+        "draw",
+        "drawLead",
+        "drawPartner",
+        "drawParty",
+        "drawProg",
+        "drawToday",
+        "drawLimits",
+        "drawTabs",
+        "showPage",
+        "drawDot",
+        "popoverModel"
+      ],
+      "screens": [
+        "menubar-dashboard"
+      ]
     },
     "pk-tokens": {
       "what": "포켓몬 화면 색·간격 토큰 (--pk-*)",
@@ -198,7 +314,7 @@
       ]
     },
     "pk-window": {
-      "what": "포켓몬 창 — 따로 뜨는 창(poke.html, 제목 줄로 옮김, 터미널 창 없이 — APP-22 규칙 7·8·10, #113 P2): 탭 줄(홈·파트너 고르기·도감·내 포켓몬·파티·상점·가방)·요약·✕, 도구 줄(지역·정렬·검색), 본문, 안내 줄 — 틀이 창을 채움",
+      "what": "포켓몬 창 — 따로 뜨는 창(poke.html, 제목 줄로 옮김, 터미널 창 없이 — APP-22 규칙 7·8·10, #113 P2): 탭 줄(홈·내 포켓몬·도감·상점·가방, #121 #122)·요약·✕, 도구 줄(지역·정렬·검색), 본문, 안내 줄 — 틀이 창을 채움",
       "files": [
         "poke.html",
         "src/poke-window.css",
@@ -426,11 +542,9 @@
       "functions": [
         "pkCard",
         "boxRender",
-        "chooseItems",
         "lvLine"
       ],
       "screens": [
-        "choose",
         "box"
       ]
     },
@@ -483,7 +597,7 @@
       ]
     },
     "pk-preview": {
-      "what": "오른쪽 미리보기 + [이 탭의 파트너로] (다른 폴더는 두 번)",
+      "what": "오른쪽 미리보기 + 파티 단추 [메인 파트너로] · [파티에 넣기] / [파티에서 빼기] (#122)",
       "files": [
         "poke.html",
         "src/poke/window.js",
@@ -530,7 +644,11 @@
         "createWild",
         "drawBalls"
       ],
-      "screens": ["wild", "menubar-dashboard", "wild-catch"]
+      "screens": [
+        "wild",
+        "menubar-dashboard",
+        "wild-catch"
+      ]
     },
     "dlg": {
       "what": "가운데 대화 상자 (에이전트 연결)",
@@ -663,24 +781,78 @@
     },
     "session-rail": {
       "what": "셸 레일 — 셸이 둘 이상이면 왼쪽 좁은 줄(아이콘·번호·점), 마우스를 올리면 에이전트 화면 위로 펼쳐 이름·상태, 이름 바꾸기 입력 (TAB-13, TAB-20, #99)",
-      "files": ["index.html", "src/style.css", "src/main.js"],
-      "selectors": [".rail", ".sess", ".sess-new", ".rail.open", ".nm-edit", ".sess-title"],
-      "functions": ["renderRail", "sessTitle", "railOpen", "renameSession"],
-      "screens": ["main"]
+      "files": [
+        "index.html",
+        "src/style.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        ".rail",
+        ".sess",
+        ".sess-new",
+        ".rail.open",
+        ".nm-edit",
+        ".sess-title"
+      ],
+      "functions": [
+        "renderRail",
+        "sessTitle",
+        "railOpen",
+        "renameSession"
+      ],
+      "screens": [
+        "main"
+      ]
     },
     "settings-nav": {
       "what": "설정 창 사이드바와 줄 형식 — 범주 버튼, 묶음 상자(PokeTokenBar), 짧은 라벨 왼쪽·컨트롤 오른쪽, 스위치, 세그먼트 단추, 모양 더 보기 (APP-19 규칙 8·9, APP-22 규칙 9, #101 #113)",
-      "files": ["settings.html", "src/settings.css", "src/settings.js"],
-      "selectors": ["#settings", ".set-nav", ".set-page", ".set-box", ".set-row", ".set-sw", ".seg", ".set-more", ".set-preview"],
-      "functions": ["settingsPage", "settingsOpen", "settingsClose", "applySettings", "renderPreview", "settingsCommands"],
-      "screens": ["settings"]
+      "files": [
+        "settings.html",
+        "src/settings.css",
+        "src/settings.js"
+      ],
+      "selectors": [
+        "#settings",
+        ".set-nav",
+        ".set-page",
+        ".set-box",
+        ".set-row",
+        ".set-sw",
+        ".seg",
+        ".set-more",
+        ".set-preview"
+      ],
+      "functions": [
+        "settingsPage",
+        "settingsOpen",
+        "settingsClose",
+        "applySettings",
+        "renderPreview",
+        "settingsCommands"
+      ],
+      "screens": [
+        "settings"
+      ]
     },
     "side-fold": {
       "what": "오른쪽 칸 접기·펴기 — 상단 바 끝 ▸/◂ 버튼, ⌘\\, 설정 '오른쪽 칸 보이기' (TAB-19, #97)",
-      "files": ["index.html", "src/style.css", "src/main.js"],
-      "selectors": ["#side-toggle", "body.side-closed"],
-      "functions": ["sideShow", "sideToggle", "sideUnfold"],
-      "screens": ["main"]
+      "files": [
+        "index.html",
+        "src/style.css",
+        "src/main.js"
+      ],
+      "selectors": [
+        "#side-toggle",
+        "body.side-closed"
+      ],
+      "functions": [
+        "sideShow",
+        "sideToggle",
+        "sideUnfold"
+      ],
+      "screens": [
+        "main"
+      ]
     },
     "side-split": {
       "what": "큰 칸과 오른쪽 칸 사이 경계 — 끌어서 너비, 두 번 눌러 40% (#58)",
@@ -703,7 +875,7 @@
       ]
     },
     "ov-cards": {
-      "what": "오버레이 카드 그리기 (오버레이 창과 설정 창 미리보기가 같이 씀) — 카드·말풍선·아이콘 줄·몬스터볼 줄·야생 알림 · 진행 곧 줄·점·부화 알림(#88)",
+      "what": "오버레이 카드 그리기 (오버레이 창과 설정 창 미리보기가 같이 씀) — 카드·말풍선·아이콘 줄·몬스터볼 줄·야생 알림 · 진행 곧 줄·점·부화 알림(#88) · 다른 탭은 보통 모드에서도 몬스터볼, 급한 탭 카드도 몬스터볼(#122)",
       "files": [
         "src/overlay-view.js",
         "src/overlay-cards.css"
@@ -723,7 +895,9 @@
         "progHtml",
         "progSoon",
         "hatchNoteHtml",
-        "partyCard"
+        "partyCard",
+        "tabBalls",
+        "bigCard"
       ],
       "screens": [
         "overlay",
@@ -734,7 +908,10 @@
   "css": {
     "namespaces": {
       "poke": {
-        "files": ["src/poke/poke.css", "src/poke/egg.css"],
+        "files": [
+          "src/poke/poke.css",
+          "src/poke/egg.css"
+        ],
         "prefixes": [
           "#dex",
           ".pk-",
@@ -759,17 +936,22 @@
         "src/overlay-cards.css"
       ],
       "wild catch window (catch.html)": [
-      "src/catch.css",
-      "src/wild.css"
-    ],
-    "settings window (settings.html)": [
-      "src/settings.css",
-      "src/overlay-cards.css"
-    ],
-    "menu bar dashboard (popover.html)": [
+        "src/catch.css",
+        "src/wild.css"
+      ],
+      "settings window (settings.html)": [
+        "src/settings.css",
+        "src/overlay-cards.css"
+      ],
+      "menu bar dashboard (popover.html)": [
         "src/popover.css",
         "src/wild.css",
         "src/poke/egg.css"
+      ],
+      "choose window (choose.html)": [
+        "src/choose.css",
+        "src/theme.css",
+        "src/poke/poke.css"
       ]
     }
   }

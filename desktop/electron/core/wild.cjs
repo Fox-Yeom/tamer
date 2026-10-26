@@ -11,9 +11,6 @@ const FILE = path.join(CACHE, "wild.json"); // { enabled, last (epoch s), next: 
 const envNum = (k, d) => (process.env[k] != null && Number.isFinite(Number(process.env[k])) ? Number(process.env[k]) : d);
 const CHANCE = envNum("CVIM_WILD_CHANCE", 0.15); // per finished task
 const COOLDOWN = envNum("CVIM_WILD_COOLDOWN", 600) * 1000; // between encounters
-// a folder without a partner: more often (wild catches are how new Pokémon come)
-const CHANCE_EMPTY = envNum("CVIM_WILD_CHANCE_EMPTY", 0.3);
-const COOLDOWN_EMPTY = envNum("CVIM_WILD_COOLDOWN_EMPTY", 300) * 1000;
 const STAY = envNum("CVIM_WILD_STAY", 30) * 1000; // it leaves if you don't throw
 const FLEE = 0.1; // after a failed throw (legendary: 0.25)
 // the balls (#76, PKM-23 rule 1): the formula's "ball" factor — Poké Ball free and endless, the rest
@@ -69,15 +66,15 @@ function arm(c, ms) {
   c.timer = setTimeout(() => end("left"), ms);
 }
 
-// a task finished in workspace `ws`: maybe a wild Pokémon appears (returns it, or null).
-// empty: that folder has no partner (higher chance, shorter wait)
+// a task finished in workspace `ws`: maybe a wild Pokémon appears (returns it, or null) — one chance and one wait
+// everywhere (#122, PKM-06 rule 1: the folders without a partner had 30 % · 5 min; there are no folder partners now).
 // incense: 향 burning (#76, PKM-23 rule 3) — twice the chance, half the wait
-function onDone(ws, { empty = false, folder = null, agent = null, incense = false } = {}) {
+function onDone(ws, { folder = null, agent = null, incense = false } = {}) {
   if (!enabled() || current) return null;
   const st = state();
   if (st.big) return null; // a breakthrough waiting to be caught: one encounter at a time
-  if (Date.now() - (st.last || 0) * 1000 < (empty ? COOLDOWN_EMPTY : COOLDOWN) / (incense ? 2 : 1)) return null;
-  if (rng() >= Math.min(1, (empty ? CHANCE_EMPTY : CHANCE) * (incense ? 2 : 1))) return null;
+  if (Date.now() - (st.last || 0) * 1000 < COOLDOWN / (incense ? 2 : 1)) return null;
+  if (rng() >= Math.min(1, CHANCE * (incense ? 2 : 1))) return null;
   const sprite = st.next && partner.loadSprite(st.next.id, st.next.shiny);
   if (!sprite?.gif) { prefetch(); return null; } // not downloaded yet: skip this one
   updateJson(FILE, (t) => { t.last = Math.floor(Date.now() / 1000); delete t.next; });
@@ -108,7 +105,7 @@ function throwBall(token, ball = "poke", pay = () => true) {
   if (!(ball in BALLS)) ball = "poke";
   if (ball !== "poke" && !pay(ball)) return { result: "noball", shakes: 0, ball };
   c.throws++;
-  const p = catchOdds(c.captureRate, partner.levelAt(c.caughtIn), ball, c.big ? PITY ** c.misses : 1);
+  const p = catchOdds(c.captureRate, partner.levelAt(), ball, c.big ? PITY ** c.misses : 1); // the 메인 파트너's level (#122)
   let checks = 0;
   while (checks < 4 && rng() < p) checks++;
   const shakes = Math.min(3, checks);

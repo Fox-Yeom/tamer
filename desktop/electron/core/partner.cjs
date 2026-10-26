@@ -1,16 +1,14 @@
-// Partner Pokémon, one by one (2026-10-01 decision, "Pokémon GO style"):
+// Pokémon, one by one (2026-10-01 decision, "Pokémon GO style"):
 //   1. every Pokémon you get is one individual in the box (several of the same species are fine)
-//   2. a folder's partner is one individual; an individual is the partner of one folder at most
-//   3. new ones: your first partner (one of 3 starters, once, while the box is empty), then wild
-//      catches (more often in folders without a partner — wild.cjs); eggs from the shop later (P3)
-//   4. the level and evolution belong to the individual (they move with it) — Lv 5~100, +2 a finished
-//      task (+1 after its last form), evolving as in the games (#74, PKM-21): at its level, or Lv 30
-//      for a stone / anything else, after 20 finishes together (friendship), or on the first finish
-//      after moving to another folder (trade). The old EXP still counts up for folders.json (PKM-17)
-// A folder without a partner shows an empty state (2026-10-02 decision).
-// box.json holds the individuals; folders.json keeps a mirror (id, shiny, xp …, uid) so the
-// Neovim CVIM still shows and levels the partner (it can't change partners any more).
-// Sprites come from PokéAPI (pokeapi.cjs; local cache only).
+//   2. the PARTY (#122, PKM-31): up to 5 of them, in order — the 1st is the 메인 파트너 (the partner pane in every
+//      tab, the overlay, the menu bar icon). No folder partners any more (2026-10-26 decision, POL-FUT-05)
+//   3. new ones: your first Pokémon (one of 3 starters, once, while the box is empty — the 포켓몬 고르기 window),
+//      then wild catches; eggs from the shop
+//   4. the level and evolution belong to the individual — Lv 5~100, +2 a finished task anywhere, the party's next
+//      in turn (+1 after its last form), evolving as in the games (#74, PKM-21): at its level, or Lv 30 for a stone /
+//      anything else, after 20 finishes (friendship), or with a 연결의끈 for a trade (#122)
+// box.json holds the individuals and the party. folders.json (the old per-folder mirror for the Neovim CVIM) is
+// no longer written (#122) — kept as it was. Sprites come from PokéAPI (pokeapi.cjs; local cache only).
 const fs = require("node:fs");
 const path = require("node:path");
 const { CACHE, readJson, writeJson, updateJson } = require("./paths.cjs");
@@ -21,7 +19,7 @@ const FOLDERS = path.join(CACHE, "folders.json");
 const DEX = path.join(CACHE, "pokedex.json");
 const SPRITES = path.join(CACHE, "pokemon");
 const EVOLVE_EVERY = 8; // the old pace (before levels, #74) — only for folders.json's mirror
-const BOX = path.join(CACHE, "box.json"); // { next, mons: [{ uid, id, shiny, xp, lv, mile, friend, traded, last_folder, final, how, at, folder }] }
+const BOX = path.join(CACHE, "box.json"); // { next, mons: [{ uid, id, shiny, xp, lv, mile, friend, final, how, at }], party, partyNext, suggest?, partyV }
 const START_LV = 5, MAX_LV = 100, ALT_LV = 30, FRIEND_N = 20; // PKM-21
 // 🥚 알 (E5, #84 · 부화기 #85, PKM-25): an egg is a box individual without a species yet — { egg: { kind,
 // need, have, next: { id, shiny } (picked one finish early) }, inc: true, inc_at } in the incubator, never a
@@ -123,8 +121,7 @@ const lvView = (m) => ({ lv: lvOf(m), final: isFinal(m), next: nextView(m) });
 function addMon(b, sprite, how, folder = null) {
   // a new one starts at Lv 5 — a caught evolved form at the level its form is reached (PKM-21 rule 1)
   const lv = Math.max(START_LV, floorOf(sprite.id));
-  const m = { uid: b.next++, id: sprite.id, shiny: !!sprite.shiny, xp: 0, since_evo: 0, lv, mile: Math.floor(lv / 10) * 10, friend: 0, how, at: now(), folder };
-  if (folder) m.last_folder = folder;
+  const m = { uid: b.next++, id: sprite.id, shiny: !!sprite.shiny, xp: 0, since_evo: 0, lv, mile: Math.floor(lv / 10) * 10, friend: 0, how, at: now(), ...(folder ? { folder } : {}) };
   b.mons.push(m);
   return m;
 }
@@ -147,7 +144,6 @@ function migrateLevels() {
       m.lv = Math.min(MAX_LV, Math.max(START_LV + 2 * (m.xp || 0), floorOf(m.id)));
       m.mile = Math.floor(m.lv / 10) * 10;
       m.friend = 0;
-      if (m.folder) m.last_folder = m.folder;
       n++;
     }
   });
@@ -173,26 +169,50 @@ function migrateBox() {
     if (!rec?.id) continue;
     const m = addMon(b, rec, "legacy", cwd);
     Object.assign(m, { xp: rec.xp || 0, since_evo: rec.since_evo || 0, ...(rec.final ? { final: true } : {}) });
-    delete m.lv; delete m.mile; // its level comes from its EXP (migrateLevels, right after)
-    rec.uid = m.uid;
-    rec.pinned = true;
+    delete m.lv; delete m.mile; // its level comes from its EXP (migrateLevels, right after) — its folder link: migrateParty's suggestion
   }
   for (const [id, e] of Object.entries(readJson(DEX, {}))) {
     if (e.caught === false) continue;
     const m = addMon(b, { id: Number(id), shiny: !!e.shiny }, "legacy");
     delete m.lv; delete m.mile;
   }
-  writeJson(BOX, b);
-  writeJson(FOLDERS, folders);
+  writeJson(BOX, b); // folders.json is left as it was (#122)
 }
 // #85: eggs kept in a folder (beta.8) move into the incubator, their progress kept
 function migrateEggs() {
-  const moved = [];
   if (!readBox().mons.some((m) => m.egg && !m.inc)) return;
-  updateBox((b) => { for (const m of b.mons) if (m.egg && !m.inc) { if (m.folder) moved.push(m.folder); m.folder = null; m.inc = true; m.inc_at = m.at || now(); } });
-  for (const f of moved) mirror(f, null);
+  updateBox((b) => { for (const m of b.mons) if (m.egg && !m.inc) { m.folder = null; m.inc = true; m.inc_at = m.at || now(); } });
 }
-const migrate = () => { migrateBox(); migrateLevels(); migrateEggs(); };
+// once (#122, POL-DATA-05): folder partners are gone — box.json and folders.json are copied aside first, then each
+// individual's folder link goes (levels, evolutions, the catch log stay), the old trade marks go, the party keeps its
+// first 5 (the rest rest in the box) and, if it's empty, the former partners (highest level first, up to 5) become a
+// one-time suggestion for the 포켓몬 고르기 window. folders.json isn't written any more (left as it was)
+function migrateParty() {
+  if (!fs.existsSync(BOX) || readBox().partyV >= 2) return 0;
+  const b0 = readBox(), former = b0.mons.filter((m) => m.folder && !m.egg);
+  const touch = former.length || b0.mons.some((m) => m.traded || m.last_folder || m.gradAsk) || (b0.party || []).length > PARTY_MAX;
+  if (touch) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const dir = path.join(CACHE, "backup", `party-${stamp}`);
+    fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+    for (const f of [BOX, FOLDERS]) {
+      if (!fs.existsSync(f)) continue;
+      const to = path.join(dir, path.basename(f));
+      fs.copyFileSync(f, to);
+      fs.chmodSync(to, 0o600);
+    }
+  }
+  updateBox((b) => {
+    const was = b.mons.filter((m) => m.folder && !m.egg).sort((x, y) => lvOf(y) - lvOf(x) || (y.xp || 0) - (x.xp || 0)).map((m) => m.uid);
+    for (const m of b.mons) { delete m.folder; delete m.last_folder; delete m.traded; delete m.gradAsk; }
+    b.party = (b.party || []).filter((u) => partyHas(monOf(b, u))).slice(0, PARTY_MAX);
+    if (!b.party.length && was.length) b.suggest = was.slice(0, PARTY_MAX);
+    b.partyNext = 0;
+    b.partyV = 2;
+  });
+  return former.length;
+}
+const migrate = () => { migrateBox(); migrateLevels(); migrateEggs(); migrateParty(); };
 
 const monOf = (b, uid) => b.mons.find((m) => m.uid === uid);
 // (an individual whose sprite isn't downloaded yet still shows: name from the Pokédex, no picture)
@@ -201,58 +221,33 @@ const eggView = (m) => ({ uid: m.uid, id: null, name: EGGS[m.egg.kind]?.name || 
 const monView = (m) => {
   if (m.egg) return eggView(m);
   const sp = loadSprite(m.id, m.shiny) || { id: m.id, shiny: !!m.shiny, name: readJson(DEX, {})[m.id]?.name || `#${m.id}`, types: [], gif: null };
-  return { ...sp, uid: m.uid, xp: m.xp || 0, folder: m.folder || null, ...lvView(m), ...(m.grad ? { grad: m.grad } : {}), ...(m.gradAsk ? { gradAsk: true } : {}) };
+  return { ...sp, uid: m.uid, xp: m.xp || 0, ...lvView(m), ...(m.grad ? { grad: m.grad } : {}), ...(m.gradAsk ? { gradAsk: true } : {}) };
 };
 
-// folders.json mirror of the folder's individual (the Neovim CVIM reads / levels this)
-function mirror(cwd, m) {
-  updateJson(FOLDERS, (t) => {
-    if (!m) { if (t[cwd]) { delete t[cwd].id; delete t[cwd].uid; delete t[cwd].xp; delete t[cwd].since_evo; delete t[cwd].final; } return; }
-    t[cwd] = { ...(t[cwd] || {}), id: m.id, shiny: !!m.shiny, xp: m.xp || 0, since_evo: m.since_evo || 0, pinned: true, uid: m.uid,
-      ...(m.final ? { final: true } : {}) };
-    if (!m.final) delete t[cwd].final;
-  });
-}
-
-// the Neovim CVIM may have levelled / evolved the partner since: take its progress
-function reconcile(cwd) {
-  const rec = readJson(FOLDERS, {})[cwd];
-  if (!rec?.uid) return;
-  updateBox((b) => {
-    const m = monOf(b, rec.uid);
-    if (!m || m.folder !== cwd) return;
-    if ((rec.xp || 0) > (m.xp || 0) || (rec.id && rec.id !== m.id)) {
-      Object.assign(m, { id: rec.id, xp: rec.xp || 0, since_evo: rec.since_evo || 0 });
-      if (rec.final) m.final = true;
-    }
-  });
-}
-
-// the folder's partner, or { choose: true } when it has none (new folder / given away)
-async function assign(cwd) {
+// 메인 파트너 (#122): the party's first — the partner pane in every tab, the overlay, the menu bar, the dashboard.
+// null with an empty party (the panes say "포켓몬이 없어요 [포켓몬 고르기]")
+async function mainPartner() {
   migrate();
-  reconcile(cwd);
-  const b = readBox();
-  const m = b.mons.find((x) => x.folder === cwd);
-  if (!m) return { choose: true };
-  if (m.egg) return eggView(m); // an egg here: the folder has its partner-to-be (#84)
+  const b = readBox(), u = partyList(b)[0];
+  const m = u != null && monOf(b, u);
+  if (!m) return null;
   if (!loadSprite(m.id, m.shiny)) await fetchPy([String(m.id), ...(m.shiny ? ["shiny"] : [])]);
-  if (!loadSprite(m.id, m.shiny)) return null; // offline and not cached: no partner this time
-  fetchEvo(m.id); // how it evolves, ahead of its first finish here (#74)
+  fetchEvo(m.id); // how it evolves, ahead of its next finish (#74)
   const v = monView(m);
-  recordDex(v);
+  if (loadSprite(m.id, m.shiny)) recordDex(v);
   return v;
 }
+// what the panes used to ask per folder (main.cjs): the 메인 파트너, or { choose: true } with an empty party
+const assign = async () => (await mainPartner()) || { choose: true };
 
-function progress(cwd) {
-  const m = readBox().mons.find((x) => x.folder === cwd);
-  if (m?.egg) return { uid: m.uid, xp: 0, lv: null, final: false, next: null, egg: eggView(m).egg };
+function progress() {
+  const b = readBox(), u = partyList(b)[0], m = u != null && monOf(b, u);
   return m ? { xp: m.xp || 0, uid: m.uid, ...lvView(m), ...(m.grad ? { grad: m.grad } : {}), ...(m.gradAsk ? { gradAsk: true } : {}) } : { xp: 0, lv: null, final: false, next: null };
 }
 // the species you have (a legend comes once a species, #82)
 const ownedSpecies = () => new Set(readBox().mons.filter((m) => !m.egg).map((m) => m.id));
-// the level of a folder's partner (catch bonus, PKM-21 rule 6), 0 without one
-const levelAt = (cwd) => { const m = cwd && readBox().mons.find((x) => x.folder === cwd); return m && !m.egg ? lvOf(m) : 0; };
+// the 메인 파트너's level (catch bonus, PKM-21 rule 6 — #122), 0 without one
+const levelAt = () => { const b = readBox(), u = partyList(b)[0], m = u != null && monOf(b, u); return m ? lvOf(m) : 0; };
 
 // ── the first partner: 3 starters (different first types, unevolved, not legendary — pokeapi.cjs
 // starter), offered once while the box is empty ─────────────────────────────────────────────
@@ -288,62 +283,51 @@ function fillStarter(onProgress = () => {}) {
   return filling;
 }
 
-// what the choose dialog shows for a folder
-function options(cwd) {
+// the 포켓몬 고르기 window (#122, PKM-32): the first Pokémon's starters while the box is empty
+function options() {
   migrate();
-  const b = readBox();
-  const t = starterSet();
-  const folders = readJson(FOLDERS, {});
-  const cur = b.mons.find((m) => m.folder === cwd);
-  const view = (m) => monView(m);
-  return {
-    // only while the box is empty (your very first partner)
-    starter: b.mons.length ? null : { set: t.set.map((c) => loadSprite(c.id, c.shiny)).filter(Boolean), ready: t.set.length >= CHOICES, total: CHOICES },
-    current: cur ? view(cur) : null,
-    resting: b.mons.filter((m) => !m.folder && !m.egg).map(view).filter(Boolean), // eggs are in the incubator (#85)
-    // partners of other folders (taking one leaves that folder without a partner)
-    others: b.mons.filter((m) => m.folder && m.folder !== cwd).map((m) => {
-      const v = view(m);
-      return v && { ...v, folderName: path.basename(m.folder), folderGone: !folders[m.folder] };
-    }).filter(Boolean),
-  };
+  const b = readBox(), t = starterSet();
+  return { starter: b.mons.length ? null : { set: t.set.map((c) => loadSprite(c.id, c.shiny)).filter(Boolean), ready: t.set.length >= CHOICES, total: CHOICES } };
 }
-
-// take a partner for the folder: { starter: id } (first partner) or { uid } (resting / another folder's)
-function take(cwd, { starter: starterId, uid }) {
+// the first Pokémon: a starter into the box and the party's first place — the 메인 파트너
+function starterTake(starterId) {
   migrate();
-  let taken, freed = null;
+  let taken;
   updateBox((b) => {
-    let m;
-    if (starterId != null) {
-      const c = starterSet().set.find((x) => x.id === Number(starterId));
-      if (!c || b.mons.length) throw new Error("not a starter (only for the first partner)");
-      const sp = loadSprite(c.id, c.shiny);
-      if (!sp) throw new Error("not downloaded");
-      m = addMon(b, sp, "starter");
-    } else {
-      m = monOf(b, Number(uid));
-      if (!m) throw new Error("no such Pokémon");
-      if (m.egg) throw new Error("알은 부화기에서 부화해요"); // #85
-      if (m.folder && m.folder !== cwd) freed = m.folder;
-    }
-    for (const x of b.mons) if (x.folder === cwd && x !== m) x.folder = null; // the old partner rests
-    // moved to another folder than the last one it worked in: a trade evolution opens on its first finish here (PKM-21 rule 3)
-    if (m.last_folder && m.last_folder !== cwd) m.traded = true;
-    m.folder = cwd;
-    m.last_folder = cwd;
-    taken = m;
+    const c = starterSet().set.find((x) => x.id === Number(starterId));
+    if (!c || b.mons.length) throw new Error("not a starter (only for the first Pokémon)");
+    const sp = loadSprite(c.id, c.shiny);
+    if (!sp) throw new Error("not downloaded");
+    taken = addMon(b, sp, "starter");
+    b.party = [taken.uid];
+    b.partyNext = 0;
   });
-  if (freed) mirror(freed, null);
-  if (taken.egg) { mirror(cwd, null); return { partner: eggView(taken), freed }; } // an egg moved here (#84)
-  mirror(cwd, taken);
-  if (!loadSprite(taken.id, taken.shiny)) {
-    // not downloaded yet: the UI waits for partner_state (assign fetches it)
-    return { partner: { ...monView(taken), pending: true }, freed };
-  }
   const v = monView(taken);
   recordDex(v);
-  return { partner: v, freed };
+  return v;
+}
+// 파티 제안 (#122, PKM-32): for an empty party — the former folder partners kept once by migrateParty, else the box
+// newest first. A list the main process checks when it's taken (suggestTake)
+function suggestions() {
+  migrate();
+  const b = readBox(), inParty = new Set(partyList(b));
+  const kept = (b.suggest || []).map((u) => monOf(b, u)).filter((m) => partyHas(m) && !inParty.has(m.uid));
+  const list = kept.length ? kept : b.mons.filter((m) => partyHas(m) && !inParty.has(m.uid)).sort((x, y) => (y.at || 0) - (x.at || 0) || y.uid - x.uid).slice(0, 12);
+  return { former: kept.length > 0, list: list.map(monView), max: PARTY_MAX, room: PARTY_MAX - inParty.size };
+}
+function suggestTake(uids) {
+  migrate();
+  updateBox((b) => {
+    const list = partyList(b);
+    for (const u of Array.isArray(uids) ? uids : []) {
+      const n = Number(u);
+      if (list.length >= PARTY_MAX) break;
+      if (!list.includes(n) && partyHas(monOf(b, n))) list.push(n);
+    }
+    b.party = list;
+    delete b.suggest; // taken: the one-time list is done
+  });
+  return party();
 }
 
 // a wild one caught: a new individual, resting in the box — marked new until you look at it in
@@ -362,20 +346,21 @@ function viewed(id) {
   return n;
 }
 
-// "내 포켓몬" (#27): every individual — in the box or a folder's partner — with its EXP and where it is
+// "내 포켓몬" (#27): every individual with its level and where it is — resting, or its place in the party (#122: 0 =
+// the 메인 파트너)
 const dexName = (id) => readJson(DEX, {})[id]?.name || `#${id}`;
-function boxList(cwd) {
+function boxList() {
   migrate();
-  const folders = readJson(FOLDERS, {});
-  return readBox().mons.map((m) => {
-    if (m.egg) return { ...eggView(m), how: "egg", at: m.at || null, new: false, evo: [], folder: null, inc: incEggs()[0]?.uid === m.uid ? "active" : "waiting" };
+  const b = readBox(), plist = partyList(b);
+  return b.mons.map((m) => {
+    if (m.egg) return { ...eggView(m), how: "egg", at: m.at || null, new: false, evo: [], party: null, inc: incEggs()[0]?.uid === m.uid ? "active" : "waiting" };
     const v = monView(m);
     return { uid: m.uid, id: m.id, shiny: !!m.shiny, name: v.name, gif: v.gif, types: v.types || [], xp: m.xp || 0,
       lv: v.lv, final: v.final, next: v.next, how: m.how || null, ...(m.grad ? { grad: m.grad } : {}), at: m.at || null, new: !!m.new,
       caughtIn: m.caught_in ? path.basename(m.caught_in) : null, caughtBy: m.caught_by || null,
       evo: (m.evo || []).map((e) => ({ from: dexName(e.from), to: dexName(e.to), at: e.at })),
-      folder: !m.folder ? null : m.folder === cwd ? "here" : path.basename(m.folder), folderGone: !!m.folder && !folders[m.folder],
-      ...(stoneOk(m) ? { stone: true } : {}) }; // 💎 a stone can evolve it (#93)
+      party: plist.includes(m.uid) ? plist.indexOf(m.uid) : null,
+      ...(stoneOk(m) ? { stone: true } : {}), ...(cordOk(m) ? { cord: true } : {}) }; // 💎 a stone (#93) · 연결의끈 (#122) can evolve it
   });
 }
 
@@ -385,13 +370,13 @@ function dex() {
   const owned = new Map(); // species -> individuals in the box
   const fresh = new Map(); // species -> new (not looked at) individuals
   const caughtAt = new Map(), partnered = new Map(); // species -> latest catch (epoch s) / partners (dex search, #21)
-  const mons = readBox().mons;
+  const bx = readBox(), mons = bx.mons, inParty = new Set(partyList(bx));
   for (const m of mons) {
     if (m.egg) continue;
     owned.set(m.id, (owned.get(m.id) || 0) + 1);
     if (m.new) fresh.set(m.id, (fresh.get(m.id) || 0) + 1);
     if (m.how !== "legacy" && (m.at || 0) > (caughtAt.get(m.id) || 0)) caughtAt.set(m.id, m.at);
-    if (m.folder) partnered.set(m.id, (partnered.get(m.id) || 0) + 1);
+    if (inParty.has(m.uid)) partnered.set(m.id, (partnered.get(m.id) || 0) + 1); // in the party (#122)
   }
   const entries = Object.entries(t).map(([id, e]) => {
     const n = Number(id);
@@ -404,7 +389,7 @@ function dex() {
   // and the day's hatchlings in a row of their own after it (#89) — one list, the caught first
   const since = now() - RECENT_HOURS * 3600, newest = (a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid;
   const row = (how) => mons.filter((m) => !m.egg && m.how === how && (m.at || 0) >= since).sort(newest).slice(0, 60)
-    .map((m) => ({ uid: m.uid, id: m.id, shiny: !!m.shiny, at: m.at, new: !!m.new, folder: m.folder || null, how }));
+    .map((m) => ({ uid: m.uid, id: m.id, shiny: !!m.shiny, at: m.at, new: !!m.new, party: inParty.has(m.uid), how }));
   const recent = [...row("wild"), ...row("egg")];
   return { entries, recent, recentHours: RECENT_HOURS, total: 649, caught: entries.filter((e) => e.caught).length, shiny: entries.filter((e) => e.shiny).length };
 }
@@ -425,79 +410,70 @@ function prefetchOpen(m, trade) {
 const evolving = new Set(); // uid
 // one finish for an individual: +2 (+1 after its last form), friendship, milestones, graduation (PKM-21)
 function grow(m) {
-  m.xp = (m.xp || 0) + 1; // the old EXP (folders.json's mirror, PKM-17)
+  m.xp = (m.xp || 0) + 1; // the old EXP count
   const before = lvOf(m);
   if (!m.final && isFinal(m)) m.final = true;
   m.lv = Math.min(MAX_LV, before + (m.final ? 1 : 2));
   m.friend = (m.friend || 0) + 1;
   return { miles: milesOf(m, before), graduated: graduate(m) };
 }
-// a finished task in a folder: its partner grows — none there: the party's next in turn (PKM-31, #107),
-// none in the party either: nobody (coins and wild Pokémon go on as before). via: "folder" | "party"
-async function onDone(cwd) {
-  let m, miles = [], trade = false, egg = false, graduated = false, via = null;
+// a finished task anywhere (#122, PKM-31 rule 3): the party's next in turn grows (graduates at Lv 100 are skipped —
+// they don't grow), none in the party: nobody (coins and wild Pokémon go on as before)
+async function onDone() {
+  let m, miles = [], graduated = false;
   updateBox((b) => {
-    m = b.mons.find((x) => x.folder === cwd);
-    if (m?.egg) { egg = true; return; } // an egg isn't a partner any more (#85) — nothing here
-    if (m) {
-      via = "folder";
-      ({ miles, graduated } = grow(m));
-      trade = !!m.traded;
-      delete m.traded; // the first finish after the move only
-      return;
-    }
-    const list = partyUids(b);
+    const list = partyTurns(b);
     if (!list.length) return;
     const i = (b.partyNext || 0) % list.length;
     m = monOf(b, list[i]);
     b.partyNext = (i + 1) % list.length;
-    via = "party";
-    ({ miles, graduated } = grow(m)); // a trade evolution opens only by a folder's own finish (rule 4)
+    ({ miles, graduated } = grow(m));
   });
-  if (!m || egg) return { evolved: null, miles: [] };
-  if (via === "folder") mirror(cwd, m);
-  else if (m.folder) mirror(m.folder, m);
-  return { ...(await evolveNow(m.uid, trade)), miles, graduated, via, uid: m.uid };
+  if (!m) return { evolved: null, miles: [] };
+  return { ...(await evolveNow(m.uid, false)), miles, graduated, via: "party", uid: m.uid };
 }
 
-// ── 파티 (PKM-31, #107): up to 6 individuals, in order (1 = the lead), that grow in turn from finishes in
-// folders without a partner — a Tamer tab's or one done outside Tamer (STA-23). A folder's partner may be in it too
-const PARTY_MAX = 6;
-const partyOk = (m) => !!m && !m.egg && !(m.grad && lvOf(m) >= MAX_LV); // an egg / a graduate at Lv 100 doesn't grow
-const partyUids = (b) => (b.party || []).filter((u) => partyOk(monOf(b, u)));
+// ── 파티 (PKM-31, #107 · #122): up to 5 individuals, in order — 1 = the 메인 파트너 — that grow in turn from every
+// finished task, a Tamer tab's or one done outside Tamer (STA-23). A graduate at Lv 100 may stay (and be the 메인 파트너)
+// but its turns are skipped; eggs aren't Pokémon yet
+const PARTY_MAX = 5;
+const partyHas = (m) => !!m && !m.egg;
+const partyList = (b) => (b.party || []).filter((u) => partyHas(monOf(b, u)));
+const partyTurns = (b) => partyList(b).filter((u) => { const m = monOf(b, u); return !(m.grad && lvOf(m) >= MAX_LV); });
 function party() {
-  const b = readBox(), list = partyUids(b);
-  return { list: list.map((u) => monView(monOf(b, u))), next: list.length ? (b.partyNext || 0) % list.length : 0, max: PARTY_MAX };
+  const b = readBox(), list = partyList(b), turns = partyTurns(b);
+  const nextUid = turns.length ? turns[(b.partyNext || 0) % turns.length] : null;
+  return { list: list.map((u) => monView(monOf(b, u))), next: nextUid == null ? -1 : list.indexOf(nextUid), max: PARTY_MAX };
 }
-// the whole list at once (the 파티 tab's add · remove · lead are each a new list) — checked here, not on the page
+// the whole list at once (내 포켓몬's add · remove · 메인 · the dashboard's cells are each a new list) — checked here
 function partySet(uids) {
   updateBox((b) => {
     const seen = new Set(), ok = [];
     for (const u of Array.isArray(uids) ? uids : []) {
       const n = Number(u);
-      if (seen.has(n) || !partyOk(monOf(b, n))) continue;
+      if (seen.has(n) || !partyHas(monOf(b, n))) continue;
       seen.add(n); ok.push(n);
       if (ok.length === PARTY_MAX) break;
     }
-    const kept = partyUids(b)[(b.partyNext || 0) % Math.max(1, partyUids(b).length)]; // whose turn it was
+    const turns = partyTurns(b), kept = turns[(b.partyNext || 0) % Math.max(1, turns.length)]; // whose turn it was
     b.party = ok;
-    b.partyNext = Math.max(0, ok.indexOf(kept));
+    b.partyNext = Math.max(0, partyTurns(b).indexOf(kept));
   });
   return party();
 }
-// 🎓 졸업 (E5, #84, PKM-19): Lv 100 — once an individual (its date kept), and it asks "계속 함께 / 새 파트너"
-// until answered (gradAsk). Nothing is taken away: it stays your Pokémon, a partner whenever you like
+// 🎓 졸업 (E5, #84, PKM-19): Lv 100 — once an individual (its date kept), and the 메인 파트너's asks "계속 함께 / 다른
+// 포켓몬을 메인으로" until answered (gradAsk). Nothing is taken away: it stays in the party (its turns skipped, #122)
 function graduate(m) {
   if (lvOf(m) < MAX_LV || m.grad) return false;
   m.grad = now();
   m.gradAsk = true;
   return true;
 }
-// the answer: keep it (the band goes) or let it rest in the box (the folder chooses a new partner)
-function gradChoice(cwd, keep) {
+// the answer (the band goes either way): keep it as the 메인 파트너, or pick another in 내 포켓몬's party row (the screen
+// opens it) — it stays in the party
+function gradChoice() {
   let ok = false;
-  updateBox((b) => { const m = b.mons.find((x) => x.folder === cwd && x.gradAsk); if (!m) return; delete m.gradAsk; if (!keep) m.folder = null; ok = true; });
-  if (ok && !keep) mirror(cwd, null);
+  updateBox((b) => { for (const m of b.mons) if (m.gradAsk) { delete m.gradAsk; ok = true; } });
   return ok;
 }
 // 🥚 the incubator (#85): an egg from the bag goes in (behind any already there); its view for the screens
@@ -530,7 +506,7 @@ async function incubatorStep() {
   return eggStep(first.uid);
 }
 // one finish early its species is picked and its picture fetched (like an evolution); at the last one it
-// hatches — Lv 5, "알에서 부화", this folder's partner. Offline: it waits for the next finish (PKM-25 rule 5)
+// hatches — Lv 5, "알에서 부화", into the box. Offline: it waits for the next finish (PKM-25 rule 5)
 async function eggStep(uid) {
   let m = monOf(readBox(), uid);
   if (!m?.egg) return { evolved: null, miles: [] };
@@ -555,8 +531,6 @@ async function eggStep(uid) {
     Object.assign(x, { id: nx.id, shiny: !!nx.shiny, xp: 0, since_evo: 0, lv: START_LV, mile: 0, friend: 0, how: "egg", hatched: now(), at: now(), new: true });
   });
   recordDex(sp);
-  m = monOf(readBox(), uid);
-  if (m?.folder) mirror(m.folder, m);
   fetchEvo(sp.id);
   return { evolved: null, miles: [], hatched: sp, newdex: !before || before.caught === false };
 }
@@ -580,10 +554,9 @@ async function candy(uid) {
     graduated = graduate(m);
   });
   if (!m) return null;
-  if (m.folder) mirror(m.folder, m);
   const r = await evolveNow(m.uid, false);
   const x = monOf(readBox(), m.uid);
-  return { ...r, miles, graduated, uid: m.uid, folder: x?.folder || null, ...lvView(x || m) };
+  return { ...r, miles, graduated, uid: m.uid, ...lvView(x || m) };
 }
 // 💎 진화의 돌 (#93, PKM-28 rules 2–5): for an individual with a stone / item stage next, or more than one
 // next stage to choose from — any of those stages at once, whatever its condition
@@ -630,8 +603,24 @@ async function stoneEvolve(uid, to) {
   recordDex(next);
   const more = await evolveNow(m.uid, false); // opened by its level now (a Lv 40 Eevee's stage doesn't, but a moved one might)
   const x = monOf(readBox(), m.uid);
-  if (x?.folder) mirror(x.folder, x);
-  return { evolved: more.evolved || next, from: first, uid: m.uid, folder: x?.folder || null, evoNew: (fresh ? 1 : 0) + (more.evoNew || 0), ...lvView(x || m) };
+  return { evolved: more.evolved || next, from: first, uid: m.uid, evoNew: (fresh ? 1 : 0) + (more.evoNew || 0), ...lvView(x || m) };
+}
+// 🔗 연결의끈 (#122, PKM-21 rule 3 · PKM-28): a trade evolution without a trade — for an individual whose next stage is by
+// trade (the folder move that opened it is gone with folder partners). Used up like a stone (economy.cjs)
+function cordOk(m) {
+  if (!m || m.egg || isFinal(m)) return false;
+  return !!evoOf(m.id)?.next.some((o) => o.kind === "trade");
+}
+async function useCord(uid) {
+  const m = monOf(readBox(), Number(uid));
+  if (!m) return null;
+  if (!evoOf(m.id)) await fetchPy(["evo", String(m.id)]);
+  if (!cordOk(m) || evolving.has(m.uid)) return null;
+  const first = loadSprite(m.id, m.shiny);
+  const r = await evolveNow(m.uid, true);
+  if (!r.evolved) return { offline: true }; // its picture couldn't be fetched: the cord isn't used
+  const x = monOf(readBox(), m.uid);
+  return { evolved: r.evolved, from: first, uid: m.uid, evoNew: r.evoNew || 0, ...lvView(x || m) };
 }
 // any next stage open now: evolve (one at random), again while they keep opening
 async function evolveNow(uid, trade) {
@@ -667,11 +656,12 @@ async function evolveNow(uid, trade) {
       trade = false; // a trade opens one evolution
     }
   } finally { evolving.delete(m.uid); }
-  if (m.folder) mirror(m.folder, m);
   if (!to) return { evolved: null };
   const evoNew = newInDex(to.id) ? 1 : 0; // a species new to the Pokédex: +30 more (#94)
   recordDex(to);
   return { evolved: to, from: first, evoNew };
 }
 
-module.exports = { mon: (uid) => { const m = monOf(readBox(), Number(uid)); return m ? monView(m) : null; }, party, partySet, PARTY_MAX, assign, options, take, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, stoneOk: (uid) => stoneOk(monOf(readBox(), Number(uid))), stoneOptions, stoneEvolve, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };
+module.exports = { mon: (uid) => { const m = monOf(readBox(), Number(uid)); return m ? monView(m) : null; }, party, partySet, PARTY_MAX, mainPartner, assign, options, starterTake, suggestions, suggestTake,
+  hasSuggest: () => (readBox().suggest || []).length > 0, boxEmpty, fillStarter, addCaught, viewed, boxList, onDone, candy, candyOk, stoneOk: (uid) => stoneOk(monOf(readBox(), Number(uid))), stoneOptions, stoneEvolve,
+  cordOk: (uid) => cordOk(monOf(readBox(), Number(uid))), useCord, progress, levelAt, ownedSpecies, incubatorAdd, incubator, incubatorFirst, incubatorStep, gradChoice, EGGS, dex, fetchPy, loadSprite, recordSeen, migrate, fetchEvo, EVOLVE_EVERY, MAX_LV };

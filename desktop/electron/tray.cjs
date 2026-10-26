@@ -89,6 +89,7 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null,
     { type: "separator" },
     { label: "설정…", act: "settings" },
     { label: "Tamer 열기", act: "open" },
+    { label: "포켓몬 창", act: "poke" }, // #121 (STA-19 rule 10): the Pokémon window's 홈, no terminal window
     { label: "메뉴바 아이콘 숨기기", act: "hide" },
     { type: "separator" },
     { label: "Tamer 종료", act: "quit" },

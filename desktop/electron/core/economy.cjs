@@ -111,7 +111,7 @@ function summary() {
   const st = [...rows.values()].find((r) => r.kind === "start");
   const show = readJson(STATE, {}).startSeen === false; // written so on the first launch only — a lost state file never shows it again
   const b = bag(); // bagN: what can be used up — 빛나는부적 is kept, not counted (#93)
-  return { balance: balance(), bagN: Object.entries(b).reduce((s, [k, n]) => s + (k === "charm" ? 0 : n), 0), charm: (b.charm || 0) > 0, eggs: { egg: b.egg || 0, egg2: b.egg2 || 0 }, stones: b.stone || 0, incenseUntil: incenseUntil(), stamps: stamps(), legend: legendSet(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
+  return { balance: balance(), bagN: Object.entries(b).reduce((s, [k, n]) => s + (k === "charm" ? 0 : n), 0), charm: (b.charm || 0) > 0, eggs: { egg: b.egg || 0, egg2: b.egg2 || 0 }, stones: b.stone || 0, cords: b.cord || 0, incenseUntil: incenseUntil(), stamps: stamps(), legend: legendSet(), today: { earned, capLeft, cap: CAP }, start: st && show && st.amount > 0 ? { amount: st.amount, n: st.n } : null };
 }
 function dismissStart() { writeJson(STATE, { ...readJson(STATE, {}), startSeen: true }); return summary(); }
 const EARN = new Set(["done", "fast", "first", "evolve", "newdex", "level", "big", "legend", "grad"]); // what "오늘 번 코인" counts
@@ -124,6 +124,7 @@ const SHOP = [
   { id: "master", group: "ball", name: "마스터볼", price: 1500, effect: "반드시 잡혀요", weekly: 1 },
   { id: "candy", group: "grow", name: "이상한사탕", price: 30, effect: "레벨 +1", many: true },
   { id: "stone", group: "grow", name: "진화의 돌", price: 300, effect: "돌 진화 · 갈래 고르기" }, // E7 (#93)
+  { id: "cord", group: "grow", name: "연결의끈", price: 300, effect: "교환 진화" }, // #122 (PKM-21 rule 3): a trade evolution without folder moves — used up like a stone
   { id: "incense", group: "explore", name: "향", price: 80, effect: "1시간 야생 ×2", many: true },
   { id: "legend", group: "explore", name: "전설의 향", price: 800, effect: "다음 대발견 전설 고르기" }, // E4 (#82)
   { id: "egg", group: "egg", name: "알", price: 500, effect: "작업 10번이면 부화" }, // E5 (#84)

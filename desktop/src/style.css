@@ -137,6 +137,9 @@ body.drop-target #views { outline: 2px dashed var(--accent); outline-offset: -6p
 .poke.act-attack { animation: lunge .45s ease-out 2 !important; }
 .poke.act-cute { animation: hop .35s ease-in-out 3 !important; }
 @keyframes lunge { 40% { transform: translateX(14px) scale(1.08); } }
+/* a new 메인 파트너 comes out of its Poké Ball (#122, SCREENS_PARTY E3): white, small → itself */
+.poke.ball-out { animation: ball-out .6s ease-out !important; }
+@keyframes ball-out { 0% { transform: scale(.2); filter: brightness(0) invert(1); } 60% { transform: scale(1.08); filter: brightness(0) invert(1); } 100% { transform: none; filter: none; } }
 /* evolution: white silhouette flicker (old ↔ new), like the games */
 .poke.evolving { animation: evo .18s steps(1) infinite !important; }
 @keyframes evo { 0% { filter: brightness(0) invert(1); } 50% { filter: none; } }

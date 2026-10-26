@@ -59,6 +59,9 @@
 .ov.ov-minimal .card .row { justify-content: flex-end; }
 .ov.ov-minimal .card:has(> .bubble) { padding-top: 16px; }
 .ov.ov-minimal .bubble { padding: 1px 5px; font-size: 12px; }
+.ov .ball.urgent { width: 30px; height: 30px; border-width: 3px; cursor: inherit; } /* the urgent tab's card (#122, STA-15) */
+.ov .ball.urgent::after { width: 8px; height: 8px; }
+.ov:not(.ov-minimal) .minis .ball { width: 18px; height: 18px; margin: 0 2px; } /* the other tabs as balls in the normal mode too (#122) */
 .ov.ov-minimal .minis { border-top: 0; padding-top: 0; justify-content: flex-end; gap: 5px; }
 .ov .ball { position: relative; width: 14px; height: 14px; border-radius: 50%; box-sizing: border-box; border: 2px solid #111; cursor: pointer;
   background: linear-gradient(#e5484d 0 42%, #111 42% 58%, #f2f2f2 58%); }

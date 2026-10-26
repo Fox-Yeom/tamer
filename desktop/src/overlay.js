@@ -1,6 +1,7 @@
 // Desktop overlay (X1d): shown while another app is in front. The current tab's partner, tabs
 // that need you / are working / just finished, and a wild Pokémon's notice. Click a card → that tab;
-// click the notice → Tamer, to catch it there (#66); drag → move (remembered). The window is
+// click the wild notice → the catch window beside it (#119), the hatch / evolution notice → the Pokémon window on that
+// Pokémon (#121); drag → move (remembered). The window is
 // see-through except over the cards. The cards themselves: src/overlay-view.js (the 설정 창's
 // preview draws the same).
 import { invoke, listen } from "./host.js";
@@ -146,7 +147,7 @@ document.addEventListener("mousedown", (e) => {
   const card = e.target.closest(".hit");
   if (!card || e.target.closest("button")) return;
   e.preventDefault();
-  drag = { x: e.screenX, y: e.screenY, moved: false, ws: e.target.closest("[data-ws]")?.dataset.ws, act: e.target.closest("[data-act]")?.dataset.act };
+  drag = { x: e.screenX, y: e.screenY, moved: false, ws: e.target.closest("[data-ws]")?.dataset.ws, act: e.target.closest("[data-act]")?.dataset.act, sel: Number(e.target.closest("[data-sel]")?.dataset.sel) || null };
   invoke("overlay_drag", { phase: "start", x: e.screenX, y: e.screenY });
 });
 // the wild notice's place in this page — the catch window sits beside it (#119)
@@ -159,8 +160,9 @@ function endDrag(e, click) {
   drag = null;
   if (d.moved) invoke("overlay_drag", { phase: "end", x: e.screenX, y: e.screenY });
   else if (click && d.act === "wild") invoke("wild_open", { rect: noteRect() }); // the catch window beside it (#119)
-  else if (click && d.act === "hatch") invoke("hatch_open");
-  else if (click && d.act === "party") invoke("overlay_click", { ws: "" }); // 파티 card (#107): Tamer opens
+  else if (click && d.act === "hatch") invoke("hatch_open", { sel: d.sel }); // 내 포켓몬 on the hatchling (#121)
+  else if (click && d.act === "evolve") invoke("evolve_open", { sel: d.sel }); // 내 포켓몬 on the one that evolved (#121 — was Tamer's window)
+  else if (click && d.act === "party") invoke("party_open"); // 파티 card (#107): the Pokémon window's 홈 (#122 J2 — not Tamer's window)
   else if (click && d.ws) invoke("overlay_click", { ws: d.ws });
 }
 document.addEventListener("mouseup", (e) => { if (drag) endDrag(e, true); });

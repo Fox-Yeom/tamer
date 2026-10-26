@@ -60,8 +60,10 @@ export const progHtml = (prog) => { const it = progItems(prog); return it.length
 // 최소 모드: small chips under the partner (🥚2/10 ⭐6/7); the hover line (overlay.js #tip) says what they are
 const progMini = (prog, ws) => { const it = progItems(prog); return it.length ? `<div class="ov-prog-mini" data-ws="${esc(ws)}" data-tip="${esc(progTip(it))}">${it.map((i) => `<span${i.soon ? ' class="soon"' : ""}>${i.icon}${i.n}/${i.m}</span>`).join("")}</div>` : ""; };
 
-async function bigCard(t, { show, stallMs, spriteUrl, extra = "" }) {
-  const url = await spriteUrl(t.partner?.gif);
+// ball: the most urgent other tab (#122, STA-15) — its state's Poké Ball instead of a picture (every tab has the same 메인 파트너),
+// the folder as its name
+async function bigCard(t, { show, stallMs, spriteUrl, extra = "", ball = false }) {
+  const url = ball ? null : await spriteUrl(t.partner?.gif);
   const min = isMinimal(show), end = ENDED[t.ended];
   const stall = timing(t.times, { stallMs }).stall;
   // a finished shell shows even while another shell of the folder needs you (both bubbles)
@@ -71,48 +73,49 @@ async function bigCard(t, { show, stallMs, spriteUrl, extra = "" }) {
   // 알림 off (#59): no "입력 필요" / "완료!" bubbles — the partner stays
   const bubble = show.alerts === false ? "" : (t.state === "waiting" ? `<div class="bubble bad">${min ? "❗" : "❗ 입력 필요"}</div>` : "") + endBubble;
   const motion = t.state === "waiting" ? "st-waiting" : ["done", "interrupted", "error", "idle", "sleep"].includes(t.state) ? `st-${t.state}` : "st-working";
-  const sprite = url ? `<img class="poke ${motion}" src="${url}" alt="" />` : t.partner ? '<div class="pokeball"></div>' : '<div class="empty-ball" title="파트너가 없어요"></div>';
+  const sprite = ball ? `<span class="ball urgent ${dot(t, stallMs)}"></span>` : url ? `<img class="poke ${motion}" src="${url}" alt="" />` : t.partner ? '<div class="pokeball"></div>' : '<div class="empty-ball" title="포켓몬이 없어요"></div>';
   return `<div class="card hit${t.active ? " current" : ""}" data-ws="${esc(t.ws)}" data-tip="${esc(tip(t, stallMs))}" title="${min ? "" : `클릭: 이 탭으로 · 드래그: 이동${t.active ? " · 더블클릭: 접기/펴기" : ""}`}">
     ${bubble}
     <div class="row"><div class="sprite">${sprite}</div>
-    ${min ? "" : `<div class="meta"><div class="name">${esc(t.partner ? `${t.partner.shiny ? "✨" : ""}${t.partner.name}` : "파트너 없음")}${t.sessions > 1 ? ` <span class="sess-badge" title="이 폴더의 셸 수">셸 ${t.sessions}개</span>` : ""}</div>
-      <div class="folder">${esc(t.name)}</div><div class="state${stall && t.state !== "waiting" ? " stall" : ""}" title="${stall ? "새 이벤트가 없어요 — 멈췄을 수 있어요(추정)" : ""}">${esc(stateLine(t, stallMs))}</div></div>`}</div>
+    ${min ? "" : `<div class="meta"><div class="name">${esc(ball ? t.name : t.partner ? `${t.partner.shiny ? "✨" : ""}${t.partner.name}` : "포켓몬 없음")}${t.sessions > 1 ? ` <span class="sess-badge" title="이 폴더의 셸 수">셸 ${t.sessions}개</span>` : ""}</div>
+      ${ball ? "" : `<div class="folder">${esc(t.name)}</div>`}<div class="state${stall && t.state !== "waiting" ? " stall" : ""}" title="${stall ? "새 이벤트가 없어요 — 멈췄을 수 있어요(추정)" : ""}">${esc(stateLine(t, stallMs))}</div></div>`}</div>
     ${extra}
   </div>`;
 }
 
-// 파티 (#107, STA-15 rule 11): no tab open (Tamer in the menu bar only) — the party's lead big, the others small,
-// and the last finish done outside Tamer / grown by the party as a bubble ("밖에서 +5 · 리자드 Lv 31")
+// 파티 (#107, STA-15 rule 11): no tab open (Tamer in the menu bar only) — the 메인 파트너 big, the others small,
+// and the last finish done outside Tamer / grown by the party as a bubble ("밖에서 +5 · 리자드 Lv 31"). A click: the
+// Pokémon window's 홈 (#122 J2 — it never opens the terminal window, APP-22 rule 8)
 async function partyCard(party, note, { show, spriteUrl, prog = null }) {
   const [lead, ...rest] = party.list, min = isMinimal(show);
   const url = await spriteUrl(lead.gif);
   const others = await Promise.all(rest.map(async (m) => { const u = await spriteUrl(m.gif); return `<span class="mini" title="${esc(m.name)} Lv ${m.lv ?? "?"}">${u ? `<img src="${u}" alt="" />` : "·"}</span>`; }));
   const said = note && show.alerts !== false ? `<div class="bubble ok">${min ? "+" : `${note.outside ? "밖에서 " : ""}+${note.coins || 0}${note.mon?.name ? ` · ${esc(note.mon.name)}${note.mon.lv ? ` Lv ${note.mon.lv}` : ""}` : ""}`}</div>` : "";
-  return `<div class="card hit current party" data-act="party" title="${min ? "" : "파티 — 클릭: Tamer 열기 · 드래그: 이동"}">
+  return `<div class="card hit current party" data-act="party" title="${min ? "" : "파티 — 클릭: 포켓몬 창 홈 · 드래그: 이동"}">
     ${said}
     <div class="row"><div class="sprite">${url ? `<img class="poke st-idle" src="${url}" alt="" />` : '<div class="pokeball"></div>'}</div>
-    ${min ? "" : `<div class="meta"><div class="name">${esc(`${lead.shiny ? "✨" : ""}${lead.name}`)}</div><div class="folder">파티 · Lv ${lead.lv ?? "?"}</div><div class="state">Tamer 밖 작업도 키워요</div></div>`}</div>
+    ${min ? "" : `<div class="meta"><div class="name">${esc(`${lead.shiny ? "✨" : ""}${lead.name}`)}</div><div class="folder">메인 파트너 · Lv ${lead.lv ?? "?"}</div><div class="state">어디서 작업을 끝내도 파티가 커요</div></div>`}</div>
     ${others.length && !min ? `<div class="minis">${others.join("")}</div>` : ""}
     ${prog ? (min ? progMini(prog, "") : progHtml(prog)) : ""}
   </div>`; // 진행 (#116): the egg · stamps · research under the party too, as under a tab's card
 }
 
+// the other tabs (#122): every tab shows the same 메인 파트너, so a tab is a Poké Ball in its state's colour — the minimal
+// mode's, now in both (the normal one says the folder and what it's doing on hover)
+export const tabBalls = (minis, stallMs, min) => minis.map((t) => `<span class="ball hit ${dot(t, stallMs)}" data-ws="${esc(t.ws)}" data-tip="${esc(tip(t, stallMs))}"${min ? "" : ` title="${esc(t.name)} — ${esc(DOING[t.state] || "")}"`}></span>`);
+
 // every card of an overlay payload { current, urgent, minis, more, counts, collapsed, show, stallMs }
 export async function cardsHtml(p, { spriteUrl }) {
   const show = p.show || {}, stallMs = p.stallMs, min = isMinimal(show);
-  // every other tab: a small icon + state dot (minimal: a Poké Ball in the state's colour), then the counts
-  const minis = await Promise.all((p.minis || []).map(async (t) => {
-    if (min) return `<span class="ball hit ${dot(t, stallMs)}" data-ws="${esc(t.ws)}" data-tip="${esc(tip(t, stallMs))}"></span>`;
-    const url = await spriteUrl(t.partner?.gif);
-    return `<span class="mini hit" data-ws="${esc(t.ws)}" title="${esc(t.name)} — ${DOING[t.state] || ""}">${url ? `<img src="${url}" alt="" />` : "·"}<i class="dot ${dot(t, stallMs)}"></i></span>`;
-  }));
+  // every other tab: a Poké Ball in its state's colour (#122), then the counts
+  const minis = tabBalls(p.minis || [], stallMs, min);
   const c = p.counts || {};
   const counts = min ? "" : [["bad", "❗", c.waiting], ["", "⌨️", c.working], ["ok", "✅", c.done], ["bad", "💥", c.error]]
     .filter(([, , n]) => n > 0).map(([cls, icon, n]) => `<span class="${cls}">${icon}${n}</span>`).join(" ");
   const strip = show.alerts !== false && (minis.length || p.more || (counts && !p.collapsed))
     ? `<div class="minis">${minis.join("")}${p.more ? `<span class="more">+${p.more}</span>` : ""}${counts ? `<span class="counts">${counts}</span>` : ""}</div>` : "";
   const cards = [];
-  if (p.urgent && show.alerts !== false) cards.push(await bigCard(p.urgent, { show, stallMs, spriteUrl })); // the tab that needs you: an alert
+  if (p.urgent && show.alerts !== false) cards.push(await bigCard(p.urgent, { show, stallMs, spriteUrl, ball: true })); // the tab that needs you: an alert, its Poké Ball (#122)
   // 진행 (#88 #90): a line under the current tab's card (minimal: chips under the partner), or a card of its own
   const prog = show.progress !== false && progItems(p.prog).length ? p.prog : null;
   if (p.current && show.partner !== false) cards.push(await bigCard(p.current, { show, stallMs, spriteUrl, extra: (prog && min ? progMini(prog, p.current.ws) : "") + strip + (prog && !min ? progHtml(prog) : "") }));
@@ -143,11 +146,11 @@ export function wildNoteHtml(e, url) {
     <button class="wild-note-close" title="알림 닫기">✕</button></div>`;
 }
 
-// 🐣 부화 알림 (#88, PKM-30 rule 5): like the wild notice, green — 4 s, a click brings Tamer on 내 포켓몬
+// 🐣 부화 알림 (#88, PKM-30 rule 5): like the wild notice, green — 4 s, a click opens the Pokémon window's 내 포켓몬 on it
 // ✨ 진화 알림 (#111): an evolution while Tamer isn't in front (the party · work outside Tamer · any tab) —
-// the new form flashing, who it was, the coins. A click → Tamer
+// the new form flashing, who it was, the coins. A click → 내 포켓몬 on it (#121 — was Tamer's window)
 export function evolveNoteHtml(e, url) {
-  return `<div class="wild-note evolve hit" data-act="party" title="클릭: Tamer 열기">
+  return `<div class="wild-note evolve hit" data-act="evolve"${e.id ? ` data-sel="${Number(e.id)}"` : ""} title="클릭: 포켓몬 창 내 포켓몬">
     ${url ? `<img class="wild-note-poke evo-flash" src="${url}" alt="" />` : '<div class="pokeball"></div>'}
     <div class="wild-note-text">✨ ${e.from ? `<b>${esc(e.from)}</b>${josaRo(e.from)} ` : ""}<b>${e.shiny ? "✨" : ""}${esc(e.to)}</b>${e.from ? josaEuro(e.to) : ""} 진화했어요!<div class="wild-note-sub">${e.outside ? "Tamer 밖 작업" : e.via === "party" ? "파티" : "작업 끝"}${e.coins ? ` · 🪙 +${e.coins}` : ""}</div></div></div>`;
 }
@@ -157,7 +160,7 @@ const josaRo = (name) => (finalOf(name) ? "이" : "가");
 const josaEuro = (name) => (finalOf(name) && finalOf(name) !== 8 ? "으로" : "로");
 
 export function hatchNoteHtml(h, url) {
-  return `<div class="wild-note hatch hit" data-act="hatch" title="클릭: Tamer 내 포켓몬">
+  return `<div class="wild-note hatch hit" data-act="hatch"${h.id ? ` data-sel="${Number(h.id)}"` : ""} title="클릭: 포켓몬 창 내 포켓몬">
     ${url ? `<img class="wild-note-poke" src="${url}" alt="" />` : '<div class="pokeball"></div>'}
     <div class="wild-note-text">🐣 알에서 <b>${h.shiny ? "✨" : ""}${esc(h.name)}</b> 태어났어요<div class="wild-note-sub">부화기 · 내 포켓몬에서 파트너로</div></div></div>`;
 }

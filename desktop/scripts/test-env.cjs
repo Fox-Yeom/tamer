@@ -66,7 +66,7 @@ const SEED_IDS = [[1], [4], [7], [16], [25], [37], [134], [222], [418], [422, tr
 
 // ── a sandbox: its folders and the env that points the app at them ──────────
 // data: "empty" (nothing, like a brand-new Mac) · "newuser" (empty box, three starters ready) ·
-//       "owner" (six Pokémon, one new, one another folder's partner, the folder without one) ·
+//       "owner" (six Pokémon, one new, the party of one — Jolteon the 메인 파트너, #122) ·
 //       "legacy" (only the Neovim CVIM's ~/.cache/cvim: a partner for the first folder, a Pokédex —
 //       the app copies it into its own folder on the first launch) · "corrupt" (newuser whose
 //       box.json, pokedex.json and folders.json are cut off mid-write)
@@ -130,16 +130,15 @@ function seed(data, dir, folder, today = null) {
     return;
   }
   if (data !== "owner") throw new Error(`unknown data set ${data}`);
-  const other = path.join(dir, "other");
-  put("box.json", { next: 7, mons: [
+  // the party model (#122): no folder partners — the party of one, Jolteon the 메인 파트너 (already moved: partyV 2)
+  put("box.json", { next: 7, partyV: 2, party: [1], mons: [
     { uid: 1, id: 134, shiny: false, xp: 12, since_evo: 4, how: "starter", at: now - 5 * 24 * h, folder: null, evo: [{ from: 133, to: 134, at: now - 2 * 24 * h }] },
     { uid: 2, id: 37, shiny: false, xp: 0, since_evo: 0, how: "wild", at: now - 2 * h, folder: null, new: true },
-    { uid: 3, id: 222, shiny: false, xp: 3, since_evo: 3, how: "wild", at: now - 30 * h, folder: other },
+    { uid: 3, id: 222, shiny: false, xp: 3, since_evo: 3, how: "wild", at: now - 30 * h, folder: null },
     { uid: 4, id: 418, shiny: false, xp: 0, since_evo: 0, how: "wild", at: now - 1 * h, folder: null, caught_in: path.join(dir, "proj"), caught_by: "codex" },
     { uid: 5, id: 422, shiny: true, xp: 0, since_evo: 0, how: "wild", at: now - 3 * h, folder: null },
     { uid: 6, id: 25, shiny: false, xp: 7, since_evo: 7, how: "legacy", at: now - 10 * 24 * h, folder: null },
   ] });
-  put("folders.json", { [other]: { id: 222, uid: 3, pinned: true } });
   // 🏠 홈 (#44): tasks finished in the last 7 days (today last)
   const day = (n) => { const t = today ? new Date(`${today}T12:00`) : new Date(); t.setDate(t.getDate() - n); return `${t.getFullYear()}-${String(t.getMonth() + 1).padStart(2, "0")}-${String(t.getDate()).padStart(2, "0")}`; };
   put("stats.json", { days: Object.fromEntries([3, 0, 5, 2, 7, 4, 6].map((n, i) => [day(6 - i), n]).filter(([, n]) => n)) });

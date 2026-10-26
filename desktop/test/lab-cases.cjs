@@ -19,16 +19,15 @@ const path = require("node:path");
 const filesWith = (dir, needle) => { const out = []; if (!fs.existsSync(dir)) return out; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else { try { if (fs.readFileSync(f, "utf8").includes(needle)) out.push(path.relative(dir, f)); } catch {} } } }; walk(dir); return out; };
 // #45: a stand-in Claude for the shell (prints its arguments, feeds a status line through Tamer's script)
 const FAKE_CLAUDE = "#!/bin/sh\n# a stand-in Claude: says what it was started with, then — like the real one, which redraws its status line all the time — reports a status line through Tamer's script every second\necho \"fake-claude args: $*\"\nfor i in $(seq 30); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":12}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $((now+3600)) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n";
-// a partner one task away from evolving (Charmander Lv 15, evolves at 16 — #74) in the case's "proj" folder (PKM-04, PKM-21)
+// a 메인 파트너 one task away from evolving (Charmander Lv 15, evolves at 16 — #74): uid 1, the party's first and only
+// (#122 — no folder partners; the party grows in turn, so a one-member party is the one that grows) (PKM-04, PKM-21)
 function evolvePartner(box, extra = {}) {
-  const C = box.data, proj = box.folder("proj"), now = Math.floor(Date.now() / 1000);
+  const C = box.data, now = Math.floor(Date.now() / 1000);
   const b = JSON.parse(fs.readFileSync(path.join(C, "box.json"), "utf8"));
-  b.mons.push({ uid: 99, id: 4, shiny: false, xp: 7, since_evo: 7, lv: 15, mile: 10, friend: 0, last_folder: proj, how: "starter", at: now - 3600, folder: proj, ...extra });
+  b.mons.push({ uid: 99, id: 4, shiny: false, xp: 7, since_evo: 7, lv: 15, mile: 10, friend: 0, how: "starter", at: now - 3600, folder: null, ...extra });
   b.mons = b.mons.map((m) => (m.uid === 99 ? { ...m, uid: 1 } : m.uid === 1 ? { ...m, uid: 98 } : m));
+  Object.assign(b, { party: [1], partyNext: 0, partyV: 2 });
   fs.writeFileSync(path.join(C, "box.json"), JSON.stringify(b));
-  const f = JSON.parse(fs.readFileSync(path.join(C, "folders.json"), "utf8"));
-  f[proj] = { id: extra.id ?? 4, uid: 1, pinned: true }; // the mirror's species (else the Neovim-CVIM reconcile takes it back)
-  fs.writeFileSync(path.join(C, "folders.json"), JSON.stringify(f));
 }
 // a scratch git repository (never the user's git config: no global/system config, so no hooks)
 function gitRepo(dir, cmds) {
@@ -100,45 +99,142 @@ module.exports = [
     ],
   },
   {
-    id: "launch-folder", tags: ["smoke", "launch"], what: "폴더를 넘겨 실행 → 그 탭, 파트너가 없으면 파트너 칸에 [파트너 고르기] — 포켓몬 창은 저절로 안 뜸, 누르면 그 창의 고르기 (#113 A8)",
+    id: "launch-folder", tags: ["smoke", "launch"], what: "폴더를 넘겨 실행 → 그 탭, 파트너 칸엔 메인 파트너(파티 1번) — 포켓몬 창 · 고르기 창은 저절로 안 뜸 (#113 A8 · #122)",
     data: "owner", mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 1500 }, { probe: "tab" }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "poke", timeout: 5000 }, { wait: 500 }, { probe: "chose" }],
+    steps: [{ until: "tabs.0" }, { until: "partner", timeout: 8000 }, { wait: 1500 }, { probe: "tab" }],
     check: ({ probe }) => [ok(probe.tab?.tabs?.[0] === "proj", `탭 ${JSON.stringify(probe.tab?.tabs)}`), ok(probe.tab?.start === false, "시작 화면이 떠 있음"),
-      ok(probe.tab?.needPartner === true && probe.tab?.poke === null, `파트너 칸 버튼 ${probe.tab?.needPartner} · 저절로 뜬 창 ${probe.tab?.poke}`),
-      ok(probe.chose?.choose === true && probe.chose?.pokeFor === "proj" && (probe.chose?.pokeTabs || []).includes("choose"), `버튼 → 포켓몬 창 고르기 ${JSON.stringify([probe.chose?.poke, probe.chose?.pokeFor])}`)],
+      ok(probe.tab?.partner && probe.tab?.needPartner === false, `파트너 칸 ${probe.tab?.partner} · [포켓몬 고르기] ${probe.tab?.needPartner}`),
+      ok(probe.tab?.poke === null && probe.tab?.chooser === null, `저절로 뜬 창 ${probe.tab?.poke} · ${JSON.stringify(probe.tab?.chooser?.mode)}`)],
   },
   {
-    id: "first-launch-dialogs", tags: ["smoke", "first-run"], what: "첫 실행: 에이전트 연결 창만 — 파트너 고르기는 저절로 안 뜨고(#113 A8) 파트너 칸에 버튼, Esc는 그 창을 닫음 (#30)",
+    id: "first-launch-dialogs", tags: ["smoke", "first-run"], what: "첫 실행: 에이전트 연결 창(메인 창 안)과 포켓몬 고르기 창이 저절로 한 번 (#122 J4) — Esc는 에이전트 창만 닫고, 파트너 칸엔 [포켓몬 고르기] (#30)",
     data: "empty", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_DESKTOP_FIRST_LAUNCH: "1" },
-    steps: [{ until: "agents" }, { until: "partnerKnown", timeout: 8000 }, { wait: 1000 }, { probe: "both" }, { key: "Escape" }, { wait: 400 }, { probe: "esc" }],
+    steps: [{ until: "agents" }, { until: "chooser.mode", timeout: 8000 }, { wait: 1000 }, { probe: "both" }, { key: "Escape" }, { wait: 400 }, { probe: "esc" }],
     check: ({ probe }) => [
       ok(probe.both?.top === "agents" && probe.both?.poke === null, `맨 위 ${probe.both?.top} · 포켓몬 창 ${probe.both?.poke}`),
+      ok(probe.both?.chooser?.mode === "first", `고르기 창 ${JSON.stringify(probe.both?.chooser)}`),
       ok(probe.esc?.agents === false, "Esc 후 에이전트 연결 창이 남음"),
-      ok(probe.esc?.needPartner === true && probe.esc?.poke === null, `파트너 칸 [파트너 고르기] ${probe.esc?.needPartner} · 창 ${probe.esc?.poke}`),
+      ok(probe.esc?.chooser?.mode === "first" && probe.esc?.needPartner === true, `고르기 창 ${probe.esc?.chooser?.mode} · 파트너 칸 [포켓몬 고르기] ${probe.esc?.needPartner}`),
     ],
   },
   {
-    id: "first-partner-offline", tags: ["smoke", "first-run"], what: "첫 실행인데 오프라인: 첫 파트너를 못 받아도 창이 멈추지 않고 닫힘",
+    id: "first-partner-offline", tags: ["smoke", "first-run"], what: "첫 실행인데 오프라인: 고르기 창이 '받는 중…'으로 멈추지 않고 Esc로 닫힘 — 파트너 칸 [포켓몬 고르기]로 다시 열림 (#122)",
     data: "empty", offline: true, mode: "direct", folders: ["proj"],
-    steps: [{ until: "needPartner", timeout: 8000 }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "choose", timeout: 5000 }, { wait: 3000 }, { probe: "waiting" }, { key: "Escape" }, { wait: 600 }, { probe: "closed" }],
+    steps: [{ until: "chooser.mode", timeout: 8000 }, { wait: 3000 }, { probe: "waiting" }, { invoke: "own_key_test", args: { name: "choose", key: "Escape" } }, { wait: 600 }, { probe: "closed" },
+      { click: "main.grid:not([hidden]) .need-partner" }, { until: "chooser.mode", timeout: 5000 }, { probe: "again" }],
     check: ({ probe, log }) => [
-      ok(probe.waiting?.choose === true, "파트너 고르기가 안 열림"),
-      ok(probe.waiting?.starters?.ready === false, "오프라인인데 후보가 준비됨"),
-      ok(probe.closed?.choose === false, "Esc로 안 닫힘"),
+      ok(probe.waiting?.chooser?.mode === "first", "고르기 창이 안 열림"),
+      ok(probe.waiting?.chooser?.ready === false && probe.waiting?.chooser?.goOff === true, `오프라인인데 후보가 준비됨 ${JSON.stringify(probe.waiting?.chooser)}`),
+      ok(probe.closed?.chooser === null && probe.closed?.needPartner === true, `Esc로 안 닫힘 ${JSON.stringify(probe.closed?.chooser?.mode)} · 칸 ${probe.closed?.needPartner}`),
+      ok(probe.again?.chooser?.mode === "first", "[포켓몬 고르기]로 다시 안 열림"),
       ok(!/lab-error/.test(log), "오류"),
     ],
   },
   {
-    id: "first-partner-keys", tags: ["smoke", "first-run"], what: "새 사용자: 방향키 + Enter로 첫 파트너",
+    id: "first-partner-keys", tags: ["smoke", "first-run"], what: "새 사용자: 고르기 창에서 방향키 + Enter로 첫 포켓몬 → 메인 파트너, 창은 닫힘 (#122)",
     data: "newuser", offline: true, mode: "direct", folders: ["proj"],
-    steps: [{ until: "needPartner", timeout: 8000 }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "starters.ready" }, { key: "ArrowRight" }, { key: "Enter" }, { wait: 1500 }, { probe: "picked" }],
-    check: ({ probe }) => [ok(probe.picked?.partner, "파트너가 안 생김"), ok(probe.picked?.poke === null, "창이 안 닫힘")],
+    steps: [{ until: "chooser.ready", timeout: 8000 }, { invoke: "own_key_test", args: { name: "choose", key: "ArrowRight" } }, { wait: 200 }, { probe: "sel" },
+      { invoke: "own_key_test", args: { name: "choose", key: "Enter" } }, { wait: 1500 }, { probe: "picked" }],
+    check: ({ probe, log }) => [ok(probe.sel?.chooser?.sel === 1 && /함께하기/.test(probe.sel?.chooser?.go || ""), `→ ${JSON.stringify(probe.sel?.chooser && { sel: probe.sel.chooser.sel, go: probe.sel.chooser.go })}`),
+      ok(probe.picked?.partner && probe.picked?.needPartner === false, `파트너 ${probe.picked?.partner}`), ok(probe.picked?.chooser === null, "창이 안 닫힘"),
+      ok(/^choose starter \d+#\d+$/m.test(log), "choose starter 기록이 없음")],
   },
   {
-    id: "first-partner-net", tags: ["net", "first-run"], what: "첫 실행: PokéAPI에서 후보를 받아 1·2·3 키로 고르기",
+    id: "first-partner-net", tags: ["net", "first-run"], what: "첫 실행: PokéAPI에서 후보 셋을 받아 2 → Enter로 고르기 (#122)",
     data: "empty", mode: "direct", folders: ["proj"],
-    steps: [{ until: "needPartner", timeout: 8000 }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "starters.ready", timeout: 40000 }, { probe: "ready" }, { key: "2" }, { wait: 1500 }, { probe: "picked" }],
-    check: ({ probe }) => [ok(probe.ready?.starters?.n === 3, "후보 3마리가 안 옴"), ok(probe.picked?.partner, "파트너가 안 생김")],
+    steps: [{ until: "chooser.ready", timeout: 40000 }, { probe: "ready" }, { invoke: "own_key_test", args: { name: "choose", key: "2" } }, { invoke: "own_key_test", args: { name: "choose", key: "Enter" } }, { wait: 1500 }, { probe: "picked" }],
+    check: ({ probe }) => [ok(probe.ready?.chooser?.cards?.length === 3 && probe.ready.chooser.wait === 0, "후보 3마리가 안 옴"), ok(probe.picked?.partner, "파트너가 안 생김")],
+  },
+  // ── 파티 · 메인 파트너 · 포켓몬 고르기 창 (#122, PKM-31 · PKM-32 · POL-FUT-05) ──
+  {
+    id: "choose-first", tags: ["smoke", "first-run", "poke"], what: "첫 실행: 포켓몬 고르기 창이 저절로 한 번(제목 줄 있는 따로 창, 터미널 창은 그대로) → Enter로 고르면 파티 1번 = 메인 파트너, 창은 닫히고 다시 켜도 안 뜸(chooseAsked) (#122, PKM-32)",
+    data: "newuser", offline: true, mode: "direct", folders: ["proj"],
+    steps: [{ until: "chooser.ready", timeout: 8000 }, { probe: "first" }, { invoke: "own_read_test", args: { name: "choose" }, log: true },
+      { invoke: "own_key_test", args: { name: "choose", key: "Enter" } }, { until: "partner", timeout: 5000 }, { wait: 600 }, { probe: "picked" }, { invoke: "party_state", log: true }],
+    check: ({ probe, log, box }) => {
+      const w = JSON.parse(log.match(/^lab-invoke own_read_test (.*)$/m)?.[1] || "null"), p = JSON.parse(log.match(/^lab-invoke party_state (.*)$/m)?.[1] || "{}");
+      let set = null; try { set = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
+      return [
+        ok(probe.first?.chooser?.mode === "first" && probe.first.chooser.cards.length === 3 && /첫 포켓몬/.test(probe.first.chooser.title), `고르기 창 ${JSON.stringify(probe.first?.chooser && { mode: probe.first.chooser.mode, n: probe.first.chooser.cards.length, title: probe.first.chooser.title })}`),
+        ok(w?.open && w.movable && w.title === "포켓몬 고르기" && w.win && w.bounds?.width === 720, `창 ${JSON.stringify(w && { open: w.open, movable: w.movable, title: w.title, win: w.win, w: w.bounds?.width })}`),
+        ok(probe.picked?.chooser === null && probe.picked?.partner && p.list?.length === 1 && p.list[0].name === probe.picked.partner, `고른 뒤 ${probe.picked?.partner} · 파티 ${JSON.stringify(p.list?.map((m) => m.name))}`),
+        ok(set?.chooseAsked === true, `chooseAsked ${set?.chooseAsked} (다시 켜면 안 뜸)`),
+      ];
+    },
+  },
+  {
+    id: "party-migrate", tags: ["smoke", "poke", "data"], what: "폴더 파트너가 있던 사용자(#122 전): 처음 켤 때 box.json·folders.json 사본(600) → 폴더 연결·교환 표시 지움, 파티가 비면 예전 파트너(레벨 높은 순)를 고르기 창이 한 번 제안 → [파티에 넣기]로 그 순서가 파티 (POL-DATA-05, PKM-32)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      const f = path.join(box.data, "box.json"), b = JSON.parse(fs.readFileSync(f, "utf8"));
+      delete b.partyV; b.party = [];
+      for (const m of b.mons) {
+        if (m.uid === 3) Object.assign(m, { folder: box.folder("proj"), last_folder: box.folder("proj"), lv: 20, mile: 20 });
+        if (m.uid === 5) Object.assign(m, { folder: path.join(box.dir, "other"), lv: 30, mile: 30 });
+        if (m.uid === 4) m.traded = true;
+      }
+      fs.writeFileSync(f, JSON.stringify(b));
+      fs.writeFileSync(path.join(box.data, "folders.json"), JSON.stringify({ [box.folder("proj")]: { id: 222, uid: 3, pinned: true }, [path.join(box.dir, "other")]: { id: 422, uid: 5, pinned: true } }));
+    },
+    steps: [{ until: "chooser.mode", timeout: 8000 }, { wait: 500 }, { probe: "suggest" }, { invoke: "own_key_test", args: { name: "choose", key: "Enter" } }, { until: "partner", timeout: 5000 }, { wait: 500 }, { probe: "after" },
+      { invoke: "party_state", log: true }],
+    check: ({ probe, log, box }) => {
+      const bk = fs.existsSync(path.join(box.data, "backup")) ? fs.readdirSync(path.join(box.data, "backup")).find((n) => n.startsWith("party-")) : null, dir = bk && path.join(box.data, "backup", bk);
+      const b = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8")), p = JSON.parse(log.match(/^lab-invoke party_state (.*)$/m)?.[1] || "{}");
+      const mode = (f) => { try { return (fs.statSync(path.join(dir, f)).mode & 0o777).toString(8); } catch { return null; } };
+      const ch = probe.suggest?.chooser;
+      return [
+        ok(dir && mode("box.json") === "600" && mode("folders.json") === "600" && /"folder":/.test(fs.readFileSync(path.join(dir, "box.json"), "utf8")), `사본 ${bk} box ${mode("box.json")} folders ${mode("folders.json")}`),
+        ok(!b.mons.some((m) => m.folder || m.last_folder || m.traded) && b.partyV === 2 && !b.suggest, `옮긴 뒤 ${JSON.stringify({ folder: b.mons.filter((m) => m.folder || m.last_folder || m.traded).map((m) => m.uid), partyV: b.partyV, suggest: b.suggest })}`),
+        ok(ch?.mode === "suggest" && /예전 파트너/.test(ch.title) && JSON.stringify(ch.picked) === "[5,3]", `제안 ${JSON.stringify(ch && { mode: ch.mode, title: ch.title, picked: ch.picked })} (레벨 높은 순, 미리 골라 둠)`),
+        ok(JSON.stringify(p.list?.map((m) => m.uid)) === "[5,3]" && probe.after?.partner === p.list[0].name && probe.after?.chooser === null, `파티 ${JSON.stringify(p.list?.map((m) => m.uid))} · 메인 ${probe.after?.partner}`),
+        ok(fs.readFileSync(path.join(box.data, "folders.json"), "utf8").includes('"uid":3'), "folders.json이 바뀜(그대로 둬야)"),
+        ok(/^choose suggest 5,3$/m.test(log), "choose suggest 기록이 없음"),
+      ];
+    },
+  },
+  {
+    id: "party-main", tags: ["smoke", "poke"], what: "메인 파트너 = 파티 1번: 두 탭 모두 같은 포켓몬, 칸 제목 \"메인 파트너\" · 완료는 어느 탭이든 파티 차례로(졸업한 Lv 100은 건너뜀) · 파티는 5칸까지 · 내 포켓몬 [메인 파트너로] → 모든 탭이 바뀜 (#122 J1, PKM-31 · POL-FUT-05)",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
+    setup: (box) => {
+      const f = path.join(box.data, "box.json"), b = JSON.parse(fs.readFileSync(f, "utf8"));
+      for (const m of b.mons) if (m.uid === 2) Object.assign(m, { lv: 100, mile: 100, final: true, grad: 1 }); // a graduate: in the party, skipped in turns
+      b.party = [1, 2, 3]; b.partyNext = 0;
+      fs.writeFileSync(f, JSON.stringify(b));
+      putEcon(box, { "state.json": { startSeen: true } });
+    },
+    steps: [{ until: "tabs.1" }, { until: "partner", timeout: 8000 }, { wait: 800 }, { probe: "b" }, { key: "1", mods: 4 }, { wait: 600 }, { probe: "a" },
+      ...DONE("$ws"), { wait: 1200 }, { key: "2", mods: 4 }, { wait: 400 }, ...DONE("$ws"), { wait: 1200 }, ...DONE("$ws"), { wait: 1200 },
+      { invoke: "party_set", args: { uids: [1, 2, 3, 4, 5, 6] }, log: true },
+      { call: "openDex" }, { invoke: "own_call_test", args: { name: "poke", fn: "view", args: ["box"] } }, { wait: 500 },
+      { invoke: "own_call_test", args: { name: "poke", fn: "pickUid", args: [4] } }, { wait: 300 }, { probe: "pick" }, { invoke: "own_call_test", args: { name: "poke", fn: "enter" } }, { wait: 1500 }, { probe: "main" },
+      { call: "closeDex" }, { wait: 300 }, { key: "1", mods: 4 }, { wait: 500 }, { probe: "other" }],
+    check: ({ probe, log }) => {
+      const grew = [...log.matchAll(/^exp ws=\S+ via=party \{"uid":(\d+)\}/gm)].map((m) => Number(m[1]));
+      const set6 = JSON.parse(log.match(/^lab-invoke party_set (.*)$/m)?.[1] || "{}");
+      return [
+        ok(probe.a?.partner && probe.a.partner === probe.b?.partner && probe.a?.paneTitle === "🐾 메인 파트너", `두 탭 ${probe.a?.partner} · ${probe.b?.partner} · 제목 ${probe.a?.paneTitle}`),
+        ok(JSON.stringify(grew) === "[1,3,1]", `차례 ${JSON.stringify(grew)} (1 → 3 → 1, 졸업한 2는 건너뜀)`),
+        ok(set6.list?.length === 5 && set6.max === 5, `파티 ${set6.list?.length}/${set6.max} (6을 줘도 5)`),
+        ok(/메인 파트너로/.test(probe.pick?.take?.text || "") && !probe.pick.take.off, `단추 ${JSON.stringify(probe.pick?.take)}`),
+        ok(probe.main?.party?.names?.[0] && probe.other?.partner === probe.main.party.names[0] && probe.other.partner !== probe.a?.partner, `[메인 파트너로] 뒤 다른 탭 ${probe.other?.partner} · 파티 1번 ${probe.main?.party?.names?.[0]}`),
+        ok(/메인 파트너가 됐어요/.test(probe.main?.toast || probe.other?.toast || ""), `알림 ${probe.main?.toast}`),
+      ];
+    },
+  },
+  {
+    id: "wild-rate", tags: ["smoke", "poke"], what: "야생은 어디서나 한 번 기회·10분 쉼(#122 — 파트너 없는 폴더 30 %·5분 없음): 마지막 만남 6분 40초 전이면 완료해도 안 나옴",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_COOLDOWN: "600" },
+    setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ last: Math.floor(Date.now() / 1000) - 400, next: { id: 16, shiny: false } })),
+    steps: [{ until: "tabs.0" }, { until: "partner", timeout: 8000 }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "after" }],
+    check: ({ probe, log }) => [ok(!/^wild appeared/m.test(log) && !probe.after?.wild, `만남 ${log.match(/^wild appeared .*$/m)?.[0]} (10분 안)`)],
+  },
+  {
+    id: "wild-rate-open", tags: ["smoke", "poke"], what: "야생 10분 쉼이 지나면(마지막 만남 11분 40초 전) 완료에 나옴 — wild-rate의 짝 (#122)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_COOLDOWN: "600" },
+    setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ last: Math.floor(Date.now() / 1000) - 700, next: { id: 16, shiny: false } })),
+    steps: [{ until: "tabs.0" }, { until: "partner", timeout: 8000 }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "after" }],
+    check: ({ probe, log }) => [ok(/^wild appeared 16 ws=/m.test(log) && probe.after?.wild, `만남 ${log.match(/^wild appeared .*$/m)?.[0] || "없음"}`)],
   },
   {
     id: "drop-at-launch", tags: ["smoke", "launch"], what: "꺼진 Tamer에 폴더를 끌어 실행 → 시작 화면 없이 그 탭 (#32)",
@@ -226,14 +322,15 @@ module.exports = [
   },
   // ── data from before / damaged ──
   {
-    id: "legacy-cvim", tags: ["smoke", "data"], what: "이전 CVIM(~/.cache/cvim) 데이터만 있는 맥: 처음 켤 때 옮겨 와 그 폴더의 파트너가 그대로, CVIM 쪽은 그대로",
+    id: "legacy-cvim", tags: ["smoke", "data"], what: "이전 CVIM(~/.cache/cvim) 데이터만 있는 맥: 처음 켤 때 옮겨 오고, 그 폴더의 파트너는 고르기 창의 '예전 파트너'로 → [파티에 넣기]면 메인 파트너, CVIM 쪽은 그대로 (#122)",
     data: "legacy", offline: true, mode: "direct", folders: ["proj"],
-    steps: [{ until: "partner", timeout: 10000 }, { probe: "after" }],
+    steps: [{ until: "chooser.mode", timeout: 10000 }, { wait: 500 }, { probe: "suggest" }, { invoke: "own_key_test", args: { name: "choose", key: "Enter" } }, { until: "partner", timeout: 5000 }, { probe: "after" }],
     check: ({ probe, box }) => {
       const home = path.join(box.dir, "home"), read = (f) => { try { return JSON.parse(fs.readFileSync(path.join(home, f), "utf8")); } catch { return null; } };
       const b = read("tamer/box.json");
       return [
-        ok(probe.after?.partner === "피카츄", `파트너 ${probe.after?.partner}`),
+        ok(probe.suggest?.chooser?.mode === "suggest" && /예전 파트너/.test(probe.suggest.chooser.title) && probe.suggest.chooser.picked.length === 1, `고르기 창 ${JSON.stringify(probe.suggest?.chooser && { mode: probe.suggest.chooser.mode, title: probe.suggest.chooser.title, picked: probe.suggest.chooser.picked })}`),
+        ok(probe.after?.partner === "피카츄" && probe.after?.chooser === null, `파트너 ${probe.after?.partner}`),
         ok(fs.existsSync(path.join(home, "tamer/.from-cvim.json")), "옮긴 기록이 없음"),
         ok(b?.mons?.some((m) => m.id === 25 && m.xp === 30), "박스에 이전 파트너(EXP 30)가 없음"),
         ok(b?.mons?.some((m) => m.id === 16), "도감에서 잡은 포켓몬이 박스에 없음"),
@@ -243,15 +340,15 @@ module.exports = [
     },
   },
   {
-    id: "corrupt-data", tags: ["smoke", "data"], what: "데이터 파일이 중간에 잘린 맥: 앱은 뜨고, 파트너를 고른 뒤에도 잘린 원본은 backup/corrupt에 남음",
+    id: "corrupt-data", tags: ["smoke", "data"], what: "데이터 파일이 중간에 잘린 맥: 앱은 뜨고(고르기 창이 첫 포켓몬으로), 고른 뒤에도 잘린 원본은 backup/corrupt에 남음 (#122)",
     data: "corrupt", offline: true, mode: "direct", folders: ["proj"],
-    steps: [{ until: "tabs.0" }, { until: "needPartner", timeout: 10000 }, { click: "main.grid:not([hidden]) .need-partner" }, { until: "starters.ready", timeout: 10000 }, { probe: "open" }, { key: "1" }, { wait: 1500 }, { probe: "picked" }],
+    steps: [{ until: "tabs.0" }, { until: "chooser.ready", timeout: 10000 }, { probe: "open" }, { invoke: "own_key_test", args: { name: "choose", key: "1" } }, { invoke: "own_key_test", args: { name: "choose", key: "Enter" } }, { wait: 1500 }, { probe: "picked" }],
     check: ({ probe, log, box }) => [
       ok(probe.open?.tabs?.[0] === "proj", "탭이 안 열림"),
       ok(!/lab-error|Uncaught/.test(log), "오류"),
       ok(probe.picked?.partner, "파트너를 못 고름"),
       ok(filesWith(path.join(box.data, "backup", "corrupt"), '"how":"starter","at":1,').length > 0, "잘린 box.json(피카츄 EXP 40 등)이 덮어써져 사라짐 — 복구할 원본이 없음"),
-      ok(["pokedex.json", "folders.json"].every((f) => fs.readdirSync(path.join(box.data, "backup", "corrupt")).some((n) => n.startsWith(f + "."))), "잘린 pokedex·folders 사본이 없음"),
+      ok(fs.readdirSync(path.join(box.data, "backup", "corrupt")).some((n) => n.startsWith("pokedex.json.")), "잘린 pokedex 사본이 없음"), // folders.json isn't read any more (#122)
     ],
   },
   // ── input ──
@@ -564,7 +661,7 @@ module.exports = [
       return [
         ok(/^window closed: Tamer stays in the menu bar$/m.test(log) && !/^user quit/m.test(log), "창을 닫아도 끝나지 않아야"),
         ok(/^bg settings open=true movable=true win=false$/m.test(log), `창이 없을 때 대시보드 ⚙ → 설정 창만(터미널 창 안 생김, #113 P1 APP-22 규칙 8) ${log.match(/^bg settings .*$/m)?.[0]}`),
-        ok(/^bg poke-party open=true view=party tabs=\[[^\]]*\] win=false$/m.test(log) && !/"choose"/.test(log.match(/^bg poke-party .*$/m)?.[0] || ""), `창이 없을 때 대시보드 파티 → 포켓몬 창만(⭐ 파티, 탭이 없어 파트너 고르기 탭 없음 — #113 P2) ${log.match(/^bg poke-party .*$/m)?.[0]}`),
+        ok(/^bg poke-party open=true view=box tabs=\["home","box","dex","shop","bag"\] win=false$/m.test(log), `창이 없을 때 대시보드 파티 → 포켓몬 창만(내 포켓몬 파티 줄, 탭 다섯 — #113 P2 · #121 · #122) ${log.match(/^bg poke-party .*$/m)?.[0]}`),
         ok(/win=false tabs=0 popover=\w+ saved=1 quit=false/.test(closed), `닫은 뒤: 창 없음·터미널 끝·탭 기록 1개 그대로(끝냄 표시 없음) — ${closed}`),
         ok((log.match(/^background notice$/gm) || []).length === 1, "처음 한 번 안내"),
         ok(/^bg overlay alive=true wants=true party=2$/m.test(log), `탭이 없을 때 오버레이에 파티 2마리(#107) — ${log.match(/^bg overlay .*$/m)?.[0]}`),
@@ -574,7 +671,7 @@ module.exports = [
   },
   {
     id: "background-overlay-look", tags: ["explore", "app"], what: "창이 없을 때 오버레이 모습(실제 사용자 설정: 최소 모드 늘·카드 배경 0%): 파티 카드, 그 위 야생 알림 — 사진 bg-overlay.png · bg-overlay-wild.png와 크기 기록 (#109 조사)",
-    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 50000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1", CVIM_WILD_COOLDOWN: "0", CVIM_WILD_COOLDOWN_EMPTY: "0" },
+    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 50000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_COOLDOWN: "0" },
     // TAMER_TALL_GIF (a tall picture made for the run) stands in for the party lead's sprite, and the overlay sits where the user's does (#109)
     setup: (box) => {
       if (process.env.TAMER_TALL_GIF) fs.copyFileSync(process.env.TAMER_TALL_GIF, path.join(box.data, "pokemon", "134.gif"));
@@ -592,7 +689,7 @@ module.exports = [
   },
   {
     id: "background-wild-catch", tags: ["smoke", "app", "poke"], what: "창을 닫아 메뉴바로만 쓸 때 바탕화면 야생 알림을 누르면 알림 옆 작은 잡기 창 — Tamer 창은 생기지 않음, 그 창에서 마스터볼로 던지면 잡히고 잠시 뒤 잡기 창이 닫힘 · 잡기 전엔 도감 버튼이 숨어 있음(잡으면 [📕 도감에서 보기] — #113 P2) (PKM-08 규칙 3, #119)",
-    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 60000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1", CVIM_WILD_COOLDOWN: "0", CVIM_WILD_COOLDOWN_EMPTY: "0" },
+    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 60000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_COOLDOWN: "0" },
     setup: (box) => {
       const d = todayLocal();
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 2000 }, { day: d, kind: "buy", item: "master", n: 1, amount: -1500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
@@ -618,7 +715,7 @@ module.exports = [
   },
   {
     id: "popover-wild", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 야생 잡기: 야생이 나와 있으면 홈 맨 위에 야생 카드, 작업 탭을 보면 홈 탭에 점(#118) — 마스터볼을 골라 던지면 잡히고 가방에서 한 개 줄어듦 (STA-22 규칙 3·13, #105 #118)",
-    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1" },
     setup: (box) => {
       const d = todayLocal();
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 2000 }, { day: d, kind: "buy", item: "master", n: 1, amount: -1500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
@@ -794,14 +891,14 @@ module.exports = [
   {
     id: "popover-tall", tags: ["smoke", "poke"], what: "메뉴바 대시보드 홈이 화면보다 길면(시험: 높이 420으로 줄인 화면) 창은 화면 끝까지만, 나머지는 스크롤 — 끝까지 내리면 ⏻·⚙·[Tamer 열기]가 보임 · 파티 그림 72px·부화기 알 그림 (#117 #118)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
-    steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 6 }, log: true },
+    steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { invoke: "party_test", args: { n: 5 }, log: true },
       { invoke: "popover_test", args: { open: true, maxH: 420 } }, { wait: 1500 }, { invoke: "popover_read_test", args: { scroll: true }, log: true }, { invoke: "popover_test" }],
     check: ({ log }) => {
       const n = JSON.parse(log.match(/^lab-invoke party_test (.*)$/m)?.[1] || "{}").list?.length || 0;
       const r = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "null");
       return [
         ok(r?.page === "home" && r?.height === 420 && r?.content > 420 && r?.footInView === true, `홈: 창 420에 내용 ${r?.content} — 끝까지 내리면 아래 버튼 보임 ${JSON.stringify(r && { page: r.page, height: r.height, content: r.content, foot: r.footInView })}`),
-        ok(n === 6 && r?.look?.party === 72 && /pk-egg mid/.test(r?.look?.egg || ""), `파티 6마리 그림 72px · 부화기 알 그림 ${JSON.stringify([n, r?.look])}`),
+        ok(n === 5 && r?.look?.party === 72 && /pk-egg mid/.test(r?.look?.egg || ""), `파티 5마리(최대, #122) 그림 72px · 부화기 알 그림 ${JSON.stringify([n, r?.look])}`),
       ];
     },
   },
@@ -902,7 +999,7 @@ module.exports = [
   },
   {
     id: "legend-again", tags: ["smoke", "poke"], what: "이미 가진 전설이 야생으로 다시 나와도 보통처럼 던져 잡음 — 두 마리 (#87, 전엔 코인으로 받기)",
-    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1" },
     setup: (box) => {
       birds(box);
       const b = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8"));
@@ -935,7 +1032,7 @@ module.exports = [
       { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true }],
     check: ({ probe, log }) => {
       const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]");
-      const pichu = list.find((m) => m.id === 172), me = list.find((m) => m.folder === "here"), eggs = list.filter((m) => m.egg);
+      const pichu = list.find((m) => m.id === 172), me = list.find((m) => m.party === 0), eggs = list.filter((m) => m.egg);
       return [
         ok(probe.bag?.takeBtn === "부화기에 넣기", `가방 ${probe.bag?.takeBtn}`),
         // the bag's incubator section (#88): the egg in it, the second one in line; "켜진 효과" no longer lists it
@@ -948,7 +1045,7 @@ module.exports = [
     },
   },
   {
-    id: "egg-migrate", tags: ["smoke", "poke", "data"], what: "beta.8에서 폴더에 품어 둔 알은 처음 켤 때 부화기로 — 진행 그대로, 그 폴더는 파트너가 비어 파트너 칸 [파트너 고르기] (#85, #113 A8)",
+    id: "egg-migrate", tags: ["smoke", "poke", "data"], what: "beta.8에서 폴더에 품어 둔 알은 처음 켤 때 부화기로 — 진행 그대로, 파트너 칸은 메인 파트너 그대로 (#85, #122)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => {
       const b = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8"));
@@ -958,7 +1055,7 @@ module.exports = [
     steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 500 }, { probe: "choose" }, { invoke: "incubator_state", log: true }],
     check: ({ probe, log }) => {
       const inc = JSON.parse(log.match(/^lab-invoke incubator_state (.*)$/m)?.[1] || "null");
-      return [ok(inc?.active?.have === 4 && inc.active.need === 10 && probe.choose?.needPartner === true, `부화기 ${JSON.stringify(inc)} · 폴더는 파트너 없음 [파트너 고르기] ${probe.choose?.needPartner}`)];
+      return [ok(inc?.active?.have === 4 && inc.active.need === 10 && probe.choose?.needPartner === false && probe.choose?.partner, `부화기 ${JSON.stringify(inc)} · 파트너 칸 ${probe.choose?.partner} [포켓몬 고르기] ${probe.choose?.needPartner}`)];
     },
   },
   {
@@ -969,7 +1066,7 @@ module.exports = [
       { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true },
       { click: "#dex-from [data-sd='box']" }, { wait: 900 }, { probe: "box" }],
     check: ({ probe, log }) => {
-      const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]"), me = list.find((m) => m.folder === "here");
+      const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]"), me = list.find((m) => m.party === 0);
       const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
       return [
         ok(probe.bag?.takeBtn === "쓸 포켓몬 고르기", `가방 진화의 돌 ${probe.bag?.takeBtn}`),
@@ -1089,7 +1186,7 @@ module.exports = [
     },
   },
   {
-    id: "graduate", tags: ["smoke", "poke"], what: "졸업: Lv 99 최종 진화형이 한 번 더 끝내면 Lv 100 🎓 — 300코인·알 하나, 띠 [계속 함께]/[새 파트너 데려오기] → 새 파트너면 박스에서 쉬고 파트너 고르기 (#84)",
+    id: "graduate", tags: ["smoke", "poke"], what: "졸업: Lv 99 최종 진화형인 메인 파트너가 한 번 더 끝내면 Lv 100 🎓 — 300코인·알 하나, 띠 [계속 함께]/[다른 포켓몬을 메인으로] → 파티에 그대로 둔 채 내 포켓몬 파티 줄 (#84, #122 J1)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => { fakeSpecies(box, 6, "리자몽", { reach: { kind: "level", level: 36 }, next: [] }); evolvePartner(box, { id: 6, lv: 99, mile: 90, final: true }); putEcon(box, { "state.json": { startSeen: true } }); },
     steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, ...DONE("$ws"), { wait: 1500 }, { probe: "grad" },
@@ -1098,8 +1195,8 @@ module.exports = [
       const list = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]"), m = list.find((x) => x.id === 6);
       const st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
       return [
-        ok(/졸업했어요!.*\+300코인 · 🥚 알 \+1.*계속 함께.*새 파트너 데려오기/.test(probe.grad?.gradBand || "") && /^🎓 리자몽/.test(probe.grad?.pokeLabel || "") && probe.grad?.pokeExp === "Lv 100 · 졸업", `졸업 띠 ${probe.grad?.gradBand} · ${probe.grad?.pokeLabel} · ${probe.grad?.pokeExp}`),
-        ok(m?.grad && !m.folder && probe.after?.poke === "choose", `새 파트너 고르기 ${JSON.stringify(m && { grad: !!m.grad, folder: m.folder })} · 창 ${probe.after?.poke}`),
+        ok(/졸업했어요!.*\+300코인 · 🥚 알 \+1.*계속 함께.*다른 포켓몬을 메인으로/.test(probe.grad?.gradBand || "") && /^🎓 리자몽/.test(probe.grad?.pokeLabel || "") && probe.grad?.pokeExp === "Lv 100 · 졸업", `졸업 띠 ${probe.grad?.gradBand} · ${probe.grad?.pokeLabel} · ${probe.grad?.pokeExp}`),
+        ok(m?.grad && m.party === 0 && probe.after?.poke === "box" && !probe.after?.gradBand, `다른 포켓몬을 메인으로 ${JSON.stringify(m && { grad: !!m.grad, party: m.party })} · 창 ${probe.after?.poke} · 띠 ${probe.after?.gradBand}`),
         ok(st.eggs?.egg === 1 && st.today?.earned >= 300, `알 ${JSON.stringify(st.eggs)} · 오늘 ${st.today?.earned}`),
       ];
     },
@@ -1107,7 +1204,7 @@ module.exports = [
   // ── ⭐ 연구 스탬프 · 주간 대발견 E4 (#82, PKM-24) ──
   {
     id: "breakthrough", tags: ["smoke", "poke"], what: "대발견: 스탬프가 다 차는 완료에 전설(1세대 새) 확정 조우 + 100코인 — 금색 카드, 놓쳐도 도망 없음·×1.2, 남아 있는 동안 보통 야생 없음, 잡으면 끝 (#82)",
-    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "2", CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_STAMPS: "2", CVIM_WILD_CHANCE: "1" },
     setup: (box) => { birds(box); putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(1) } }); fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })); },
     steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 }, { probe: "big" },
       { invoke: "wild_rig_test", args: { result: "broke" } }, { key: "b", mods: 4 }, { wait: 3500 }, { probe: "missed" },
@@ -1215,7 +1312,7 @@ module.exports = [
       const buys = (ledgerRows(box) || []).filter((x) => x.kind === "buy");
       return [
         ok(probe.shop?.pokeTab === "shop" && probe.shop?.coin === "🪙 2,000", `S → 상점 ${probe.shop?.pokeTab} 칩 ${probe.shop?.coin}`),
-        ok(JSON.stringify(probe.shop?.items) === '["슈퍼볼:40코인","하이퍼볼:100코인","마스터볼:1,500코인","이상한사탕:30코인","진화의 돌:300코인","향:80코인","전설의 향:800코인","알:500코인","희귀 알:2,000코인","빛나는부적:5,000코인:off"]', `진열 ${JSON.stringify(probe.shop?.items)} (E7 진화의 돌·빛나는부적 #93)`),
+        ok(JSON.stringify(probe.shop?.items) === '["슈퍼볼:40코인","하이퍼볼:100코인","마스터볼:1,500코인","이상한사탕:30코인","진화의 돌:300코인","연결의끈:300코인","향:80코인","전설의 향:800코인","알:500코인","희귀 알:2,000코인","빛나는부적:5,000코인:off"]', `진열 ${JSON.stringify(probe.shop?.items)} (E7 진화의 돌·빛나는부적 #93 · 연결의끈 #122)`),
         ok(probe.three?.takeBtn === "사기 · 120코인", `고른 카드 한 번 더 누르기 + "+" → 수 3이어야 ${probe.three?.takeBtn} (#81)`),
         ok(probe.ask?.takeBtn === "한 번 더 눌러 사기 · 1,500코인 (확인)", `마스터볼 첫 누름 ${probe.ask?.takeBtn}`),
         ok(/이번 주 샀음/.test(probe.bought?.takeBtn || "") && probe.bought?.coin === "🪙 380", `산 뒤 ${probe.bought?.takeBtn} · 칩 ${probe.bought?.coin} (2,000 − 120 − 1,500)`),
@@ -1226,7 +1323,7 @@ module.exports = [
     },
   },
   {
-    id: "bag-candy-incense", tags: ["smoke", "poke"], what: "가방: I로 열기, 이상한사탕을 이 탭 파트너에게(Lv 15 → 16)·다른 포켓몬 고르기로 한 번 더, 향 피우기(1시간) — 쓴 것은 원장에 (#76)",
+    id: "bag-candy-incense", tags: ["smoke", "poke"], what: "가방: I로 열기, 이상한사탕을 메인 파트너에게(Lv 15 → 16, #122)·다른 포켓몬 고르기로 한 번 더, 향 피우기(1시간) — 쓴 것은 원장에 (#76)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => {
       const d = todayLocal();
@@ -1241,12 +1338,12 @@ module.exports = [
       { invoke: "shop_state", log: true }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
     check: ({ probe, log, box }) => {
       const st = JSON.parse(log.match(/^lab-invoke shop_state (.*)$/m)?.[1] || "{}");
-      const me = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((m) => m.folder === "here");
+      const me = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((m) => m.party === 0);
       const uses = (ledgerRows(box) || []).filter((x) => x.kind === "use");
       const mins = (st.incenseUntil - Date.now()) / 60000;
       return [
-        ok(probe.bag?.pokeTab === "bag" && JSON.stringify(probe.bag?.items) === '["이상한사탕:×3","향:×1"]' && probe.bag?.takeBtn === "이 탭 파트너에게 (Lv 15 → 16)", `가방 ${JSON.stringify(probe.bag?.items)} · ${probe.bag?.takeBtn}`),
-        ok(probe.given?.takeBtn === "이 탭 파트너에게 (Lv 16 → 17)" && /^🆙 Lv 15 → 16!/.test(probe.given?.preview || ""), `사탕 뒤 가방 그대로 ${probe.given?.takeBtn} · ${probe.given?.preview} (#78)`),
+        ok(probe.bag?.pokeTab === "bag" && JSON.stringify(probe.bag?.items) === '["이상한사탕:×3","향:×1"]' && probe.bag?.takeBtn === "메인 파트너에게 (Lv 15 → 16)", `가방 ${JSON.stringify(probe.bag?.items)} · ${probe.bag?.takeBtn}`),
+        ok(probe.given?.takeBtn === "메인 파트너에게 (Lv 16 → 17)" && /^🆙 Lv 15 → 16!/.test(probe.given?.preview || ""), `사탕 뒤 가방 그대로 ${probe.given?.takeBtn} · ${probe.given?.preview} (#78)`),
         ok(probe.out?.takeBtn === "이상한사탕을 다 썼어요 (꺼짐)" && /^🆙 Lv 17 → 18!/.test(probe.out?.preview || "") && probe.out2?.pos === probe.picked?.pos, `다 쓴 뒤 ${probe.out?.takeBtn} · ${probe.out?.preview} · 선택 ${probe.picked?.pos} → ${probe.out2?.pos} (그대로여야, #78)`),
         ok(probe.picked?.pokeTab === "bag" && probe.picked?.takeBtn === "사탕 주기 (Lv 17 → 18) · 남은 1개" && /^🆙 Lv 16 → 17!/.test(probe.picked?.preview || ""), `고른 포켓몬에게 준 뒤 그 자리 ${probe.picked?.takeBtn} · ${probe.picked?.preview} (#78)`),
         ok(/^🪔 (59|60)분$/.test(probe.incense?.incense || "") && /^🪔 향 (59|60)분 · 야생 ×2$/.test(probe.pane?.pokeIncense || ""), `향 칩 ${probe.incense?.incense} · 파트너 칸 ${probe.pane?.pokeIncense} (#79)`),
@@ -1260,7 +1357,7 @@ module.exports = [
   },
   {
     id: "wild-balls", tags: ["smoke", "poke"], what: "야생 카드 볼 고르기: 가진 볼만 칩(몬스터볼 ∞), 마스터볼을 고르면 금색 \"확정\" — ⌘B로 던지면 반드시 잡히고 가방에서 한 개 줄어듦 (#76)",
-    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1" },
     setup: (box) => {
       const d = todayLocal();
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 2000 }, { day: d, kind: "buy", item: "great", n: 1, amount: -40 }, { day: d, kind: "buy", item: "master", n: 1, amount: -1500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
@@ -1298,22 +1395,44 @@ module.exports = [
     },
   },
   {
-    id: "evolve-trade", tags: ["smoke", "poke"], what: "교환 진화: 다른 폴더에서 옮겨 온 근육몬은 그 폴더의 첫 완료에 괴력몬으로 — 레벨은 그대로 (#74, PKM-21 규칙 3)",
+    id: "evolve-trade", tags: ["smoke", "poke"], what: "교환 진화는 연결의끈으로만(#122 — 폴더를 옮겨 일으키던 교환 없음): 근육몬 메인 파트너는 완료 두 번에도 괴력몬이 되지 않고 레벨만 (#74, PKM-21 규칙 3)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"],
     setup: (box) => {
       fakeSpecies(box, 67, "근육몬", { reach: { kind: "level", level: 28 }, next: [{ to: 68, kind: "trade" }] });
       fakeSpecies(box, 68, "괴력몬", { reach: { kind: "trade" }, next: [] });
-      evolvePartner(box, { id: 67, lv: 28, mile: 20, traded: true });
+      evolvePartner(box, { id: 67, lv: 28, mile: 20 });
     },
     steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, ...DONE("$ws"), { wait: 1500 }, ...DONE("$ws"), { wait: 1000 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
-    check: ({ log, box }) => {
-      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+    check: ({ log }) => {
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.party === 0);
+      return [
+        ok(m?.id === 67 && m.lv > 28 && m.cord, `파트너 ${JSON.stringify(m && { id: m.id, lv: m.lv, cord: m.cord })} (근육몬 그대로, 연결의끈을 쓸 수 있음)`),
+        ok(!/evolved=68/.test(log), "완료로 교환 진화함"),
+      ];
+    },
+  },
+  {
+    id: "cord-evolve", tags: ["smoke", "poke"], what: "연결의끈: 가방 [쓸 포켓몬 고르기] → 교환으로 진화하는 마리만(근육몬) → Enter로 괴력몬, 끈 1개 씀 · +30 진화 +30 새 종, 파트너 칸도 괴력몬 (#122, PKM-23 규칙 7)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"],
+    setup: (box) => {
+      fakeSpecies(box, 67, "근육몬", { reach: { kind: "level", level: 28 }, next: [{ to: 68, kind: "trade" }] });
+      fakeSpecies(box, 68, "괴력몬", { reach: { kind: "trade" }, next: [] });
+      evolvePartner(box, { id: 67, lv: 28, mile: 20 });
+      const d = todayLocal();
+      putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 1000 }, { day: d, kind: "buy", item: "cord", n: 1, amount: -300 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
+    },
+    steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, { key: "p", mods: 4 }, { wait: 700 }, { key: "i" }, { wait: 900 }, { probe: "bag" },
+      { key: "Enter" }, { wait: 1200 }, { probe: "pick" }, { key: "Enter" }, { wait: 3500 }, { probe: "after" },
+      { invoke: "box_list", args: { ws: "$ws" }, log: true }, { invoke: "economy_state", log: true }],
+    check: ({ probe, log, box }) => {
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.party === 0), st = JSON.parse(log.match(/^lab-invoke economy_state (.*)$/m)?.[1] || "{}");
       const rows = ledgerRows(box) || [];
       return [
-        // 괴력몬 isn't in the data's Pokédex: the evolution pays +30 and a new species +30 more (#94)
-        ok(rows.some((x) => x.kind === "evolve" && x.amount === 30) && rows.some((x) => x.kind === "newdex" && x.amount === 30), `원장 진화·새 종 ${JSON.stringify(rows.filter((x) => ["evolve", "newdex"].includes(x.kind)))}`),
-        ok(m?.id === 68 && m.evo?.length === 1 && m.lv === 31 && m.final, `파트너 ${JSON.stringify(m && { id: m.id, lv: m.lv, evo: m.evo?.length, final: m.final })} (괴력몬, Lv 28 + 2 + 1, 최종)`),
-        ok(/^exp ws=.* evolved=68 /m.test(log), "진화 기록 없음"),
+        ok(/연결의끈/.test(probe.bag?.preview || "") || /연결의끈/.test(probe.bag?.dexName || ""), `가방 ${probe.bag?.dexName} · ${probe.bag?.preview}`),
+        ok(probe.pick?.cards === 1, `고르기 목록 ${probe.pick?.cards}마리 (근육몬만)`),
+        ok(m?.id === 68 && /^bag use cord uid=1 to=68$/m.test(log), `진화 ${JSON.stringify(m && { id: m.id })} · ${log.match(/^bag use cord .*$/m)?.[0]}`),
+        ok(st.cords === 0 && rows.some((x) => x.kind === "evolve" && x.amount === 30) && rows.some((x) => x.kind === "newdex" && x.amount === 30), `끈 ${st.cords} · 원장 ${JSON.stringify(rows.filter((x) => ["evolve", "newdex"].includes(x.kind)))}`),
+        ok(probe.after?.partner === "괴력몬", `파트너 칸 ${probe.after?.partner}`),
       ];
     },
   },
@@ -1326,7 +1445,7 @@ module.exports = [
     },
     steps: [{ until: "partner", timeout: 10000 }, { wait: 500 }, ...DONE("$ws"), { wait: 800 }, { probe: "before" }, ...DONE("$ws"), { wait: 1500 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
     check: ({ probe, log }) => {
-      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.party === 0);
       return [
         ok(probe.before?.pokeExp === "Lv 11 · 친밀도 19/20", `한 번 전 ${probe.before?.pokeExp}`),
         ok(m?.id === 25 && m.lv === 13, `파트너 ${JSON.stringify(m && { id: m.id, lv: m.lv })} (피카츄 Lv 13)`),
@@ -1367,7 +1486,7 @@ module.exports = [
   },
   {
     id: "economy-cap", tags: ["smoke", "poke"], what: "포켓코인 하루 상한: 완료 적립은 ₽300에서 멈춤(마지막은 남은 만큼), 홈 \"오늘 상한 · 보너스만\" — 새 종을 잡은 +₽30은 상한 밖 (#72)",
-    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1" },
     setup: (box) => {
       const d = todayLocal();
       putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 0 }, { day: d, kind: "done", n: 60, amount: 298 }, { day: d, kind: "first", n: 1, amount: 20 }].map((r) => JSON.stringify(r)).join("\n") + "\n", "state.json": { startSeen: true } });
@@ -1633,7 +1752,7 @@ sleep 30
   },
   {
     id: "guessed-done", tags: ["agents", "poke"], what: "이벤트 없는 에이전트: 오래 출력하다 조용해지면 완료 추정 — EXP는 두 번에 한 번, 야생 없음 (AGT-13, STA-06)",
-    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], timeoutMs: 110000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], timeoutMs: 110000, env: { CVIM_WILD_CHANCE: "1" },
     files: { "agents-user.json": JSON.stringify({ labagent: { name: "LabAgent", cmd: ["labagent"], state: "activity" } }),
       "fakebin/labagent": "#!/bin/sh\nfor round in 1 2; do i=0; while [ $i -lt 46 ]; do echo \"working $round.$i\"; i=$((i+1)); sleep 0.5; done; sleep 8; done\nsleep 30\n" },
     steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
@@ -1692,7 +1811,7 @@ sleep 30
     check: ({ probe }) => [
       ok(probe.start?.pokeExp === "Lv 15 · 진화 Lv 16", `레벨 줄 ${probe.start?.pokeExp}`),
       ok((probe.clicked?.fx || []).length >= 5 && ["💕", "🔥"].includes(probe.clicked?.fx?.[0]), `클릭 반응 ${JSON.stringify(probe.clicked?.fx)} (애교 💕 또는 불꽃 타입 공격 🔥)`),
-      ok(["1🔄파트너 바꾸기", "2⚔️공격", "3💕애교", "4📕도감", "5🌿야생 포켓몬"].every((w, i) => (probe.menu?.menuItems?.[i] || "").startsWith(w)) && probe.menu.menuItems.length === 5, `메뉴 ${JSON.stringify(probe.menu?.menuItems)}`),
+      ok(["1🔄메인 파트너 바꾸기", "2⚔️공격", "3💕애교", "4📕도감", "5🌿야생 포켓몬"].every((w, i) => (probe.menu?.menuItems?.[i] || "").startsWith(w)) && probe.menu.menuItems.length === 5, `메뉴 ${JSON.stringify(probe.menu?.menuItems)}`),
       ok(probe.cute?.fx?.length === 5 && probe.cute.fx.every((g) => g === "💕") && probe.cute?.menu === false, `3(애교) ${JSON.stringify(probe.cute?.fx)} 메뉴 닫힘 ${probe.cute?.menu === false}`),
       ok(probe.attack?.fx?.length === 8 && probe.attack.fx.every((g) => g === "🔥"), `2(공격) ${JSON.stringify(probe.attack?.fx)} (파이리 = 불꽃 🔥 8개)`),
     ],
@@ -1769,7 +1888,7 @@ sleep 30
   },
   {
     id: "codex-failed-turn", tags: ["smoke", "agents", "poke"], what: "Codex 실패한 턴(task_complete.error): 💥 실패 · 종류 한글, EXP·야생 없음, 응답 본문은 안 보임 (#53)",
-    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], timeoutMs: 70000, env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"], timeoutMs: 70000, env: { CVIM_WILD_CHANCE: "1" },
     setup: (box) => evolvePartner(box),
     files: { "fakebin/codex": `#!/bin/sh
 [ "$1" = "--version" ] && { echo 'codex-cli 9.9.9-lab'; exit 0; }
@@ -1936,16 +2055,18 @@ sleep 40
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { probe: "start" }],
     check: ({ probe, log }) => {
       const ws = log.search(/^workspace id=/m), front = [...log.matchAll(/^overlay front=(\w+)$/gm)];
-      const after = front.filter((m) => m.index > ws).map((m) => m[1]);
+      // the value in force once the tab is open: the last line before the probe (with a party the overlay already shows
+      // before any tab — the party card, #107 · #122 — so the line may come before the workspace and not change after)
+      const probeAt = log.search(/^lab-probe start /m), now = front.filter((m) => m.index < probeAt).at(-1)?.[1];
       return [
         ok(probe.start?.sideW === 0 && probe.start?.sideBtn === "◂", `처음부터 접힘 — 오른쪽 ${probe.start?.sideW}px · 버튼 ${probe.start?.sideBtn}`),
-        ok(ws >= 0 && after.at(-1) === "true", `첫 탭이 열린 뒤 Tamer가 앞이어도 오버레이가 떠야 — ${JSON.stringify(front.map((m) => m[1]))}`),
+        ok(ws >= 0 && now === "true", `첫 탭이 열린 뒤 Tamer가 앞이어도 오버레이가 떠야 — ${JSON.stringify(front.map((m) => m[1]))}`),
       ];
     },
   },
   {
     id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 기본 배경 0%라 처음부터 최소 모드(#100), 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 알림 옆 잡기 창(#119, 끌어서 옮김), 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
-    data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1" },
     setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: true, next: { id: 16, shiny: false } })),
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
       { invoke: "settings_get", log: true }, { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
@@ -1974,7 +2095,7 @@ sleep 40
         // #100: no settings.json yet → card background 0 % → the Pokémon only (minimal mode), no shadow
         ok(gets[0]?.overlay?.alpha === 0 && deflt?.minimal && !deflt.meta && none(deflt.shadow), `기본 배경 0%·최소 모드여야 — ${gets[0]?.overlay?.alpha}% ${JSON.stringify(deflt)}`),
         ok(zero?.note && alphaOf(zero.noteBg) >= 0.74 && alphaOf(zero.bg) === 0, `카드 배경 0%여도 알림 바탕은 75% (#92) — 알림 ${zero?.noteBg} · 카드 ${zero?.bg}`),
-        ok(first && !first.minimal && first.meta && first.minis === 1 && !none(first.shadow), `처음(82%) 보통 카드여야 ${JSON.stringify(first)}`),
+        ok(first && !first.minimal && first.meta && first.balls.length === 1 && first.minis === 0 && !none(first.shadow), `처음(82%) 보통 카드여야 — 다른 탭은 몬스터볼(#122) ${JSON.stringify(first)}`),
         ok(clear && clear.minimal && !clear.meta && !clear.counts && clear.balls.length === 1 && clear.minis === 0 && none(clear.shadow), `20%면 최소 모드(글자 없음·몬스터볼 1·그림자 없음)여야 ${JSON.stringify(clear)}`),
         ok(never && !never.minimal && never.meta, `안 씀이면 20%여도 보통 카드여야 ${JSON.stringify(never)}`),
         ok(flat && !flat.minimal && none(flat.shadow), `그림자 끔이면 82%여도 그림자 없어야 ${JSON.stringify(flat)}`),
@@ -1993,7 +2114,7 @@ sleep 40
   },
   {
     id: "menubar-lead", tags: ["smoke", "app", "poke"], what: "메뉴바 아이콘 = 파티 선두(STA-24, #108): 기본은 몬스터볼 + 대시보드 한 번 안내, [데려가기]면 선두 그림 — 늘 재생(쉼 초당 5장 · 작업 중 10장, 일하는 탭 2개면 2배) · 입력 필요 ! · 완료 코인 +n·야생 풀숲 + 남은 초 · CPU 기준 · \"5시간 한도\"는 글자 한 줄 \"58 · 14%\"(낮은 숫자만 색, 막대 없음) · 다시 몬스터볼(글자는 그대로)",
-    data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1", CVIM_WILD_COOLDOWN: "0", CVIM_WILD_COOLDOWN_EMPTY: "0" },
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_COOLDOWN: "0" },
     setup: (box) => { putEcon(box, { "state.json": { startSeen: true } }); fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })); },
     steps: [{ until: "tabs.1" }, { until: "partnerKnown", timeout: 8000 }, { invoke: "party_test", args: { n: 3 } }, { wait: 300 },
       { invoke: "lead_test", log: true }, // 1 ball + ask
@@ -2175,7 +2296,7 @@ sleep 40
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } },
       { wait: 2500 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
     check: ({ log, box }) => {
-      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.party === 0);
       const raw = JSON.parse(fs.readFileSync(path.join(box.data, "box.json"), "utf8")).mons.find((x) => x.uid === 1);
       return [
         ok(m?.id === 4 && m.lv === 21 && m.xp === 8, `파트너 ${JSON.stringify(m && { id: m.id, lv: m.lv, xp: m.xp })} (파이리 Lv 19 + 2 = 21이어야)`),
@@ -2193,7 +2314,7 @@ sleep 40
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } },
       { wait: 12000 }, { invoke: "box_list", args: { ws: "$ws" }, log: true }],
     check: ({ log }) => {
-      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.folder === "here");
+      const m = JSON.parse(log.match(/^lab-invoke box_list (.*)$/m)?.[1] || "[]").find((x) => x.party === 0);
       return [ok(m?.id === 5, `진화 안 함 (${m?.id}) — 파이리 → 리자드`), ok(m?.evo?.length === 1, `진화 이력 ${JSON.stringify(m?.evo)}`)];
     },
   },
@@ -2226,7 +2347,7 @@ sleep 40
   },
   {
     id: "wild-toggle", tags: ["smoke", "poke"], what: "야생 끄면 작업을 끝내도 안 나옴, 켜면 나옴 (PKM-16)",
-    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1", CVIM_WILD_CHANCE_EMPTY: "1" },
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1" },
     setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: false, next: { id: 16, shiny: false } })),
     steps: [{ until: "tabs.0" }, { wait: 500 },
       { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 800 },

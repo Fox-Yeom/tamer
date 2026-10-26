@@ -1,0 +1,37 @@
+@import "./theme.css";
+@import "./poke/poke.css";
+
+/* 포켓몬 고르기 창 (PKM-32 · APP-22 rule 11, #122): its own titled window (720 × 500) in the Pokédex's green world (--pk-*
+   tokens) — the first Pokémon (3 cards) or the party suggestion (cards to tap). macOS's title bar moves it (APP-22 rule 7) */
+html, body { margin: 0; height: 100%; background: var(--pk-bg); color: var(--pk-fg); user-select: none;
+  font: 13px -apple-system, "Apple SD Gothic Neo", sans-serif; }
+#choose { height: 100%; box-sizing: border-box; display: flex; flex-direction: column; gap: 14px; padding: 20px 26px 0; }
+#choose header h1 { margin: 0 0 4px; font-size: 20px; line-height: 28px; color: var(--pk-title); }
+#choose header p { margin: 0; line-height: 19px; color: var(--pk-dim); }
+#choose header b { color: var(--pk-fg); }
+#ch-cards { display: grid; gap: 12px; overflow-y: auto; align-content: start; }
+#ch-cards.first { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+#ch-cards.suggest { grid-template-columns: repeat(5, minmax(0, 1fr)); flex: 1; min-height: 0; padding: 3px; margin: -3px; } /* room for the focus ring; two rows fit (#122) */
+#choose .ch-card { position: relative; display: flex; flex-direction: column; align-items: center; gap: 5px; padding: 14px 6px 12px; border: 2px solid var(--pk-line-soft);
+  border-radius: 12px; background: var(--pk-card); color: var(--pk-fg); font: inherit; cursor: pointer; }
+#choose .ch-card:hover { background: var(--pk-hover); }
+#choose .ch-card.on { border-color: var(--pk-title); background: var(--pk-sel); }
+#choose .ch-card.cur { outline: 2px solid var(--pk-edge); outline-offset: 1px; }
+#choose .ch-card.wait { cursor: default; color: var(--pk-dim); }
+#choose .ch-card img { width: 88px; height: 88px; object-fit: contain; image-rendering: pixelated; }
+#ch-cards.suggest .ch-card { gap: 2px; padding: 8px 4px; }
+#ch-cards.suggest .ch-card img { width: 56px; height: 56px; }
+#choose .ch-card b { font-size: 14px; }
+#choose .ch-n { position: absolute; top: 6px; left: 8px; font-style: normal; font-size: 12px; font-weight: 700; color: var(--pk-title); }
+#choose .ch-types { display: flex; gap: 4px; }
+#choose .ch-types em { font-style: normal; padding: 1px 8px; border-radius: 10px; background: var(--pk-chip); font-size: 12px; }
+#choose .ch-ball { width: 64px; height: 64px; border-radius: 50%; border: 2px dashed var(--pk-line); }
+#choose .dim { color: var(--pk-dim); }
+#ch-note { margin: 0; min-height: 18px; font-size: 12px; color: var(--pk-dim); }
+#choose footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; }
+#ch-foot { color: var(--pk-dim); }
+#ch-acts { display: flex; gap: 10px; }
+#ch-acts button { padding: 8px 18px; border: 1px solid var(--pk-edge); border-radius: 10px; background: transparent; color: var(--pk-fg); font: inherit; font-size: 14px; cursor: pointer; }
+#ch-acts .ch-primary { border: 0; background: var(--pk-title); color: var(--pk-ink); font-weight: 700; }
+#ch-acts button:disabled { opacity: .45; cursor: default; }
+#ch-help { margin: 0 -26px; padding: 7px 16px; border-top: 1px solid var(--pk-line-soft); font-size: 12px; color: var(--pk-dim); }

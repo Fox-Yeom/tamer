@@ -1,4 +1,4 @@
-/* The Pokémon window (#29, docs/UI_SYSTEM.md): one frame for 파트너 고르기 · 도감 · 내 포켓몬.
+/* The Pokémon window (#29, docs/UI_SYSTEM.md): one frame for 홈 · 내 포켓몬 · 도감 · 상점 · 가방 (#121 · #122).
    Every rule here starts with #dex or .pk- (npm run ui:impact checks it), colours come from the
    --pk-* tokens: the Pokédex green world; the app's orange (--accent) only marks "this tab". */
 @import "./egg.css";
@@ -42,7 +42,6 @@
 #dex-search { width: 220px; padding: 3px 9px; outline: none; }
 #dex-search:focus { border-color: var(--pk-title); }
 #dex #box-sort { padding: 3px 6px; }
-#dex.chooseview #box-sort { display: none; }
 #dex-found { font-size: 12px; min-width: 3em; }
 
 /* body: the list on the left, the preview on the right */
@@ -75,7 +74,7 @@
 #dex-grid .cells.recent .cell:not(.new) { background: rgba(var(--pk-recent), calc(.32 * (1 - var(--age, 0)) + .06)); }
 #dex-grid.filtering .cell.nomatch, #dex-grid .cells[hidden], #dex-grid h4[hidden] { display: none; }
 
-/* a card (내 포켓몬 · 파트너 고르기) */
+/* a card (내 포켓몬 · the bag's pick lists) */
 #dex .pk-card { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 6px; border: 0; border-radius: var(--pk-radius);
   background: var(--pk-card); color: var(--pk-fg); font: inherit; cursor: pointer; text-align: center; min-width: 0; }
 #dex .pk-card:hover { background: var(--pk-hover); }
@@ -121,7 +120,7 @@
 /* the hint row */
 #dex .pk-window > footer { display: flex; justify-content: space-between; gap: 12px; padding: 6px 14px; border-top: 1px solid var(--pk-line); font-size: 12px; color: var(--pk-dim); }
 
-/* 🏠 홈 (#44): today / streak / the last 7 days, each agent's limits; the preview shows this tab's partner */
+/* 🏠 홈 (#44): today / streak / the last 7 days, the incubator · stamps · research · road; the preview shows the 메인 파트너 (#122) — no limits (#121) */
 #dex.homeview #dex-regions { display: none; }
 #dex .pk-home { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 14px; }
 #dex .pk-today { display: flex; align-items: stretch; gap: 12px; }
@@ -133,16 +132,8 @@
 #dex .pk-day i { display: block; width: 70%; min-height: 2px; border-radius: 3px 3px 0 0; background: var(--pk-edge); }
 #dex .pk-day.today i { background: var(--pk-title); }
 #dex .pk-day.today span { color: var(--pk-title); font-weight: 700; }
-#dex .pk-agent { padding: 10px 14px; border: 1px solid var(--pk-line-soft); border-radius: var(--pk-radius); background: var(--pk-card); margin-top: 6px; }
-#dex .pk-agent h5 { margin: 0 0 6px; font-size: 13px; color: var(--pk-fg); }
-#dex .pk-agent h5 .dim { font-weight: 400; color: var(--pk-dim); margin-left: 6px; }
-#dex .pk-meter { display: grid; grid-template-columns: 48px 1fr 72px 110px; align-items: center; gap: 8px; font-size: 12px; padding: 2px 0; }
-#dex .pk-meter b { color: var(--pk-dim); font-weight: 600; }
-#dex .pk-meter.none { grid-template-columns: 48px 1fr; }
 #dex .pk-bar { height: 8px; border-radius: 4px; background: var(--pk-field); overflow: hidden; }
 #dex .pk-bar i { display: block; height: 100%; background: var(--pk-title); }
-#dex .pk-meter.mid .pk-bar i { background: var(--pk-new); }
-#dex .pk-meter.low .pk-bar i { background: #e5484d; }
 
 /* 🪙 포켓코인 (#72, PKM-18, docs/SCREENS_P3.md): the chip left of ✕, today's coins and the 시작 코인 band
    on Home, "+5₽" rising by the main window's partner (pk-float) */
@@ -261,15 +252,21 @@
 @keyframes pk-evo-flash { 0%, 45% { opacity: 0; } 55% { opacity: 1; } 100% { opacity: 0; } }
 #dex .pk-evo-msg { font-size: 14px; color: var(--pk-title); }
 #dex .pk-evo-coins { color: var(--pk-coin); font-weight: 700; }
-/* ⭐ 파티 (PKM-31, #107): six slots (the next in turn marked), the box below to add from */
-#dex .pk-party-about { margin: 0; font-size: 13px; color: var(--pk-dim); }
-#dex .pk-party-slots { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
-#dex .pk-party-slot { position: relative; display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 1px solid var(--pk-line-soft); border-radius: var(--pk-radius); background: var(--pk-card); }
-#dex .pk-party-slot.empty { align-items: center; justify-content: center; min-height: 120px; border-style: dashed; }
-#dex .pk-party-slot.next { border-color: var(--pk-edge); }
-#dex .pk-party-turn { position: absolute; top: 6px; right: 8px; font-style: normal; font-size: 11px; color: var(--pk-title); }
-#dex .pk-party-acts { display: flex; gap: 6px; justify-content: flex-end; align-items: center; font-size: 12px; }
-#dex .pk-party-recent { margin: 0; padding-left: 18px; font-size: 12px; color: var(--pk-dim); }
-#dex .pk-party h4 { margin: 4px 0 0; font-size: 12px; color: var(--pk-dim); }
-#dex .pk-party-cands { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 8px; }
-#dex .pk-party-cand { display: flex; flex-direction: column; gap: 4px; }
+/* 파티 줄 (PKM-31 rule 5, #122): the top of 내 포켓몬 — 5 slots (the 1st the 메인 파트너, the next in turn marked), then the box */
+#dex .pk-pstrip { grid-column: 1 / -1; display: flex; flex-direction: column; gap: 6px; }
+#dex .pk-pstrip .pk-group { display: flex; flex-wrap: wrap; align-items: baseline; gap: 0 6px; }
+#dex .pk-pstrip .pk-precent { margin-left: auto; }
+#dex .pk-pslots { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 8px; }
+#dex .pk-pslot { position: relative; display: flex; flex-direction: column; align-items: center; gap: 2px; min-height: 92px; padding: 6px 4px; border: 1px solid var(--pk-line-soft);
+  border-radius: var(--pk-radius); background: var(--pk-card); color: var(--pk-fg); font: inherit; font-size: 12px; cursor: pointer; }
+#dex button.pk-pslot:hover { background: var(--pk-hover); }
+#dex .pk-pslot.main { border: 2px solid var(--pk-title); }
+#dex .pk-pslot.next { box-shadow: inset 0 0 0 1px var(--pk-edge); }
+#dex .pk-pslot.empty { justify-content: center; border-style: dashed; cursor: default; }
+#dex .pk-pslot img { width: 48px; height: 48px; object-fit: contain; image-rendering: pixelated; }
+#dex .pk-pslot b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dex .pk-pslot small { color: var(--pk-dim); }
+#dex .pk-pslot em { font-style: normal; font-weight: 700; color: var(--pk-title); }
+#dex .pk-pnext { color: var(--pk-title); }
+#dex .pk-inc-go { margin-left: auto; font-size: 12px; }
+#dex .pk-choose { margin-top: 8px; }

@@ -1,4 +1,4 @@
-// 포켓몬 창 (PKM-09 · APP-22 rule 10, #113 P2): 🏠 홈 · 🌟 파트너 고르기 · 📕 도감 · 🎒 내 포켓몬 · ⭐ 파티 · 🛒 상점 · 👜 가방
+// 포켓몬 창 (PKM-09 · APP-22 rule 10, #113 P2): 🏠 홈 · 🎒 내 포켓몬(맨 위 파티 줄) · 📕 도감 · 🛒 상점 · 👜 가방 (#121 · #122)
 // in a window of its own (poke.html) — it opens with no terminal window (APP-22 rule 8) and moves by macOS's title bar
 // (rule 7). Was a cover over the main window (src/main.js, #29 … #107); the screens are drawn as before. "This tab" is
 // the one on screen in the main window, as the main process knows it (activeWs, rule 2): its folder's name and partner
@@ -30,47 +30,6 @@ function toast(msg, ms = 1800) {
   toast.timer = setTimeout(() => t.classList.remove("show"), ms);
 }
 
-// the 5-hour / weekly windows (홈's limits): one still running, and the time to its reset
-const live = (w) => w && (w.resets_at == null || w.resets_at * 1000 > Date.now());
-function untilReset(epoch) {
-  if (typeof epoch !== "number") return "";
-  const s = epoch - Date.now() / 1000;
-  if (s <= 0) return "";
-  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
-  if (h >= 24) return ` ↻${Math.floor(h / 24)}d${h % 24}h`;
-  return h > 0 ? ` ↻${h}h${String(m).padStart(2, "0")}m` : ` ↻${m}m`;
-}
-
-// ── choosing a partner (#29: a view of the Pokémon window — 🌟 파트너 고르기; box rules in
-// electron/core/partner.cjs): the first partner's starters (once, empty box) · a resting one from the
-// box · another folder's partner. Same cards, preview and button as 내 포켓몬. Opened by the user only
-// (the partner pane's [파트너 고르기] · 🔄) — never by itself (#113 A8, PKM-11 rule 1)
-let chooseSlow = null;
-// today's starters slow to come (PokéAPI): say so after 30 s
-function chooseWatch(o) {
-  clearTimeout(chooseSlow);
-  if (o?.starterLoading) chooseSlow = setTimeout(() => { if (dexState?.view === "choose") { dexState.chooseNote = "PokéAPI 응답이 느려요 — 박스의 포켓몬을 고르거나, 나중에 다시 열어도 돼요"; boxRender(); } }, 30000);
-}
-// new options while open (today's starters arriving)
-function renderChoose(o) {
-  if (dexState?.view !== "choose" || !o) return;
-  dexState.chooseOpts = o;
-  if (o.starter?.ready) dexState.chooseNote = "";
-  boxRender();
-  dexTitle();
-}
-// the cards of 🌟 파트너 고르기, in its three groups
-function chooseItems(o) {
-  const items = [];
-  if (o.starter) {
-    o.starter.set.forEach((c, i) => items.push({ ...c, kind: "starter", group: "starter", key: `s${i}`, n: i + 1 }));
-    for (let i = o.starter.set.length; i < o.starter.total; i++) items.push({ kind: "loading", group: "starter" });
-  }
-  o.resting.forEach((m, i) => items.push({ ...m, kind: "rest", group: "rest", key: `r${i}`, folder: null }));
-  o.others.forEach((m, i) => items.push({ ...m, kind: "other", group: "other", key: `o${i}`, folder: m.folderName }));
-  return items;
-}
-
 // sprite data URLs, kept (the dialog redraws while today's candidates arrive)
 const sprites = new Map();
 function spriteUrl(gif) {
@@ -100,19 +59,18 @@ function ago(at) {
 }
 
 // the window opens (or is asked again) on a view and a species: sel = the species to show first (a wild one just
-// caught → "도감에서 보기", #9) · view: "home" | "choose" | "dex" | "box" | "party" | "shop" | "bag"; default the last
-// of 도감 / 내 포켓몬. Also how the window follows this tab (APP-22 rule 2): the same view, drawn again
+// caught → "도감에서 보기", #9; an evolution · a hatch → 내 포켓몬 on it) · view: "home" | "dex" | "box" | "shop" | "bag" (the old
+// "party" / "choose" → 내 포켓몬, #121 · #122); default the last of 도감 / 내 포켓몬. Nothing here is a tab's any more (#122)
 async function openDex(sel, view) {
   const d = await invoke("dex_list");
   const byNo = new Map(d.entries.map((e) => [e.id, e]));
-  // where this tab could take each species from: resting / other folders / already its partner
-  const opts = tab ? await invoke("partner_options").catch(() => null) : null;
-  if (view === "choose" && !tab) view = undefined; // no tab: nothing to choose for
+  if (view === "party" || view === "choose") view = "box";
+  const [box, party] = await Promise.all([invoke("box_list").catch(() => []), invoke("party_state").catch(() => null)]); // where each one is (#122)
   // a new catch you haven't looked at comes first — in the "새로 잡은" row (zone "recent", ri = its
   // place there); otherwise the grid. The arrows move inside the zone the selection is in (#17)
   const ri = sel ? d.recent?.findIndex((m) => m.id === sel) ?? -1 : d.recent?.findIndex((m) => m.new) ?? -1;
-  dexState = { ...d, byNo, opts, chooseOpts: view === "choose" ? opts : null, view: "dex", zone: ri >= 0 ? "recent" : "grid", ri: Math.max(0, ri),
-    sel: sel || d.recent?.[ri]?.id || tab?.partner?.id || d.entries[0]?.id || 1 };
+  dexState = { ...d, byNo, box, party, boxSel: view === "box" ? sel || null : null, view: "dex", zone: ri >= 0 ? "recent" : "grid", ri: Math.max(0, ri),
+    sel: sel || d.recent?.[ri]?.id || party?.list?.[0]?.id || d.entries[0]?.id || 1 };
   coins = await invoke("economy_state").catch(() => coins);
   dexTitle();
   const nWild = (d.recent || []).filter((m) => m.how !== "egg").length, nEgg = (d.recent || []).length - nWild;
@@ -132,11 +90,12 @@ async function openDex(sel, view) {
   const recentCell = (m, i) => {
     const e = byNo.get(m.id);
     const fade = Math.max(0, Math.min(1, (Date.now() / 1000 - (m.at || 0)) / day)).toFixed(2);
-    return `<div class="cell caught${m.new ? " new" : ""}" style="--age:${fade}" data-n="${m.id}" data-ri="${i}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.how === "egg" ? " · 알에서 부화" : ""}${m.folder ? " · 파트너" : ""}">`
+    return `<div class="cell caught${m.new ? " new" : ""}" style="--age:${fade}" data-n="${m.id}" data-ri="${i}" title="${esc(e?.name || `#${m.id}`)} · ${ago(m.at)}${m.how === "egg" ? " · 알에서 부화" : ""}${m.party ? " · 파티" : ""}">`
       + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q"></span>`) + `<i class="no">${m.id}</i>${m.shiny ? '<i class="shiny">✨</i>' : ""}${m.new ? '<i class="pk-newb">NEW</i>' : ""}</div>`;
   };
   const rowOf = (how, id, title) => { const cells = (d.recent || []).map((m, i) => [m, i]).filter(([m]) => (m.how === "egg") === (how === "egg")); return cells.length ? `<h4 id="${id}">${title}</h4><div class="cells recent">${cells.map(([m, i]) => recentCell(m, i)).join("")}</div>` : ""; };
   const recent = rowOf("wild", "region-new", "🆕 새로 잡은 포켓몬") + rowOf("egg", "region-hatched", "🥚 새로 부화한 포켓몬");
+  const inParty = new Set((dexState.party?.list || []).map((m) => m.id));
   grid.innerHTML = recent + REGIONS.map(([name, a, b]) => {
     const cells = [];
     for (let n = a; n <= b; n++) {
@@ -144,7 +103,7 @@ async function openDex(sel, view) {
       const cls = !e ? "unknown" : e.caught ? "caught" : "seen";
       const mark = e?.owned > 1 ? `<i class="cnt">×${e.owned}</i>` : "";
       const star = e?.caught && e.shiny ? '<i class="shiny">✨</i>' : "";
-      const me = tab?.partner?.id === n ? " partner" : "";
+      const me = inParty.has(n) ? " partner" : ""; // in the party (#122, PKM-12 rule 5)
       const fresh = e?.fresh ? " new" : "";
       cells.push(`<div class="cell ${cls}${me}${fresh}" data-n="${n}" title="#${String(n).padStart(3, "0")}${e ? " " + esc(e.name) : ""}">`
         + (e?.gif ? `<img data-gif="${esc(e.gif)}" alt="" />` : `<span class="q">${e ? "" : "?"}</span>`) + `<i class="no">${n}</i>${mark}${star}${fresh ? '<i class="pk-newb">NEW</i>' : ""}</div>`);
@@ -228,7 +187,7 @@ function dexTerm(t, n, e) {
   if (["caught", "잡음", "잡은"].includes(t)) return !!e?.caught;
   if (["seen", "만남", "만나기만"].includes(t)) return !!e && !e.caught;
   if (["unknown", "못만남", "?"].includes(t)) return !e;
-  if (["partner", "파트너"].includes(t)) return !!e?.partner;
+  if (["partner", "파트너", "party", "파티"].includes(t)) return !!e?.partner; // in the party (#122)
   if (["legendary", "전설"].includes(t)) return LEGENDARY.has(n);
   if (["졸업", "grad"].includes(t)) return !!e.grad; // 🎓 · 🥚 (#84, 내 포켓몬)
   if (["알", "egg"].includes(t)) return !!e.egg;
@@ -316,14 +275,12 @@ const incenseChip = () => (incenseLeft() ? `<button class="pk-incense" data-view
   const fresh = d.entries.reduce((n, e) => n + (e.fresh || 0), 0);
   const n = d.box ? boxMons(d.box).length : owned, view = d.view || "dex";
   const on = (v) => (view === v ? ' class="on"' : "");
-  const cur = d.chooseOpts?.current;
-  $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button>${tab ? `<button data-view="choose"${on("choose")}>🌟 파트너 고르기</button>` : ""}`
-    + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button><button data-view="party"${on("party")}>⭐ 파티</button>`
-    + `<button data-view="shop"${on("shop")}>🛒 상점</button><button data-view="bag"${on("bag")}>👜 가방${coins?.bagN ? ` <span class="dim">${coins.bagN}</span>` : ""}${prog?.inc ? ' <span class="dim">· 🥚</span>' : ""}</button></span>`
-    + (view === "choose" && tab ? `<span class="pk-sub">${esc(tab.folder)}의 파트너 — ${cur ? `지금 ${cur.shiny ? "✨" : ""}${esc(cur.name)} · Lv ${cur.lv ?? "?"}` : "아직 없어요"}</span>`
-      + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>' : `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
+  // 탭 다섯 (#121 · #122, PKM-09 rule 7): 파트너 고르기 is its own window now, the party the top of 내 포켓몬
+  $("#dex-title").innerHTML = `<span class="pk-tabs"><button data-view="home"${on("home")}>🏠 홈</button><button data-view="box"${on("box")}>🎒 내 포켓몬 <span class="dim">${n}</span></button>`
+    + `<button data-view="dex"${on("dex")}>📕 도감</button><button data-view="shop"${on("shop")}>🛒 상점</button><button data-view="bag"${on("bag")}>👜 가방${coins?.bagN ? ` <span class="dim">${coins.bagN}</span>` : ""}${prog?.inc ? ' <span class="dim">· 🥚</span>' : ""}</button></span>`
+    + `<span class="chip">잡음 ${d.caught}</span><span class="chip">만남 ${d.entries.length}</span>`
     + `<span class="chip">/ ${d.total}</span><span class="chip">✨ ${d.shiny}</span><span class="chip">📦 ${owned}마리</span>`
-    + (fresh ? `<span class="chip new">NEW ${fresh}</span>` : "") + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>');
+    + (fresh ? `<span class="chip new">NEW ${fresh}</span>` : "") + coinChip() + '<button class="pk-close" title="닫기 (Esc)">✕</button>';
   // the number changed while the window was open: bold for a moment
   const chip = $("#dex-title .pk-coin");
   if (chip && coinsShown != null && coins.balance !== coinsShown) { chip.classList.add("bump"); setTimeout(() => chip.classList.remove("bump"), 400); }
@@ -334,28 +291,26 @@ const incenseChip = () => (incenseLeft() ? `<button class="pk-incense" data-view
 // sorted (newest catch first by default), searched with the same terms, taken from the preview ──
 let dexLastView = "dex";
 let boxSort = (() => { try { const v = localStorage.getItem("tamer.box.sort") || "recent"; return v === "exp" ? "lv" : v; } catch { return "recent"; } })(); // "exp" (경험치) became "lv" (#74)
-const BOX_SORTS = [["recent", "최근 잡은 순"], ["no", "번호"], ["name", "이름"], ["lv", "레벨"], ["partner", "파트너 먼저"]];
+const BOX_SORTS = [["recent", "최근 잡은 순"], ["no", "번호"], ["name", "이름"], ["lv", "레벨"], ["partner", "파티 먼저"]]; // "partner": the party first (#122)
 const HOW = { wild: "야생에서 잡음", starter: "첫 파트너", legacy: "이전 기록에서 옮김", egg: "알에서 부화" };
 
 const HELP = {
-  choose: "←→↑↓ 고르기 · 1·2·3 첫 파트너 · Enter 이 탭의 파트너로 · / 검색 · 한 마리는 한 폴더에만, 레벨은 포켓몬을 따라가요 · Esc 닫기",
-  dex: "←→↑↓ 이동 · / 검색 · Tab 다음 만난 포켓몬 · Enter 이 탭의 파트너로(박스에 있으면) · M 내 포켓몬 · Esc 닫기",
-  box: "←→↑↓ 이동 · / 검색 · Enter 이 탭의 파트너로 · M 도감 · Esc 닫기",
-  home: "⌘P 홈 · S 상점 · I 가방 · M 내 포켓몬 · Esc 닫기 — 한도는 각 에이전트가 마지막으로 알려 준 값이에요",
-  party: "파트너가 없는 폴더·Tamer 밖에서 끝낸 작업으로 파티가 차례로 한 마리씩 커요 · 최대 6마리 · Esc 닫기", // #107
+  dex: "←→↑↓ 이동 · / 검색 · Tab 다음 만난 포켓몬 · Enter 파티에 넣기(쉬는 포켓몬이 있으면) · M 내 포켓몬 · Esc 닫기",
+  box: "←→↑↓ 이동 · / 검색 · Enter 파티에 넣기 / 메인 파트너로 · 어디서 작업을 끝내도 파티가 차례로 커요 · M 도감 · Esc 닫기",
+  home: "⌘P 홈 · M 내 포켓몬 · S 상점 · I 가방 · Esc 닫기",
   shop: "←→↑↓ 고르기 · 한 번 더 누르면(− +) 수 · Enter 사기 · I 가방 · Esc 닫기 — 1,000코인 이상은 두 번 눌러 사요",
   bag: "←→↑↓ 고르기 · Enter 쓰기 · S 상점 · Esc 닫기",
   pick: "←→↑↓ 고르기 · Enter 사탕 주기 · Esc 가방으로",
   pickStone: "←→↑↓ 고르기 · 오른쪽 갈래 버튼으로 진화 · Esc 가방으로", // 💎 (#93)
+  pickCord: "←→↑↓ 고르기 · Enter 진화시키기 · Esc 가방으로", // 🔗 (#122)
 };
 // the frame for a view: which list shows, the tool row, the hints
 function viewChrome(v) {
   const w = $("#dex");
   w.classList.toggle("cardview", v !== "dex");
-  w.classList.toggle("chooseview", v === "choose");
-  w.classList.toggle("homeview", v === "home" || v === "party"); // 파티 (#107) is laid out like 홈
+  w.classList.toggle("homeview", v === "home");
   w.classList.toggle("shopview", v === "shop" || v === "bag");
-  $("#dex-take").hidden = v === "home" || v === "party";
+  $("#dex-take").hidden = v === "home";
   $("#dex-pos").textContent = "";
   $("#dex-grid").hidden = v !== "dex";
   $("#box-grid").hidden = v === "dex";
@@ -366,12 +321,12 @@ function viewChrome(v) {
 async function dexView(v) {
   const d = dexState;
   if (!d) return;
+  if (v === "party" || v === "choose") v = "box"; // the old tabs (#121 · #122)
   d.view = v;
   d.stoneDone = null; // a stone's result shows only where it was used (#94)
-  if (v !== "choose") { dexLastView = v; invoke("poke_keep", { view: v }).catch(() => {}); } // 파트너 고르기 opens for a reason; the window remembers the others
+  dexLastView = v; invoke("poke_keep", { view: v }).catch(() => {});
   viewChrome(v);
   if (v === "home") { dexTitle(); return homeRender(); }
-  if (v === "party") { dexTitle(); return partyRender(); }
   if (v === "shop" || v === "bag") { d.pick = false; d.ii = v === "bag" ? null : 0; d.qty = 1; dexTitle(); return shopRender(); }
   if (v === "dex") {
     $(".dex-preview").style.visibility = "";
@@ -379,10 +334,7 @@ async function dexView(v) {
     if (d.zone === "recent") dexRecent(d.ri); else dexSelect(d.sel);
   } else {
     if (v === "box" && !d.box) d.box = await invoke("box_list").catch(() => []);
-    if (v === "choose") {
-      if (!d.chooseOpts && tab) d.chooseOpts = await invoke("partner_options").catch(() => null);
-      chooseWatch(d.chooseOpts);
-    }
+    if (v === "box") d.party = await invoke("party_state").catch(() => d.party); // the party row (#122)
     if (!$("#box-sort")) $(".dex-search").insertAdjacentHTML("afterbegin", `<select id="box-sort" title="정렬">${BOX_SORTS.map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select>`);
     $("#box-sort").value = boxSort;
     d.bi = 0;
@@ -392,47 +344,52 @@ async function dexView(v) {
   dexTitle();
 }
 
-// ── ⭐ 파티 (PKM-31, #107): up to 6 that grow in turn from finishes in folders without a partner — a tab's
-// or one done outside Tamer (STA-23). Six slots (넣기 · 빼기 · 선두로), the box below to add from ──
-async function partyRender() {
-  const d = dexState;
-  const [p, box] = await Promise.all([invoke("party_state").catch(() => null), d.box ? d.box : invoke("box_list").catch(() => [])]);
-  if (dexState !== d || d.view !== "party" || !p) return;
-  d.box = box; d.party = p;
-  const inParty = new Set(p.list.map((m) => m.uid));
+// ── 파티 줄 (PKM-31 rule 5 · PKM-14 rule 7, #121 · #122): the top of 내 포켓몬 — 5 slots (the 1st the 메인 파트너, whose turn is
+// next, empty ones), the last 3 grown. A slot picks that Pokémon below (the preview has [메인 파트너로] · [파티에서 빼기]) ──
+function partyStrip(d) {
+  const p = d.party;
+  if (!p) return "";
   const slots = Array.from({ length: p.max }, (_, i) => {
     const m = p.list[i];
-    if (!m) return `<div class="pk-party-slot empty"><span class="dim">빈 칸</span></div>`;
-    return `<div class="pk-party-slot${i === p.next ? " next" : ""}">${pkCard({ ...m, folder: m.folder ? base(m.folder) : null }, `p${i}`, { icons: TYPE_ICON, ago })}`
-      + `<span class="pk-party-acts">${i ? `<button data-party-lead="${m.uid}">선두로</button>` : '<span class="dim">선두</span>'}<button data-party-out="${m.uid}">빼기</button></span>`
-      + (i === p.next ? '<i class="pk-party-turn">다음 차례</i>' : "") + "</div>";
+    if (!m) return '<div class="pk-pslot empty"><span class="dim">빈 칸</span></div>';
+    return `<button class="pk-pslot${i ? "" : " main"}${i === p.next ? " next" : ""}" data-pslot="${m.uid}" title="${esc(m.name)} — 눌러서 보기"><img alt="" data-gif="${esc(m.gif || "")}" />`
+      + `<b>${m.grad ? "🎓 " : ""}${m.shiny ? "✨" : ""}${esc(m.name)}</b><small>${i ? "" : '<em>메인</em> '}Lv ${m.lv ?? "?"}${i === p.next ? ' · <span class="pk-pnext">다음 차례</span>' : ""}</small></button>`;
   }).join("");
-  const cands = boxMons(box).filter((m) => !inParty.has(m.uid) && !(m.grad && m.lv >= 100));
-  const full = p.list.length >= p.max;
-  const recent = (p.recent || []).slice(0, 3).map((r) => `<li>${r.outside ? "밖에서" : "탭"} · ${esc(r.folder)} · +${r.coins || 0}${r.mon?.name ? ` · ${esc(r.mon.name)}${r.mon.lv ? ` Lv ${r.mon.lv}` : ""}` : ""}</li>`).join("");
-  $("#box-grid").innerHTML = `<div class="pk-home pk-party">
-    <p class="pk-party-about">파트너가 없는 폴더에서 끝낸 작업과 Tamer 밖(다른 터미널·Claude 앱·Codex 앱)에서 끝낸 작업은 파티가 <b>차례로 한 마리씩</b> 받아요. 폴더 파트너는 그 폴더 작업으로 따로 커요.</p>
-    <div class="pk-party-slots">${slots}</div>
-    ${recent ? `<ul class="pk-party-recent">${recent}</ul>` : ""}
-    <h4>${full ? "파티가 찼어요 — 빼고 넣으세요" : "내 포켓몬에서 넣기"}</h4>
-    <div class="pk-party-cands">${cands.length ? cands.map((m, i) => `<div class="pk-party-cand">${pkCard(m, `c${i}`, { icons: TYPE_ICON, ago })}<button data-party-in="${m.uid}"${full ? " disabled" : ""}>파티에 넣기</button></div>`).join("") : '<span class="dim">넣을 포켓몬이 없어요 — 작업을 끝내면 가끔 야생 포켓몬이 나타나요</span>'}</div>
-  </div>`;
-  $("#box-grid").querySelectorAll("img[data-gif]").forEach((img) => spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; }));
-  $(".dex-preview").style.visibility = "hidden"; // nothing picked here — the last view's Pokémon mustn't linger
+  const recent = (p.recent || []).slice(0, 3).map((r) => `${r.mon?.name ? `${esc(r.mon.name)}${r.mon.lv ? ` Lv ${r.mon.lv}` : ""} ` : ""}+${r.coins || 0}${r.outside ? " (밖 작업)" : ""}`).join(" · ");
+  return `<section class="pk-pstrip"><h4 class="pk-group">파티 ${p.list.length} / ${p.max}<span class="dim">어디서 작업을 끝내도 차례로 한 마리씩 · 1번이 메인 파트너</span>${recent ? `<span class="dim pk-precent">최근: ${recent}</span>` : ""}</h4>`
+    + `<div class="pk-pslots">${slots}</div></section><h4 class="pk-group">박스</h4>`;
+}
+// the preview's party buttons (#122): in the party → [메인 파트너로] (the 2nd … 5th) · [파티에서 빼기]; not → [파티에 넣기] (full: off)
+function partyButtons(m) {
+  const p = dexState?.party;
+  if (!p || m?.uid == null || m.egg) return "";
+  const i = p.list.findIndex((x) => x.uid === m.uid);
+  if (i >= 0) return `<button data-party-out="${m.uid}">파티에서 빼기</button>`;
+  return "";
 }
 async function partyChange(uids) {
   const v = await invoke("party_set", { uids }).catch(() => null);
-  if (v && dexState?.view === "party") partyRender();
+  if (!v || !dexState) return;
+  dexState.party = { ...v, recent: dexState.party?.recent };
+  dexState.box = await invoke("box_list").catch(() => dexState.box);
+  if (dexState.view === "box") boxRender();
 }
-listen("party", () => { if (dexState?.view === "party") partyRender(); });
-listen("party-done", () => { if (dexState?.view === "party") partyRender(); });
+// the party changed (here, the choose window, the main window, a finish): kept in step; 내 포켓몬 · 홈 drawn again
+const partyRefresh = async () => {
+  const d = dexState;
+  if (!d) return;
+  [d.party, d.box] = await Promise.all([invoke("party_state").catch(() => d.party), invoke("box_list").catch(() => d.box)]);
+  if (dexState !== d || d.pick) return;
+  if (d.view === "box") boxRender(); else if (d.view === "home") homeRender();
+};
+listen("party", partyRefresh);
+listen("party-done", partyRefresh);
 
-// ── 🏠 홈 (#44): this tab's partner (the preview), tasks finished today and in a row, the last 7
-// days, and each agent's 5-hour / weekly limit as last reported (nothing new is measured here) ──
-const HOME_AGENTS = [["claude", "✻ Claude Code"], ["codex", "◎ Codex"]];
+// ── 🏠 홈 (#44): today's summary — the 메인 파트너 (the preview, #122), tasks finished today and in a row, the last 7 days, the
+// incubator, the stamps, the research, the legends' road. No limits here (#121 — they're the work windows')
 async function homeRender() {
   const d = dexState;
-  const [st, box, c, usage] = await Promise.all([invoke("home_state").catch(() => null), d.box ? d.box : invoke("box_list").catch(() => []), invoke("economy_state").catch(() => coins), invoke("poke_usage").catch(() => ({}))]);
+  const [st, box, c] = await Promise.all([invoke("home_state").catch(() => null), d.box ? d.box : invoke("box_list").catch(() => []), invoke("economy_state").catch(() => coins)]);
   if (dexState !== d || d.view !== "home") return;
   d.box = box;
   if (c) { coins = c; dexTitle(); }
@@ -440,18 +397,10 @@ async function homeRender() {
   const coinBox = coins ? `<div class="pk-coins"><b>${coinTxt(coins.today.earned)}</b><span>오늘 번 코인 · ${coins.today.capLeft > 0 ? `상한까지 ${coinTxt(coins.today.capLeft)}` : "오늘 상한 · 보너스만"}</span></div>` : "";
   // the 시작 코인, once — until ✕ (#72, SCREENS_P3 S2)
   const band = coins?.start ? `<div class="pk-band"><span>🪙 포켓코인이 생겼어요 — 지난 완료 ${won(coins.start.n)}번으로 <b>${coinTxt(coins.start.amount)}</b> 받았어요 · 작업을 끝낼 때마다 쌓여요</span><button class="pk-band-go" data-view="shop">상점 보기</button><button class="pk-band-x" title="닫기" aria-label="안내 닫기">✕</button></div>` : "";
-  const mine = box.find((m) => m.folder === "here");
+  const mine = box.find((m) => m.party === 0); // the 메인 파트너 (#122)
   const max = Math.max(1, ...(st?.week || []).map((x) => x.n));
   const wd = ["일", "월", "화", "수", "목", "금", "토"];
   const week = (st?.week || []).map((x, i, a) => `<div class="pk-day${i === a.length - 1 ? " today" : ""}" title="${x.day} · ${x.n}번"><i style="height:${Math.round((x.n / max) * 100)}%"></i><span>${wd[new Date(`${x.day}T12:00`).getDay()]}</span></div>`).join("");
-  const left = (w) => (w && live(w) ? Math.max(0, 100 - Math.round(w.pct)) : null);
-  const meter = (label, w) => {
-    const p = left(w);
-    if (p == null) return `<div class="pk-meter none"><b>${label}</b><span class="dim">아직 값 없음</span></div>`;
-    const lv = p <= 20 ? "low" : p <= 50 ? "mid" : "ok";
-    return `<div class="pk-meter ${lv}"><b>${label}</b><span class="pk-bar"><i style="width:${p}%"></i></span><span>${p}% 남음</span><span class="dim">${untilReset(w.resets_at).replace(/^\s*↻/, "") ? `${untilReset(w.resets_at).replace(/^\s*↻/, "")} 뒤 회복` : ""}</span></div>`;
-  };
-  const agentsHtml = HOME_AGENTS.map(([k, name]) => { const l = usage?.[k] || {}; return (l.five_hour || l.seven_day) ? `<div class="pk-agent"><h5>${name}${l.model ? ` <span class="dim">${esc(l.model)}</span>` : ""}</h5>${meter("5시간", l.five_hour)}${meter("주간", l.seven_day)}</div>` : ""; }).join("");
   // ⭐ 연구 스탬프 (#82, PKM-24): a stamp for each day with a finish, 7 = a legend
   // 전설의 길 · 리서치 (#86): each generation's share and legends, the research's steps
   const lr = await invoke("legend_road").catch(() => null);
@@ -475,26 +424,25 @@ async function homeRender() {
   // 🥚 the incubator (#85)
   const inc = await invoke("incubator_state").catch(() => null);
   const incHtml = inc ? `<section class="pk-inc"><h4 class="pk-group">부화기<span class="dim">어느 폴더든 작업을 끝낼 때마다 하나</span></h4>
-    <div class="pk-inc-row"><i class="pk-egg${inc.active.kind === "egg2" ? " rare" : ""}"></i><b>${esc(inc.active.name)}</b><span class="pk-bar"><i style="width:${Math.round((inc.active.have / inc.active.need) * 100)}%"></i></span><span>${inc.active.have}/${inc.active.need}</span>${inc.waiting ? `<span class="dim">대기 ${inc.waiting}</span>` : ""}</div></section>` : "";
+    <div class="pk-inc-row"><i class="pk-egg${inc.active.kind === "egg2" ? " rare" : ""}"></i><b>${esc(inc.active.name)}</b><span class="pk-bar"><i style="width:${Math.round((inc.active.have / inc.active.need) * 100)}%"></i></span><span>${inc.active.have}/${inc.active.need}</span>${inc.waiting ? `<span class="dim">대기 ${inc.waiting}</span>` : ""}<button data-view="bag" class="pk-inc-go">가방에서 보기 ›</button></div></section>` : ""; // → 가방 (#121)
   if (dexState !== d || d.view !== "home") return;
   $("#box-grid").innerHTML = `<div class="pk-home">${band}
     <section class="pk-today"><div><b>${st?.today ?? 0}</b><span>오늘 끝낸 작업</span></div><div><b>${st?.streak ? `🔥 ${st.streak}` : "0"}</b><span>일 연속</span></div>${coinBox}
       <div class="pk-week" title="최근 7일 끝낸 작업">${week}</div></section>${incHtml}${stampHtml}${researchHtml}${roadHtml}
-    <section><h4 class="pk-group">사용 한도<span class="dim">남은 비율 · 마지막으로 알려 준 값</span></h4>${agentsHtml || '<p class="pk-note">아직 한도 정보가 없어요 — Claude Code나 Codex가 한 번 응답하면 보여요</p>'}</section>
   </div>`;
   $("#dex-found").textContent = "";
   // the preview: this tab's partner
   const img = $("#dex-img");
   $(".dex-preview").style.visibility = "";
-  if (!mine) {
+  if (!mine) { // an empty party (#122): the 포켓몬 고르기 window
     img.removeAttribute("src");
-    $("#dex-name").textContent = tab ? "파트너가 없어요" : "열린 탭이 없어요";
-    $("#dex-meta").innerHTML = tab ? "🌟 파트너 고르기에서 데려오거나, 작업을 끝내면 나타나는 야생 포켓몬을 잡아요" : "폴더를 열면 그 폴더의 파트너가 여기 보여요";
+    $("#dex-name").textContent = "포켓몬이 없어요";
+    $("#dex-meta").innerHTML = '파티가 비어 있어요<br><button data-a="choose" class="pk-choose">포켓몬 고르기</button>';
     return;
   }
   if (mine.gif) spriteUrl(mine.gif).then(async (u) => { if (!u || dexState?.view !== "home") return; img.src = u; await img.decode().catch(() => {}); img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`; });
   $("#dex-name").textContent = `#${String(mine.id).padStart(3, "0")} ${mine.shiny ? "✨" : ""}${mine.name}`;
-  $("#dex-meta").innerHTML = `${esc(tab.folder)}의 파트너<br>${esc(lvLine(mine))}`;
+  $("#dex-meta").innerHTML = `메인 파트너<br>${esc(lvLine(mine))}`;
 }
 
 // ── 🛒 상점 · 👜 가방 (#76, PKM-22·23, SCREENS_P3 S3·S4): items as cards (pk-item), the preview buys
@@ -511,7 +459,7 @@ async function shopRender() {
   if (!st || dexState !== d || (d.view !== "shop" && d.view !== "bag")) return;
   shopSt = st;
   $(".dex-preview").style.visibility = "";
-  $("#dex-help").textContent = HELP[d.pick === "stone" ? "pickStone" : d.pick ? "pick" : d.view];
+  $("#dex-help").textContent = HELP[d.pick === "stone" ? "pickStone" : d.pick === "cord" ? "pickCord" : d.pick ? "pick" : d.view];
   if (d.pick) return pickRender();
   const grid = $("#box-grid");
   const card = (it, i) => {
@@ -608,6 +556,11 @@ function itemPreview(it, note = "") {
   }
   if (it.group === "ball") { $("#dex-meta").innerHTML = `${esc(it.effect)}<br>가진 수 ${have}<br>야생 포켓몬이 나오면 카드에서 골라 던져요`; b.hidden = true; return; }
   if (it.id === "charm") { $("#dex-meta").innerHTML = "가지고 있으면 늘 효과 — 야생·알·대발견·리서치의 이로치 확률 1/64 → 1/32(희귀 알 1/16)"; b.hidden = true; return; } // #93
+  if (it.id === "cord") { // 🔗 연결의끈 (#122, PKM-21 rule 3): pick who — only those whose next stage is by trade
+    $("#dex-meta").innerHTML = `교환으로 진화하는 포켓몬(윤겔라 · 근육몬 · 데구리 · 고우스트 등)을 골라 그 자리에서 진화 — 쓰면 사라져요<br>가진 수 ${have}`;
+    b.textContent = "쓸 포켓몬 고르기";
+    return;
+  }
   if (it.id === "stone") { // 💎 (#93, PKM-28): pick who — only those a stone can evolve
     $("#dex-meta").innerHTML = `돌·도구로 진화하는 포켓몬, 갈래가 있는 포켓몬(이브이 등)을 골라 바로 진화 — 레벨 무관<br>가진 수 ${have}`;
     b.textContent = "쓸 포켓몬 고르기";
@@ -632,11 +585,11 @@ function itemPreview(it, note = "") {
     $("#dex-from").innerHTML += can.length ? can.map((l) => `<button data-legend="${l.id}"${l.id === set ? ' class="on"' : ""}>⭐ ${esc(l.name)}${l.owned ? " ●" : ""}${l.id === set ? " ✓" : "에 걸기"}</button>`).join("") : "";
     return;
   }
-  if (it.id === "candy") {
-    const p = d.box?.find((m) => m.folder === "here"), lv = p?.lv;
+  if (it.id === "candy") { // the 메인 파트너 first (#122), or another one picked
+    const p = d.box?.find((m) => m.party === 0), lv = p?.lv;
     $("#dex-meta").innerHTML = `${esc(it.effect)} — 진화 레벨에 닿으면 진화해요<br>가진 수 ${have}`;
-    if (p && lv != null && lv < 100) b.textContent = `이 탭 파트너에게 (Lv ${lv} → ${lv + 1})`;
-    else { b.disabled = true; b.textContent = p ? "Lv 100이에요" : "이 탭에 파트너가 없어요"; }
+    if (p && lv != null && lv < 100) b.textContent = `메인 파트너에게 (Lv ${lv} → ${lv + 1})`;
+    else { b.disabled = true; b.textContent = p ? "Lv 100이에요" : "파티가 비어 있어요"; }
     $("#dex-from").innerHTML += '<button data-a="pick">다른 포켓몬 고르기</button>';
   }
 }
@@ -671,8 +624,9 @@ async function itemAct() {
     return;
   }
   if (it.id === "incense") { const r = await invoke("bag_use", { item: "incense" }).catch(() => null); if (r?.ok) toast(`🪔 향을 피웠어요 — ${minsLeft(r.until)}분 동안 야생 포켓몬이 더 자주 나와요`); return shopRender(); }
-  if (it.id === "candy") return candyGive(d.box?.find((m) => m.folder === "here"));
+  if (it.id === "candy") return candyGive(d.box?.find((m) => m.party === 0));
   if (it.id === "stone") { d.pick = "stone"; d.box = null; return shopRender(); } // 💎 (#93)
+  if (it.id === "cord") { d.pick = "cord"; d.box = null; return shopRender(); } // 🔗 (#122)
   if (it.id === "incq") { // 먼저 부화 (#88): one press
     const r = await invoke("incubator_first", { uid: it.uid }).catch(() => null);
     if (r?.ok) { toast(`🥚 ${josa(it.name, "이", "가")} 먼저 부화해요 — 지금 알은 차례 1로`); d.ii = 0; }
@@ -717,13 +671,13 @@ async function pickRender() {
   const d = dexState, grid = $("#box-grid");
   d.box ||= await invoke("box_list").catch(() => []);
   if (dexState !== d || !d.pick) return;
-  const stone = d.pick === "stone"; // 💎 only those a stone can evolve (#93)
+  const stone = d.pick === "stone" || d.pick === "cord", cord = d.pick === "cord"; // 💎 only those a stone can evolve (#93) · 🔗 a cord, by trade (#122)
   // the one a stone just evolved leaves the list — it's shown on the right until another card is picked (#95)
   const done = stone && d.stoneDone ? boxMons(d.box).find((m) => m.uid === d.stoneDone.uid) : null;
   if (d.stoneDone) d.stoneDone.mon = done;
-  d.list = boxMons(d.box).filter((m) => !stone || (m.stone && m.uid !== done?.uid)).sort((a, b) => (a.folder === "here" ? -1 : 0) - (b.folder === "here" ? -1 : 0) || (b.lv ?? 0) - (a.lv ?? 0));
-  grid.innerHTML = `<h4 class="pk-group"><button class="pk-back">← 가방으로</button> ${stone ? "진화의 돌을 쓸 포켓몬" : "이상한사탕을 줄 포켓몬"}</h4>`
-    + (stone && !d.list.length ? '<p class="pk-empty">돌로 진화하는 포켓몬이 없어요 — 레벨로 진화하는 포켓몬엔 이상한사탕을</p>' : "")
+  d.list = boxMons(d.box).filter((m) => !stone || ((cord ? m.cord : m.stone) && m.uid !== done?.uid)).sort((a, b) => (a.party === 0 ? -1 : 0) - (b.party === 0 ? -1 : 0) || (b.lv ?? 0) - (a.lv ?? 0));
+  grid.innerHTML = `<h4 class="pk-group"><button class="pk-back">← 가방으로</button> ${cord ? "연결의끈을 쓸 포켓몬" : stone ? "진화의 돌을 쓸 포켓몬" : "이상한사탕을 줄 포켓몬"}</h4>`
+    + (stone && !d.list.length ? (cord ? '<p class="pk-empty">교환으로 진화하는 포켓몬이 없어요</p>' : '<p class="pk-empty">돌로 진화하는 포켓몬이 없어요 — 레벨로 진화하는 포켓몬엔 이상한사탕을</p>') : "")
     + d.list.map((m, i) => justEvolved(pkCard(m, i, { icons: TYPE_ICON, ago }).replace('class="pk-card', `class="pk-card${!stone && (m.lv ?? 0) >= 100 ? " off" : ""}`), m)).join("");
   for (const img of grid.querySelectorAll("img[data-gif]")) spriteUrl(img.dataset.gif).then((u) => { if (u) img.src = u; });
   if (done) { d.bi = Math.max(0, Math.min(d.list.length - 1, d.stoneAt ?? 0)); return boxPreview(done); } // no card picked: the keys start where it was
@@ -749,18 +703,25 @@ function stoneEnter(m) {
   if (o?.uid === m?.uid && o.options.length === 1 && o.options[0].ready) return stoneUse(m.uid, o.options[0].to);
   toast("💎 오른쪽에서 갈래를 골라 주세요");
 }
-async function stoneUse(uid, to) {
-  const d = dexState, before = d?.list?.find((m) => m.uid === uid), at = d?.list?.indexOf(before);
-  const r = await invoke("bag_use", { item: "stone", uid, to }).catch(() => null);
-  if (!r?.ok) { toast(r?.why === "offline" ? "인터넷이 돌아오면 다시 — 진화의 돌은 그대로예요" : r?.why === "none" ? "진화의 돌이 없어요" : "이 포켓몬은 지금 진화의 돌로 진화하지 않아요"); return; }
+async function stoneUse(uid, to, item = "stone") {
+  const d = dexState, before = d?.list?.find((m) => m.uid === uid), at = d?.list?.indexOf(before), what = item === "cord" ? "연결의끈" : "진화의 돌";
+  const r = await invoke("bag_use", { item, uid, to }).catch(() => null);
+  if (!r?.ok) { toast(r?.why === "offline" ? `인터넷이 돌아오면 다시 — ${what}${item === "cord" ? "은" : "은"} 그대로예요` : r?.why === "none" ? `${what}이 없어요` : `이 포켓몬은 지금 ${what}로 진화하지 않아요`); return; }
   if (!d || dexState !== d) return;
   // its result in the preview (#94, PKM-28 rule 3-1) — 내 포켓몬: the same card, now the new form; the stone list: it leaves the list (#95)
-  d.stoneDone = { uid, from: r.from || (before && { name: before.name, gif: before.gif }), to: r.evolved, coins: r.coins || 0, newCoins: r.newCoins || 0, played: false };
+  d.stoneDone = { uid, item, from: r.from || (before && { name: before.name, gif: before.gif }), to: r.evolved, coins: r.coins || 0, newCoins: r.newCoins || 0, played: false };
   d.stoneOpts = null; d.stoneAt = at; shopSt = r;
   coins = await invoke("economy_state").catch(() => coins);
   d.box = await invoke("box_list").catch(() => []);
   dexTitle();
   return d.view === "box" ? boxRender() : pickRender();
+}
+// 🔗 연결의끈 (#122): the picked one's button — one press evolves it (the cord is used then)
+function cordPick(m) {
+  const b = $("#dex-take"), left = coins?.cords || 0;
+  b.hidden = false; b.className = "";
+  b.disabled = !left || !m?.cord;
+  b.textContent = !left ? "연결의끈을 다 썼어요" : `진화시키기 · 남은 ${left}개`;
 }
 // the one a stone just evolved (#94) — an individual: starters and other cards without a uid never are
 const isJust = (m) => m?.uid != null && dexState?.stoneDone?.uid === m.uid;
@@ -770,12 +731,11 @@ const justEvolved = (html, m) => (isJust(m) ? html.replace('class="pk-card', 'cl
 async function stoneResult(m) {
   const d = dexState, s = d.stoneDone, b = $("#dex-take"), img = $("#dex-img"), box = $(".dex-preview");
   b.hidden = true;
-  const left = coins?.stones || 0;
+  const left = s.item === "cord" ? coins?.cords || 0 : coins?.stones || 0;
   $("#dex-meta").innerHTML = `<b class="pk-evo-msg">🎉 ${esc(josa(s.from?.name || "", "이", "가"))} ${esc(josa(s.to.name, "으로", "로"))} 진화했어요!</b><br>`
     + `<span class="pk-evo-coins">+${coinTxt(s.coins - s.newCoins)} 진화${s.newCoins ? ` · +${coinTxt(s.newCoins)} 새 종` : ""}</span><br>${esc(lvLine(m))}`;
-  $("#dex-from").innerHTML = (m.folder !== "here" && tab ? '<button data-sd="take">이 탭의 파트너로</button>' : "")
-    + '<button data-sd="box">내 포켓몬에서 보기</button>'
-    + (left ? "" : '<p class="pk-note">진화의 돌을 다 썼어요</p>'); // another one: pick it on the left (#95)
+  $("#dex-from").innerHTML = '<button data-sd="box">내 포켓몬에서 보기</button>'
+    + (left ? "" : `<p class="pk-note">${s.item === "cord" ? "연결의끈" : "진화의 돌"}을 다 썼어요</p>`); // another one: pick it on the left (#95)
   if (s.played) return;
   s.played = true;
   const show = async (gif) => { const u = gif && await spriteUrl(gif); if (u) { img.src = u; await img.decode().catch(() => {}); img.style.width = `${img.naturalWidth * Math.max(1, Math.min(4, Math.floor(200 / img.naturalWidth)))}px`; } };
@@ -797,7 +757,7 @@ $("#dex-meta").addEventListener("click", (e) => { const q = e.target.closest("[d
 
 function boxMatch(q, m) {
   const e = dexState.byNo.get(m.id);
-  return dexMatch(q, m.id, { ...(e || { name: m.name, types: m.types, caught: true }), caughtAt: m.at, fresh: m.new ? 1 : 0, shiny: m.shiny, partner: m.folder ? 1 : 0, grad: m.grad, egg: m.egg });
+  return dexMatch(q, m.id, { ...(e || { name: m.name, types: m.types, caught: true }), caughtAt: m.at, fresh: m.new ? 1 : 0, shiny: m.shiny, partner: m.party != null ? 1 : 0, grad: m.grad, egg: m.egg }); // 파트너 = in the party (#122)
 }
 // 알 are not Pokémon yet: they live in the bag's incubator, not among 내 포켓몬's cards (#91, PKM-14 rule 6)
 const boxMons = (list) => (list || []).filter((m) => !m.egg);
@@ -807,43 +767,23 @@ function boxSorted() {
   const recent = (a, b) => (b.at || 0) - (a.at || 0) || b.uid - a.uid;
   const by = {
     recent, no: (a, b) => a.id - b.id || recent(a, b), name: (a, b) => String(a.name).localeCompare(String(b.name), "ko") || recent(a, b),
-    lv: (a, b) => (b.lv ?? 0) - (a.lv ?? 0) || recent(a, b), partner: (a, b) => (a.folder ? (a.folder === "here" ? 0 : 1) : 2) - (b.folder ? (b.folder === "here" ? 0 : 1) : 2) || recent(a, b),
+    lv: (a, b) => (b.lv ?? 0) - (a.lv ?? 0) || recent(a, b), partner: (a, b) => (a.party ?? 9) - (b.party ?? 9) || recent(a, b),
   }[boxSort] || recent;
   return list.sort(by);
 }
-const CHOOSE_GROUPS = [
-  ["starter", "🌟 첫 파트너", "처음 한 번 · 1·2·3"],
-  ["rest", "📦 박스에서 쉬는 포켓몬", ""],
-  ["other", "🏠 다른 폴더의 파트너", "데려오면 그 폴더는 파트너가 비어요"],
-];
 function boxRender() {
   const d = dexState, grid = $("#box-grid"), q = dexQuery.trim();
   const prev = d.list?.[d.bi];
   const card = (m) => pkCard(m, d.list.indexOf(m), { icons: TYPE_ICON, ago });
   let html = "", note = "";
-  if (d.view === "choose") {
-    const items = chooseItems(d.chooseOpts || { resting: [], others: [] }).filter((m) => m.kind === "loading" || !q || boxMatch(q, m));
-    d.list = items.filter((m) => m.kind !== "loading");
-    for (const [g, title, sub] of CHOOSE_GROUPS) {
-      const these = items.filter((m) => m.group === g);
-      if (g === "starter" && !d.chooseOpts?.starter) continue;
-      if (g === "other" && !these.length) continue;
-      html += `<h4 class="pk-group">${title}${sub ? `<span class="dim">${sub}</span>` : ""}</h4>`;
-      if (g === "starter" && d.chooseNote) html += `<p class="pk-note">${esc(d.chooseNote)}</p>`;
-      else if (g === "starter" && !d.chooseOpts.starter.ready) html += `<p class="pk-note">첫 파트너 후보를 받는 중… ${d.chooseOpts.starter.set.length}/${d.chooseOpts.starter.total} (PokéAPI)</p>`;
-      html += these.length ? these.map(card).join("")
-        : g === "rest" ? '<p class="pk-note">쉬는 포켓몬이 없어요 — 작업을 끝내면 야생 포켓몬이 나타날 수 있어요(파트너 없는 폴더는 더 자주)</p>' : "";
-    }
-  } else {
-    d.list = boxSorted();
-    const eggs = (d.box || []).filter((m) => m.egg).length;
-    note = eggs && !q ? `<p class="pk-note pk-box-eggs">🥚 알 ${eggs}개는 👜 가방의 부화기에 있어요 <button data-view="bag">가방 열기</button></p>` : ""; // #91
-    html = note + d.list.map((m) => justEvolved(card(m), m)).join("");
-  }
+  d.list = boxSorted();
+  const eggs = (d.box || []).filter((m) => m.egg).length;
+  note = partyStrip(d) + (eggs && !q ? `<p class="pk-note pk-box-eggs">🥚 알 ${eggs}개는 👜 가방의 부화기에 있어요 <button data-view="bag">가방 열기</button></p>` : ""); // the party row (#122) · #91
+  html = note + d.list.map((m) => justEvolved(card(m), m)).join("");
   $("#dex-found").textContent = q ? `${d.list.length}마리` : "";
   if (!d.list.length && (q || d.view === "box")) {
     grid.innerHTML = note + `<div class="pk-empty" id="box-empty">${q ? `<b>"${esc(q)}"</b>에 맞는 포켓몬이 없어요<button id="box-clear">검색 지우기</button>`
-      : "아직 잡은 포켓몬이 없어요 — 작업을 끝내면 가끔 야생 포켓몬이 나타나요"}</div>`;
+      : '아직 포켓몬이 없어요 — 첫 포켓몬을 골라요<button data-a="choose">포켓몬 고르기</button>'}</div>`; // an empty box (#122)
     $(".dex-preview").style.visibility = "hidden";
     return;
   }
@@ -852,7 +792,9 @@ function boxRender() {
   if (!d.list.length) { $(".dex-preview").style.visibility = "hidden"; return; }
   $(".dex-preview").style.visibility = "";
   const keep = prev ? d.list.findIndex((m) => (m.uid != null ? m.uid === prev.uid : m.key === prev.key)) : -1;
-  boxSelect(keep >= 0 ? keep : Math.min(d.bi || 0, d.list.length - 1));
+  const want = d.boxSel ? d.list.findIndex((m) => m.id === d.boxSel) : -1; // opened on a species (an evolution · a hatch, #121)
+  d.boxSel = null;
+  boxSelect(want >= 0 ? want : keep >= 0 ? keep : Math.min(d.bi || 0, d.list.length - 1));
 }
 function boxSelect(i) {
   const d = dexState;
@@ -883,9 +825,8 @@ function boxPreview(m) {
   else img.removeAttribute("src");
   $("#dex-name").textContent = m.egg ? `🥚 ${m.name}` : `#${String(m.id).padStart(3, "0")} ${m.grad ? "🎓 " : ""}${m.shiny ? "✨" : ""}${m.name}`; // #84
   const types = (m.types || []).map((t) => `${TYPE_ICON[t] || ""} ${t}`).join(" · ");
-  if (m.kind === "starter") $("#dex-meta").innerHTML = `${types}<br>첫 파트너 후보 — 처음 한 번만 고를 수 있어요`;
-  else {
-    const where = m.folder === "here" ? "이 탭의 파트너" : m.folder ? `📁 ${esc(m.folder)}의 파트너${m.folderGone ? " (닫힌 폴더)" : ""}` : "박스에서 쉬는 중";
+  {
+    const where = m.party === 0 ? "메인 파트너" : m.party != null ? `파티 ${m.party + 1}번` : "박스에서 쉬는 중"; // #122
     $("#dex-meta").innerHTML = `${types}<br>${esc(lvLine(m))}<br>${where}`
       + (m.how || m.at ? `<br>${HOW[m.how] || ""}${m.at ? ` · ${ago(m.at)}` : ""}` : "")
       // the catch log (#44): where and during whose task (recorded from beta.29 on), evolutions
@@ -907,46 +848,33 @@ function boxPreview(m) {
   }
 }
 // the take button: a starter / resting → take · this tab's already · another folder's → press twice
+// the main button (#122): in the party → [메인 파트너로] (the 메인 already: off); not → [파티에 넣기] (full: off — nobody is pushed out)
 function boxButton() {
   const d = dexState, m = boxCur(d), b = $("#dex-take");
   if (isJust(m)) return stoneResult(m); // 💎 just evolved: its result (#94)
   if (d.pick === "stone") return stoneButtons(m); // 💎 (#93)
+  if (d.pick === "cord") return cordPick(m); // 🔗 (#122)
   if (d.pick) return candyButton(m);
-  if (d.view === "box" && m.stone && coins?.stones) $("#dex-from").innerHTML = `<button data-a="stone">💎 진화의 돌로 (${coins.stones})</button>`; // 내 포켓몬 (S5)
-  b.hidden = !tab;
-  b.disabled = m.folder === "here";
-  b.className = d.boxAsk ? "confirm" : "";
-  b.textContent = m.kind === "starter" ? `첫 파트너로 (${m.n})` : m.folder === "here" ? "이 탭의 파트너예요" : !m.folder ? "이 탭의 파트너로"
-    : d.boxAsk ? `한 번 더 누르면 데려오기 (📁 ${m.folder}는 비어요)` : `📁 ${m.folder}에서 데려오기`;
-  for (const c of document.querySelectorAll("#box-grid .pk-card.confirm")) c.classList.remove("confirm");
-  if (d.boxAsk) $(`#box-grid .pk-card[data-i="${d.bi}"]`)?.classList.add("confirm");
+  const extra = [d.view === "box" && m.stone && coins?.stones ? `<button data-a="stone">💎 진화의 돌로 (${coins.stones})</button>` : "", // 내 포켓몬 (S5)
+    d.view === "box" && m.cord && coins?.cords ? `<button data-a="cord">🔗 연결의끈으로 (${coins.cords})</button>` : "", partyButtons(m)];
+  $("#dex-from").innerHTML = extra.join("");
+  const p = d.party, full = p ? p.list.length >= p.max : false;
+  b.hidden = false; b.className = "";
+  b.disabled = m.party === 0 || (m.party == null && full);
+  b.textContent = m.party === 0 ? "메인 파트너예요" : m.party != null ? "메인 파트너로" : full ? "파티가 찼어요 — 하나를 빼고 넣어요" : "파티에 넣기";
 }
 async function boxTake() {
   const d = dexState, m = d?.list?.[d.bi];
-  if (d?.view === "shop" || d?.view === "bag") return d.pick === "stone" ? stoneEnter(m) : d.pick ? candyGive(m) : itemAct();
-  if (!m || m.folder === "here") return;
-  if (m.folder && m.kind !== "starter" && !d.boxAsk) { d.boxAsk = true; return boxButton(); }
-  return pkTake(m);
-}
-// take a Pokémon for this tab: a starter or an individual (uid) — the window closes, and the main window's pane shows
-// it and reacts (💕, "…와 함께해요!" — the main process's "partner-taken"; Tamer's window isn't brought forward, APP-22 rule 8)
-async function pkTake(m) {
-  if (!tab) return;
-  const args = m.kind === "starter" ? { starter: m.id } : { uid: m.uid };
-  const from = m.folder && m.folder !== "here" && m.kind !== "starter" ? m.folder : null;
-  const pk = await invoke("partner_take", { ...args, from }).catch((e) => { toast(String(e.message || e).replace(/^.*Error: /, "")); return null; });
-  if (pk) closeDex();
+  if (d?.view === "shop" || d?.view === "bag") return d.pick === "stone" ? stoneEnter(m) : d.pick === "cord" ? (m && stoneUse(m.uid, null, "cord")) : d.pick ? candyGive(m) : itemAct();
+  if (!m || m.uid == null || m.party === 0 || $("#dex-take").disabled) return;
+  const cur = (d.party?.list || []).map((x) => x.uid);
+  return partyChange(m.party != null ? [m.uid, ...cur.filter((x) => x !== m.uid)] : [...cur, m.uid]); // 메인 파트너로 · 파티에 넣기
 }
 function boxKey(k) {
   const d = dexState, n = d.list?.length || 0;
-  if (d.view === "choose" && /^[1-3]$/.test(k)) { // the first partner, at once (as before)
-    const s = d.list?.find((m) => m.kind === "starter" && m.n === Number(k));
-    if (s) pkTake(s);
-    return !!s;
-  }
   const cols = getComputedStyle($("#box-grid")).gridTemplateColumns.split(" ").length || 4;
   const cur = $(`#box-grid .pk-card[data-i="${d.bi}"]`);
-  // ↑↓: the card above / below (the groups of 파트너 고르기 break the rows)
+  // ↑↓: the card above / below (a group heading breaks the rows)
   const vert = (dir) => { const to = cur && dexGeo(cur, [...document.querySelectorAll("#box-grid .pk-card[data-i]")].filter((c) => Number(c.dataset.i) >= 0), dir); if (to) boxSelect(Number(to.dataset.i)); };
   if (k === "/") $("#dex-search").focus();
   // a stone's result on the right, no card picked (#95): the first move picks the card where it was, Enter does nothing
@@ -1019,58 +947,38 @@ function dexShow(n) {
   $("#dex-name").textContent = e ? `${no} ${e.caught && e.shiny ? "✨" : ""}${e.name}` : `${no} ???`;
   $("#dex-meta").innerHTML = !e ? "아직 만나지 못했어요"
     : `${(e.types || []).map((t) => `${TYPE_ICON[t] || ""} ${t}`).join(" · ")}<br>만난 횟수 ${e.count} · ${e.caught ? `● 잡음 · 📦 ${e.owned || 0}마리` : "○ 만나기만 함"}`;
-  // owned: where the individuals are, and what "take" will do (resting → now; another folder's → ask)
+  // owned: where the individuals are (#122: in the party / resting), and [파티에 넣기] for a resting one (full: off)
   const take = $("#dex-take");
   take.className = "";
-  const o = d.opts, rest = o?.resting.filter((m) => m.id === d.sel) || [], others = o?.others.filter((m) => m.id === d.sel) || [];
-  const mine = o?.current?.id === d.sel;
+  const mons = boxMons(d.box).filter((m) => m.id === d.sel), inParty = mons.filter((m) => m.party != null), rest = mons.filter((m) => m.party == null);
   if (e?.owned > 0) {
-    const where = [mine ? "이 탭의 파트너" : "", rest.length ? `쉬는 ${rest.length}` : "", ...others.map((m) => `📁 ${esc(m.folderName)}`)].filter(Boolean).join(" · ");
+    const where = [inParty.some((m) => m.party === 0) ? "메인 파트너" : "", inParty.filter((m) => m.party > 0).length ? `파티 ${inParty.filter((m) => m.party > 0).length}` : "", rest.length ? `쉬는 ${rest.length}` : ""].filter(Boolean).join(" · ");
     $("#dex-meta").innerHTML += `<br>${where}`;
   }
-  take.hidden = !rest.length;
-  take.textContent = "이 탭의 파트너로";
-  // none resting: one button per folder that has one (EXP shown) — click twice to take it
-  d.fromOthers = rest.length ? [] : others;
-  renderFrom(e, -1);
+  // PKM-12 rule 1: in the party (not the 메인) → [메인 파트너로]; else a resting one → [파티에 넣기] (full: off)
+  const full = d.party ? d.party.list.length >= d.party.max : false, toMain = inParty.find((m) => m.party > 0);
+  take.hidden = !toMain && !rest.length;
+  take.disabled = !toMain && full;
+  take.textContent = toMain ? "메인 파트너로" : full ? "파티가 찼어요" : "파티에 넣기";
+  $("#dex-from").innerHTML = "";
   $("#dex-pos").textContent = `${d.sel} / ${d.total}`;
 }
 
+// [파티에 넣기] from the Pokédex (#122): its newest resting individual
 async function dexChoose() {
   if (dexState?.view !== "dex") return boxTake();
   const d = dexState, e = d?.byNo.get(d.sel);
-  if (!e || !tab) return;
+  if (!e) return;
   if (!e.owned) { toast(e.caught ? `박스에 ${e.name}가 없어요` : `${josa(e.name, "은", "는")} 아직 잡지 못했어요`); return; }
-  const o = d.opts;
-  const rest = o?.resting.findLast((m) => m.id === e.id);
-  const other = o?.others.find((m) => m.id === e.id);
-  if (!rest && !other) { toast(o?.current?.id === e.id ? "이미 이 탭의 파트너예요" : `박스에 ${e.name}가 없어요`); return; }
-  if (!rest) return dexFrom(0); // Enter: the first folder's (asks once)
-  return dexTake(rest, null);
+  const mons = boxMons(d.box).filter((m) => m.id === e.id), toMain = mons.find((m) => m.party > 0);
+  if (toMain) { await partyChange([toMain.uid, ...(d.party?.list || []).map((m) => m.uid).filter((u) => u !== toMain.uid)]); return dexSelect(d.sel); } // [메인 파트너로]
+  if (mons.some((m) => m.party === 0) && !mons.some((m) => m.party == null)) { toast(`${josa(e.name, "은", "는")} 메인 파트너예요`); return; }
+  const r = await invoke("party_add", { id: e.id }).catch(() => null);
+  if (!r?.ok) { if (r?.why === "full") toast("파티가 찼어요 — 내 포켓몬에서 하나를 빼고 넣어요"); return; } // full: nothing else (PKM-12 rule 1)
+  toast(`⭐ ${josa(e.name, "이", "가")} 파티에 들어갔어요`);
+  d.party = { ...r, recent: d.party?.recent }; d.box = await invoke("box_list").catch(() => d.box);
+  dexSelect(d.sel);
 }
-
-// take another folder's individual (i in dexState.fromOthers): first press asks, second takes
-function dexFrom(i) {
-  const m = dexState?.fromOthers?.[i];
-  const b = $(`#dex-from button[data-i="${i}"]`);
-  if (!m || !b) return;
-  if (!b.classList.contains("confirm")) return renderFrom(dexState.byNo.get(dexState.sel), i);
-  return dexTake(m, m);
-}
-
-// the folders this species can be taken from; `ask` = the one waiting for the second press
-function renderFrom(e, ask) {
-  const list = dexState?.fromOthers || [];
-  $("#dex-from").innerHTML = list.length
-    ? `<div class="dim">쉬는 ${esc(e.name)}가 없어요 — 다른 폴더에서 데려오기 (그 폴더는 비어요)</div>`
-      + list.map((m, i) => i === ask
-        ? `<button data-i="${i}" class="confirm">한 번 더 누르면 ${esc(m.folderName)}의 ${esc(m.name)} 데려오기</button>`
-        : `<button data-i="${i}">📁 ${esc(m.folderName)} · Lv ${m.lv ?? "?"}</button>`).join("")
-    : "";
-}
-
-// a resting one → this tab's partner; another folder's (other = it) → taken from there
-const dexTake = (m, other) => pkTake({ uid: m.uid, folder: other ? other.folderName : null });
 
 // Esc · ⌘W · ✕: the window goes (closed = gone, APP-22 rule 5) — its last view and search stay with the main process
 function closeDex() { invoke("poke_close").catch(() => {}); }
@@ -1090,7 +998,7 @@ function dexKey(e) {
   const d = dexState;
   if (!d) return false;
   const k = keyOf(e), cols = dexCols();
-  if ((k === "Escape" || k === "q") && d.pick) { d.pick = false; d.stoneOpts = null; d.stoneDone = null; shopRender(); } // choosing who gets the candy / the stone: back to the bag
+  if ((k === "Escape" || k === "q") && d.pick) { d.pick = false; d.stoneOpts = null; d.stoneDone = null; shopRender(); } // choosing who gets the candy / the stone / the cord: back to the bag
   else if (k === "Escape" || k === "q") dexEsc();
   else if (k === "m" || k === "M") dexView(d.view === "box" ? "dex" : "box");
   else if ((k === "s" || k === "S") && !d.pick) dexView("shop"); // #76
@@ -1178,13 +1086,15 @@ $("#box-grid").addEventListener("click", async (e) => {
     return itemSelect(i);
   }
   if (e.target.closest(".pk-goods")) return shopView(); // 빈 가방 → 상점
-  // ⭐ 파티 (#107): a new list each time — the main process checks it (partner.partySet)
-  const pin = e.target.closest("[data-party-in]"), pout = e.target.closest("[data-party-out]"), plead = e.target.closest("[data-party-lead]");
-  if (pin || pout || plead) {
-    const cur = (dexState?.party?.list || []).map((m) => m.uid);
-    const u = Number((pin || pout || plead).dataset.partyIn || (pin || pout || plead).dataset.partyOut || (pin || pout || plead).dataset.partyLead);
-    return partyChange(pin ? [...cur, u] : pout ? cur.filter((x) => x !== u) : [u, ...cur.filter((x) => x !== u)]);
+  // 파티 줄 (#122): a slot picks that Pokémon below (a search hiding it is cleared)
+  const slot = e.target.closest("[data-pslot]");
+  if (slot) {
+    const u = Number(slot.dataset.pslot), d = dexState;
+    let i = d.list.findIndex((m) => m.uid === u);
+    if (i < 0 && dexQuery) { setQuery(""); $("#dex-search").value = ""; boxRender(); i = dexState.list.findIndex((m) => m.uid === u); }
+    return i >= 0 ? boxSelect(i) : undefined;
   }
+  if (e.target.closest('[data-a="choose"]')) return invoke("choose_open").catch(() => {}); // an empty party (#122)
   const go = e.target.closest("button[data-view]"); // 내 포켓몬 "가방 열기" (#91) · 가방 "막 태어남 [보기]" (#88)
   if (go) return dexView(go.dataset.view);
   const add = e.target.closest("[data-incadd]"); // 빈 부화기 → 가방의 알 넣기 (#88)
@@ -1196,36 +1106,29 @@ $("#box-grid").addEventListener("click", async (e) => {
   if (e.target.closest(".pk-back")) { dexState.pick = false; dexState.stoneDone = null; return shopRender(); }
   const c = e.target.closest(".pk-card[data-i]"); if (c && Number(c.dataset.i) >= 0) boxSelect(Number(c.dataset.i));
 });
-$("#box-grid").addEventListener("dblclick", (e) => { if (dexState?.view === "party") return; if (e.target.closest(".pk-card[data-i]") || (dexState?.view === "bag" && e.target.closest(".pk-item[data-i]"))) boxTake(); }); // the shop buys only by its button (#81)
+$("#box-grid").addEventListener("dblclick", (e) => { if (e.target.closest(".pk-card[data-i]") || (dexState?.view === "bag" && e.target.closest(".pk-item[data-i]"))) boxTake(); }); // the shop buys only by its button (#81)
 $("#dex-from").addEventListener("click", async (e) => {
   const b = e.target.closest("button");
   if (b?.dataset.a === "pick") { dexState.pick = true; return shopRender(); } // 🍬 다른 포켓몬 고르기 (#76)
   if (b?.dataset.a === "stone") { const m = dexState.list?.[dexState.bi]; if (m) stoneButtons(m); return; } // 💎 내 포켓몬에서 (#93)
+  if (b?.dataset.a === "cord") { const m = dexState.list?.[dexState.bi]; if (m) stoneUse(m.uid, null, "cord"); return; } // 🔗 내 포켓몬에서 (#122)
+  if (b?.dataset.partyOut) { const u = Number(b.dataset.partyOut); return partyChange((dexState.party?.list || []).map((m) => m.uid).filter((x) => x !== u)); } // 파티에서 빼기 (#122)
   if (b?.dataset.stone) return stoneUse(Number(b.dataset.uid), Number(b.dataset.stone)); // 💎 a stage (#93)
   if (b?.dataset.sd) { // 💎 after the evolution (#94)
     const d = dexState, m = boxCur(d), uid = d.stoneDone?.uid;
-    if (b.dataset.sd === "take" && m) { d.stoneDone = null; return pkTake(m); }
     d.stoneDone = null;
     if (b.dataset.sd === "box") { d.pick = false; await dexView("box"); const i = dexState.list.findIndex((x) => x.uid === uid); return boxSelect(Math.max(0, i)); }
     return;
   }
   if (b?.dataset.legend) return invoke("bag_use", { item: "legend", id: Number(b.dataset.legend) }).then((r) => { if (r?.ok) toast("⭐ 다음 대발견에 걸어 뒀어요"); return shopRender(); }); // #82
-  if (b) dexFrom(Number(b.dataset.i));
 });
+$("#dex-meta").addEventListener("click", (e) => { if (e.target.closest('[data-a="choose"]')) invoke("choose_open").catch(() => {}); }); // 홈, an empty party (#122)
 
 // ── what the main process tells (APP-22 rule 3) ──────────────────────────────────────────────────────────────────
 // asked again while open (⌘P · ⌘D · a chip · the dashboard · the overlay): that view / species
 listen("poke-open", (e) => openDex(e.payload?.sel || undefined, e.payload?.view || undefined));
-// this tab changed (another tab on screen, closed, its partner taken or freed): the same view, drawn for it
-async function tabNow(t) {
-  tab = t === undefined ? await invoke("poke_tab").catch(() => null) : t;
-  if (dexState) openDex(dexState.view === "dex" ? dexState.sel : undefined, dexState.view);
-}
-listen("poke-tab", (e) => tabNow(e.payload || null));
-listen("partner", (e) => { if (tab && e.payload?.ws === tab.ws) tabNow(); });
-listen("partner-choose", (e) => { if (tab && e.payload?.ws === tab.ws) tabNow(); });
-// starters arriving while 파트너 고르기 is open
-listen("partner-today", async () => { if (dexState?.view === "choose") renderChoose(await invoke("partner_options").catch(() => null)); });
+// the tab on screen (kept for the tests' pokeFor): nothing in the window is drawn for it any more (#122 — one party)
+listen("poke-tab", (e) => { tab = e.payload || null; });
 // 🪙 포켓코인 changed (#72): the chip and 홈 follow
 listen("economy", (e) => {
   const { ws, gained, ...c } = e.payload;
@@ -1260,10 +1163,13 @@ window.addEventListener("keydown", (e) => {
 // main window merges it) and the scenes; the old #17 · #21 · #27 checks moved with the screens ─────────────────────
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 function labState() {
-  const d = dexState, st = d?.chooseOpts?.starter, on = !!d;
+  const d = dexState, on = !!d;
   return {
-    poke: on ? d.view || "dex" : null, choose: d?.view === "choose", top: "poke", pokeFor: tab?.folder ?? null,
-    starters: st ? { ready: !!st.ready, n: st.set.length } : null, cards: document.querySelectorAll("#box-grid .pk-card[data-i]").length,
+    poke: on ? d.view || "dex" : null, top: "poke", pokeFor: tab?.folder ?? null,
+    cards: document.querySelectorAll("#box-grid .pk-card[data-i]").length,
+    party: on && d.party ? { n: d.party.list.length, max: d.party.max, next: d.party.next, names: d.party.list.map((m) => m.name) } : null, // #122
+    pslots: on ? [...document.querySelectorAll("#box-grid .pk-pslot")].map((c) => c.textContent.replace(/\s+/g, " ").trim()) : null,
+    take: on && !$("#dex-take").hidden ? { text: $("#dex-take").textContent, off: $("#dex-take").disabled } : null,
     toast: $("#toast")?.classList.contains("show") ? $("#toast").textContent : null,
     focus: document.activeElement?.id || document.activeElement?.className?.toString().slice(0, 40) || null,
     incubator: on ? $("#box-grid .pk-inc-row")?.textContent || null : null, // #85
@@ -1295,7 +1201,6 @@ function labState() {
     items: on ? [...document.querySelectorAll("#box-grid .pk-item")].map((c) => `${c.querySelector("b")?.textContent}:${c.querySelector(".pk-price")?.textContent}${c.classList.contains("off") ? ":off" : ""}`) : null,
     effects: on ? $("#box-grid .pk-effects")?.textContent || null : null,
     incense: on ? $("#dex-title .pk-incense")?.textContent || null : null, // #79
-    homeAgents: on ? [...document.querySelectorAll("#box-grid .pk-agent")].map((a) => a.textContent.replace(/\s+/g, " ").trim()) : null, // PKM-10 rule 6
     // the frame inside the window, the hint row at its bottom (#38: a small window too)
     pokeFits: on ? (() => { const r = $("#dex .pk-window")?.getBoundingClientRect(), f = $("#dex .pk-window > footer")?.getBoundingClientRect(); return !!r && r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight && !!f && f.bottom <= innerHeight + 1; })() : null,
   };
@@ -1306,7 +1211,7 @@ const LAB = {
   view: async (v) => { await dexView(v); await wait(300); return dexState?.view; },
   search: (q) => typeIn(q),
   click: (sel) => { const b = $(sel); b?.click(); return !!b; },
-  // 👜 who gets the candy / a stone (scenes): pick = true | "stone", then back
+  // 👜 who gets the candy / a stone / a cord (scenes): pick = true | "stone" | "cord", then back
   pick: async (p) => { dexState.pick = p; dexState.stoneDone = null; await shopRender(); return true; },
   // 💎 the result in place (#94): the first card marked, the preview's message and buttons (the end state, no animation)
   stoneDone: async () => { const m = dexState.list?.[0]; if (!m) return false; dexState.stoneDone = { uid: m.uid, from: { name: "피츄", gif: null }, to: { name: m.name, gif: m.gif }, coins: 60, newCoins: 30, played: false }; await pickRender(); return true; },
@@ -1403,14 +1308,13 @@ const LAB = {
     return out;
   },
   take: (id) => { boxSelect(dexState.list.findIndex((m) => m.id === id)); return boxTake(); },
+  pickUid: (uid) => { boxSelect(dexState.list.findIndex((m) => m.uid === uid)); return boxCur(dexState)?.uid ?? null; }, // 내 포켓몬 on one individual (#122)
   // the old in-page checks (src/main.js — x1e, first run, new user, wild, poke): the window's data, a card by key, Enter …
-  d: () => { const d = dexState; if (!d) return null; const o = d.chooseOpts, p = d.opts;
-    const lite = (m) => m && { id: m.id, uid: m.uid, name: m.name, types: m.types, folderName: m.folderName };
-    return { view: d.view, sel: d.sel, zone: d.zone, ri: d.ri, bi: d.bi, recent: d.recent?.length || 0, hits: d.hits, chooseNote: d.chooseNote || "",
-      choose: o ? { starter: o.starter ? { ready: !!o.starter.ready, set: o.starter.set.map(lite) } : null, resting: o.resting.map(lite), others: o.others.map(lite), current: lite(o.current) } : null,
-      opts: p ? { resting: p.resting.map(lite), others: p.others.map(lite), current: lite(p.current) } : null,
+  d: () => { const d = dexState; if (!d) return null;
+    return { view: d.view, sel: d.sel, zone: d.zone, ri: d.ri, bi: d.bi, recent: d.recent?.length || 0, hits: d.hits,
+      party: d.party ? d.party.list.map((m) => ({ uid: m.uid, id: m.id, name: m.name, lv: m.lv })) : null,
       owned: d.entries.filter((e) => e.owned > 0).map((e) => e.id), seenOnly: d.entries.filter((e) => !e.caught).map((e) => e.id),
-      list: (d.list || []).map((m) => ({ key: m.key, id: m.id, uid: m.uid, name: m.name })) }; },
+      list: (d.list || []).map((m) => ({ key: m.key, id: m.id, uid: m.uid, name: m.name, party: m.party ?? null })) }; },
   pickKey: (key) => { boxSelect(dexState.list.findIndex((m) => m.key === key)); return !!$(`#box-grid .pk-card[data-key="${key}"].sel`); },
   enter: () => boxTake(),
   select: (n) => { dexSelect(n); return dexState.sel; },

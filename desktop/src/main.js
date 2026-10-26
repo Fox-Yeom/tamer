@@ -353,7 +353,7 @@ function renderWhere(tab) {
     const show = !!(where?.outside && !where.dismissed);
     el.hidden = !show;
     if (!show) continue;
-    el.innerHTML = `<span class="msg">⚠ 이 에이전트는 다른 폴더 <b>${esc(where.label)}</b>에서 실행 중이에요 — 이 탭(${esc(base(tab.cwd))})의 변경 사항과는 따로예요(경험치는 이 탭 파트너가 받아요)</span>`
+    el.innerHTML = `<span class="msg">⚠ 이 에이전트는 다른 폴더 <b>${esc(where.label)}</b>에서 실행 중이에요 — 이 탭(${esc(base(tab.cwd))})의 변경 사항과는 따로예요(경험치는 파티 차례가 받아요)</span>`
       + `<button class="move" title="${esc(where.full)}">새 탭으로 옮기기</button><button class="ghost keep">그대로 두기</button>`;
     el.querySelector(".move").onclick = () => moveAgent(tab, pane);
     el.querySelector(".keep").onclick = () => { where.dismissed = true; renderWhere(tab); };
@@ -571,7 +571,7 @@ async function openFolderNow(cwd, { resume }) {
   if (info.test.perf) perfTest(tab);
   else startPane(tab.panes.shell).then(() => { if (info.test.shell_input) autoType(tab, info.test.shell_input); });
   if (!tab.shellOnly) invoke("agent_state", { ws: tab.id });
-  invoke("partner_state", { ws: tab.id }).then((pk) => { if (pk?.choose) needPartner(tab); else if (pk) showPartner(tab, pk); });
+  invoke("partner_state", { ws: tab.id }).then((pk) => { if (pk?.choose) showChoose(tab); else if (pk) showPartner(tab, pk); }); // the 메인 파트너 (#122)
   return tab;
 }
 
@@ -1206,19 +1206,19 @@ function eggShow(tab, pk) {
   $(".poke", tab.view).hidden = true;
   $(".pokeball", tab.view).hidden = true;
 }
-// 🎓 the graduation band (#84, SCREENS_P3 S8): stays until answered — 계속 함께 / 새 파트너 데려오기
+// 🎓 the graduation band (#84, SCREENS_P3 S8 · #122 J1): stays until answered — 계속 함께 / 다른 포켓몬을 메인으로 (it stays in the party)
 function gradBand(tab, pk) {
   const box = $(".avatar-box", tab.view);
   let el = $(".pk-grad", box);
   if (!pk) { el?.remove(); return; }
   if (!el) { el = document.createElement("div"); el.className = "pk-grad"; box.prepend(el); }
-  el.innerHTML = `<b>🎓 ${esc(josa(pk.name, "이", "가"))} 졸업했어요!</b><span>+${coinTxt(300)} · 🥚 알 +1</span><span class="pk-grad-do"><button data-grad="keep">계속 함께</button><button data-grad="new">새 파트너 데려오기</button></span>`;
+  el.innerHTML = `<b>🎓 ${esc(josa(pk.name, "이", "가"))} 졸업했어요!</b><span>+${coinTxt(300)} · 🥚 알 +1</span><span class="pk-grad-do"><button data-grad="keep">계속 함께</button><button data-grad="new">다른 포켓몬을 메인으로</button></span>`;
 }
 $("#views").addEventListener("click", async (e) => {
   const g = e.target.closest("[data-grad]");
   if (g && active) {
-    await invoke("partner_grad", { ws: active.id, keep: g.dataset.grad === "keep" }); gradBand(active, null); if (active.partner) active.partner.gradAsk = false;
-    if (g.dataset.grad === "new") pokeOpen("choose"); // 새 파트너 데려오기: pressed, so 파트너 고르기 opens (PKM-11 rule 1)
+    await invoke("partner_grad", { keep: g.dataset.grad === "keep" }); // the main process clears every tab's band (partner-grad-done); "new" → 내 포켓몬 파티 줄
+    gradBand(active, null); if (active.partner) active.partner.gradAsk = false;
   }
 });
 // 🐣 the egg hatches (#84, S8): it shakes, goes white, then the Pokémon
@@ -1301,49 +1301,50 @@ async function evolve(tab, from, to) {
   toast(`축하합니다! ${from?.name ?? ""}는 ${to.name}(으)로 진화했다!${to.coins ? ` +${coinTxt(to.coins)}${to.newCoins ? " · 새 종" : ""}` : ""}`); // #72, 표기 #75 · 새 종 #94
 }
 
-// 파트너 고르기 · 도감 · 내 포켓몬 … are the Pokémon window's (poke.html, src/poke/window.js — APP-22 rule 10, #113 P2):
-// this window opens it (⌘P · ⌘D · the menu · the pane's button · its chips) and shows what it took (partner-taken)
+// 도감 · 내 포켓몬 · 상점 … are the Pokémon window's (poke.html, src/poke/window.js — APP-22 rule 10, #113 P2), 포켓몬 고르기 its own
+// window (choose.html, #122): this window opens them (⌘P · ⌘D · the menu · the pane's button · its chips)
 const pokeOpen = (view, sel) => invoke("poke_open", { view, sel }).catch(() => {});
 
-// a tab without a partner: the avatar pane says so — 파트너 고르기 opens only when asked (#113 A8, PKM-11 rule 1)
-function needPartner(tab, freed) {
+// an empty party (#122, PKM-32): the avatar pane says so — [포켓몬 고르기] opens the 포켓몬 고르기 window (asked only, after the first)
+function showChoose(tab) {
   tab.partner = null;
   tab.partnerChecked = true;
-  showEmpty(tab, freed);
-}
-
-// no partner: an empty Poké Ball (drawn here, nothing to download) and how to get one
-function showEmpty(tab, freed) {
+  eggShow(tab, null); gradBand(tab, null);
   $(".poke", tab.view).hidden = true;
   $(".pokeball", tab.view).hidden = true;
   $(".empty-ball", tab.view).hidden = false;
-  $(".poke-label", tab.view).innerHTML = `파트너가 없어요 <button class="need-partner">파트너 고르기</button>`;
-  $(".poke-exp", tab.view).textContent = freed ? "파트너가 다른 폴더로 갔어요 · 작업을 끝내면 야생 포켓몬이 더 자주 나타나요"
-    : "작업을 끝내면 야생 포켓몬이 더 자주 나타나요 — 잡아서 파트너로";
+  $(".poke-label", tab.view).innerHTML = `포켓몬이 없어요 <button class="need-partner">포켓몬 고르기</button>`;
+  $(".poke-exp", tab.view).textContent = "고른 포켓몬이 메인 파트너가 돼요 — 어디서 작업을 끝내도 파티가 커요";
 }
-$("#views").addEventListener("click", (e) => { if (e.target.closest(".need-partner")) pokeOpen("choose"); });
+$("#views").addEventListener("click", (e) => { if (e.target.closest(".need-partner")) invoke("choose_open").catch(() => {}); });
 
-// taken for a tab (here, or in the Pokémon window): its pane shows it, a cute reaction, the toast
-async function partnerTaken(tab, from) {
-  const shown = await invoke("partner_state", { ws: tab.id }).catch(() => null);
-  if (!shown || shown.choose) return;
-  await showPartner(tab, shown); react(tab, "cute");
-  toast(`${josa(shown.name, "과", "와")} 함께해요!${from ? ` (${from}에서 데려옴)` : ""}`);
+// the 메인 파트너 changed (#122, SCREENS_PARTY E3): every tab's pane shows the same one — a new one comes out of its Poké Ball,
+// the first one (chosen in the 포켓몬 고르기 window) reacts; the toast once, in the tab on screen
+async function showMain(tab, pk) {
+  const was = tab.partner?.uid, first = tab.partner == null && tab.partnerChecked;
+  const changed = !pk?.egg && pk?.uid != null && (first || (was != null && was !== pk.uid));
+  const still = document.body.classList.contains("ui-test");
+  if (changed && !still) { $(".poke", tab.view).hidden = true; $(".empty-ball", tab.view).hidden = true; $(".pokeball", tab.view).hidden = false; await new Promise((r) => setTimeout(r, 450)); }
+  tab.partnerChecked = false;
+  await showPartner(tab, pk);
+  if (!changed) return;
+  const img = $(".poke", tab.view);
+  if (!still) { img.classList.add("ball-out"); setTimeout(() => img.classList.remove("ball-out"), 700); }
+  if (first) react(tab, "cute");
+  if (tab === active) toast(first ? `${josa(pk.name, "과", "와")} 함께해요!` : `⭐ ${josa(pk.name, "이", "가")} 메인 파트너가 됐어요`);
 }
-// a caught one → this tab's partner (the wild card's [이 탭의 파트너로]): a resting one of that species, else say where it is
-async function takeSpecies(tab, id) {
-  const o = await invoke("partner_options", { ws: tab.id });
-  const rest = o.resting.findLast((m) => m.id === id); // the newest (e.g. just caught)
-  const other = o.others.find((m) => m.id === id);
-  if (rest) { const pk = await invoke("partner_take", { ws: tab.id, uid: rest.uid }).catch((e) => { toast(String(e.message || e).replace(/^.*Error: /, "")); return null; }); if (pk) await partnerTaken(tab, null); return; }
-  if (other) { toast(`쉬는 ${other.name}가 없어요 — ${other.folderName} 폴더의 파트너예요 (도감에서 데려올 수 있어요)`); return; }
-  toast("박스에 없는 포켓몬이에요 (만나기만 했어요)");
+// a caught one → the party (the wild card's [파티에 넣기], #122): the newest resting one of that species; full → nobody is pushed out
+async function partyAdd(id) {
+  const r = await invoke("party_add", { id }).catch(() => null);
+  if (r?.ok) toast(`⭐ 파티에 들어갔어요 (${r.list.length} / ${r.max})`);
+  else toast(r?.why === "full" ? "파티가 찼어요 — 내 포켓몬에서 하나를 빼고 넣어요" : "쉬는 포켓몬이 없어요 — 이미 파티에 있어요");
+  return r;
 }
 
 // ── right-click menu ────────────────────────────────────────────────────────
 function openMenu(tab, x, y) {
   const items = [
-    ["🔄", "파트너 바꾸기 (첫 파트너 · 박스)", () => pokeOpen("choose")], // the Pokémon window (#113 P2)
+    ["🔄", "메인 파트너 바꾸기 (내 포켓몬 파티 줄)", () => pokeOpen("box")], // the Pokémon window (#113 P2 · #122)
     ["⚔️", "공격", () => react(tab, "attack")],
     ["💕", "애교", () => react(tab, "cute")],
     ["📕", "도감", () => pokeOpen("dex")],
@@ -1404,8 +1405,8 @@ let wildOn = true;
 const wild = createWild($("#wild"), {
   invoke,
   log: (line) => invoke("log_line", { line }),
-  // caught (it rests in the box): make it this tab's partner right away
-  partnerButton: (e) => active && takeSpecies(active, e.id),
+  // caught (it rests in the box): [파티에 넣기] right away (#122)
+  partnerButton: (e) => partyAdd(e.id),
   dexButton: (e) => pokeOpen("dex", e.id), // #9 — the Pokémon window (#113 P2)
 });
 
@@ -1953,14 +1954,14 @@ listen("agent-state", (e) => {
   if (shownOf(t) === e.payload) renderState(t, e.payload);
   renderRail(t);
 });
+// the 메인 파트너 (#122): sent for every tab when it changes (the party's order, the choose window) — this window isn't brought forward (APP-22 rule 8)
 listen("partner", (e) => {
   const t = byId.get(e.payload.ws);
   if (!t) return;
-  showPartner(t, e.payload);
+  showMain(t, e.payload);
 });
-listen("partner-choose", (e) => { const t = byId.get(e.payload.ws); if (t) needPartner(t, e.payload.freed); });
-// taken in the Pokémon window (#113 P2): this window's pane shows it and reacts — it isn't brought forward (APP-22 rule 8)
-listen("partner-taken", (e) => { const t = byId.get(e.payload.ws); if (t) partnerTaken(t, e.payload.from); });
+listen("partner-choose", (e) => { const t = byId.get(e.payload.ws); if (t) showChoose(t); });
+listen("partner-grad-done", () => { for (const t of byId.values()) { gradBand(t, null); if (t.partner) t.partner.gradAsk = false; } }); // answered once for all tabs (#122)
 listen("partner-progress", (e) => {
   const t = byId.get(e.payload.ws);
   if (!t) return;
@@ -1982,7 +1983,7 @@ listen("economy", (e) => {
 // 🐣 the incubator hatched an egg (#85): it's in the box now (the Pokémon window hears it too)
 listen("hatched", (e) => {
   const h = e.payload;
-  toast(`🐣 부화기에서 ${h.shiny ? "✨" : ""}${josa(h.name, "이", "가")} 태어났다! — 내 포켓몬에서 파트너로 데려올 수 있어요${h.coins ? ` · +${coinTxt(h.coins)} 새 종` : ""}`, 5000);
+  toast(`🐣 부화기에서 ${h.shiny ? "✨" : ""}${josa(h.name, "이", "가")} 태어났다! — 내 포켓몬에서 파티에 넣을 수 있어요${h.coins ? ` · +${coinTxt(h.coins)} 새 종` : ""}`, 5000);
 });
 listen("open-folder", (e) => openFolder(e.payload.cwd));
 listen("toast", (e) => toast(e.payload.text, e.payload.ms || 1800)); // from the main process (a shell environment that couldn't be read …)
@@ -2127,6 +2128,16 @@ async function tabsTest() {
   await log("autotype done");
 }
 
+// tests: a species as the 메인 파트너 (#122 — was "this tab's partner"): its newest individual first in the party
+async function mainSpecies(id) {
+  const [box, p] = await Promise.all([invoke("box_list"), invoke("party_state")]);
+  const m = box.filter((x) => x.id === id && !x.egg).sort((a, b) => (b.at || 0) - (a.at || 0))[0];
+  if (!m) return null;
+  await invoke("party_set", { uids: [m.uid, ...p.list.map((x) => x.uid).filter((u) => u !== m.uid)].slice(0, p.max) });
+  for (let i = 0; i < 20 && active?.partner?.uid !== m.uid; i++) await new Promise((r) => setTimeout(r, 150));
+  return m;
+}
+
 // partner: click reactions, menu actions, Pokédex, evolution (8 finished tasks)
 async function pokemonTest() {
   const log = (line) => invoke("log_line", { line: `poke-test ${line}` });
@@ -2153,7 +2164,7 @@ async function pokemonTest() {
   await invoke("shot_test", { name: "dex", target: "poke" });
   await pokeShut();
   const pick = (await invoke("dex_list")).entries[0];
-  await takeSpecies(tab, pick.id); await wait(500);
+  await mainSpecies(pick.id); await wait(500);
   await log(`dex-choose partner=${tab.partner?.name} id=${tab.partner?.id} want=${pick.id} xp=${tab.partner?.xp}`);
   const before = tab.partner?.id;
   for (let i = 0; i < 7; i++) { await invoke("partner_done_test", { ws: tab.id }); await wait(150); }
@@ -2223,7 +2234,7 @@ async function wildTest() {
   const box = await invoke("dex_list");
   await log(`dex-viewed new-cells=${await newCells()} fresh-left=${box.entries.filter((e) => e.fresh).length} recent-new=${box.recent.filter((m) => m.new).length}`);
   await pokeShut();
-  await takeSpecies(tab, caughtId);
+  await mainSpecies(caughtId);
   await wait(1500);
   await log(`adopt partner=${tab.partner?.name} want=${caughtName} xp=${tab.partner?.xp}`);
   await encounter("appear-2");
@@ -2264,13 +2275,17 @@ const pokeUp = () => invoke("own_up_test", { name: "poke" }).catch(() => false);
 // opened as ⌘P · ⌘D · the menu would, and drawn: its state (null if it didn't come)
 async function pokeReady(view, sel) {
   await invoke("poke_open", { view, sel });
-  for (let i = 0; i < 80; i++) { const st = await pokeCall("state"); if (st?.poke && (!view || st.poke === view || view === "choose")) return st; await new Promise((r) => setTimeout(r, 100)); }
+  const want = view === "party" || view === "choose" ? "box" : view; // the old tabs open 내 포켓몬 (#121 · #122)
+  for (let i = 0; i < 80; i++) { const st = await pokeCall("state"); if (st?.poke && (!want || st.poke === want)) return st; await new Promise((r) => setTimeout(r, 100)); }
   return null;
 }
 const pokeShut = () => invoke("own_close_test", { name: "poke" });
+// the 포켓몬 고르기 window (#122, choose.html): its page as drawn (mode first | suggest, cards, picked …), null while closed
+const chooseCall = (fn, ...args) => invoke("own_call_test", { name: "choose", fn, args }).catch(() => null);
 async function labStateAll() {
-  const m = labState(), p = await pokeCall("state");
-  return p ? { ...m, ...p, toast: p.toast || m.toast, top: m.top === "main" ? "poke" : m.top } : { ...m, poke: null, choose: false, cards: 0, starters: null };
+  const m = labState(), [p, ch] = await Promise.all([pokeCall("state"), chooseCall("state")]);
+  const chooser = ch ? { ...ch, ready: ch.mode === "suggest" || (ch.cards.length > 0 && !ch.wait) } : null;
+  return p ? { ...m, ...p, chooser, toast: p.toast || m.toast, top: m.top === "main" ? "poke" : m.top } : { ...m, chooser, poke: null, cards: 0 };
 }
 function labState() {
   const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2);
@@ -2282,6 +2297,7 @@ function labState() {
     partner: active?.partner?.name || null, choosePending: !!active && !active.partner?.uid, wild: wild.active(),
     partnerKnown: !!active && (!!active.partner || !!active.partnerChecked), // the tab's partner read (or none): #113 A8 — no dialog to wait for
     needPartner: active ? !!$(".need-partner", active.view) : null,
+    paneTitle: active ? $(".pane-avatar .title", active.view)?.textContent || null : null, // "🐾 메인 파트너" (#122)
     toast: $("#toast")?.classList.contains("show") ? $("#toast").textContent : null,
     focus: document.activeElement?.id || document.activeElement?.className?.toString().slice(0, 40) || null,
     sessions: tabs.map((t) => t.sessions?.length || 1),
@@ -2347,7 +2363,7 @@ function fakeUsage(tab) {
 }
 const LAB_CALLS = { railOver: () => $(".rail", active?.view)?.dispatchEvent(new MouseEvent("mouseover", { bubbles: true })), railOut: () => $(".rail", active?.view)?.dispatchEvent(new MouseEvent("mouseout", { bubbles: true })), openSettings: () => invoke("own_open_test", { name: "settings" }), settingsOverlay: () => invoke("own_open_test", { name: "settings", page: "overlay" }), settingsGeneral: () => invoke("own_open_test", { name: "settings", page: "general" }), fakeUsage: () => fakeUsage(active), focusShell: () => bigPane(active)?.term.focus(),
   // the Pokémon window (#113 P2): opened on a view and drawn · closed · a view · Esc in it
-  home: () => pokeReady("home"), openDex: () => pokeReady("dex"), closeDex: () => pokeShut(), openChoose: () => pokeReady("choose"), box: () => pokeCall("view", "box"), escape: () => invoke("own_key_test", { name: "poke", key: "Escape" }) };
+  home: () => pokeReady("home"), openDex: () => pokeReady("dex"), closeDex: () => pokeShut(), openChoose: () => invoke("choose_open"), box: () => pokeCall("view", "box"), escape: () => invoke("own_key_test", { name: "poke", key: "Escape" }) };
 async function labRun(steps) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line });
@@ -2410,47 +2426,34 @@ async function labRun(steps) {
   await log("lab-done");
 }
 
-// A first launch as a new user has it: nothing on this Mac yet (the starters come from PokéAPI), the
-// agents dialog first — 파트너 고르기 no longer opens by itself (#113 A8): the pane's [파트너 고르기] opens the
-// Pokémon window, where the first partner is picked with real keys and clicks
+// A first launch as a new user has it: nothing on this Mac yet (the starters come from PokéAPI) — the agents dialog in
+// the main window and the 포켓몬 고르기 window by itself once (#122, PKM-32 · SCREENS_PARTY J4), where the first is picked
 async function firstRunTest() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line: `first-run ${line}` });
-  const key = (k, code, keyCode, text, target) => invoke("key_test", { key: k, code, keyCode, ...(text ? { text } : {}), ...(target ? { target } : {}) });
-  const clickAt = async (el) => { const r = el.getBoundingClientRect(); await invoke("click_test", { x: r.left + r.width / 2, y: r.top + r.height / 2 }); };
-  const clickPoke = async (sel) => { const at = await pokeCall("rect", sel); if (at) await invoke("click_test", { ...at, target: "poke" }); };
+  const key = (k, code, keyCode, text) => invoke("key_test", { key: k, code, keyCode, ...(text ? { text } : {}) });
   const top = () => { const el = document.elementFromPoint(innerWidth / 2, innerHeight / 2); return el?.closest("#agents") ? "agents" : el?.tagName; };
   try {
     const tab = active;
     for (let i = 0; i < 40 && !agentsOpen(); i++) await wait(500);
-    await log(`open agents=${agentsOpen()} on-top=${top()} poke=${await pokeUp()} need-partner=${!!$(".need-partner", tab.view)}`);
+    for (let i = 0; i < 40 && !(await chooseCall("state")); i++) await wait(250);
+    await log(`open agents=${agentsOpen()} on-top=${top()} poke=${await pokeUp()} choose=${(await chooseCall("state"))?.mode} need-partner=${!!$(".need-partner", tab.view)}`);
     await invoke("shot_test", { name: "first-1-agents" });
+    await invoke("shot_test", { name: "first-2-choose", target: "choose" });
     await key("Escape", "Escape", 27); await wait(500);
     await log(`esc agents=${agentsOpen()} on-top=${top()}`);
-    await clickAt($(".need-partner", tab.view)); // the pane's button: the Pokémon window on 파트너 고르기
-    for (let i = 0; i < 40 && (await pokeCall("state"))?.poke !== "choose"; i++) await wait(250);
-    await invoke("shot_test", { name: "first-2-choose", target: "poke" });
     const t0 = Date.now();
-    for (let i = 0; i < 120 && !(await pokeCall("d"))?.choose?.starter?.ready; i++) await wait(500);
+    for (let i = 0; i < 120 && (await chooseCall("state"))?.wait !== 0; i++) await wait(500);
     await wait(800);
-    let d = await pokeCall("d"), st = await pokeCall("state");
-    await log(`starters ready=${d?.choose?.starter?.ready} after=${Math.round((Date.now() - t0) / 1000)}s set=${d?.choose?.starter?.set.map((x) => `${x.name}:${x.types?.[0]}`).join(",")} sel=${d?.bi} button=${st?.takeBtn}`);
-    await invoke("shot_test", { name: "first-3-ready", target: "poke" });
-    await key("ArrowRight", "ArrowRight", 39, null, "poke"); await wait(300);
-    d = await pokeCall("d"); st = await pokeCall("state");
-    await log(`arrow sel=${d?.bi} button=${st?.takeBtn} preview=${st?.dexName}`);
-    await clickPoke('#box-grid .pk-card[data-key="s2"]'); await wait(300);
-    d = await pokeCall("d"); st = await pokeCall("state");
-    await log(`click card3 sel=${d?.bi} button=${st?.takeBtn}`);
-    const want = d?.list?.[d?.bi];
-    await clickPoke("#dex-take"); await wait(2000);
-    await log(`took partner=${tab.partner?.name}#${tab.partner?.id} want=${want?.name}#${want?.id} window=${await pokeUp()} toast=${$("#toast").textContent} avatar-label=${$(".poke-label", tab.view)?.textContent}`);
+    let st = await chooseCall("state");
+    await log(`starters after=${Math.round((Date.now() - t0) / 1000)}s cards=${st?.cards.join(",")} go=${st?.go}`);
+    await invoke("shot_test", { name: "first-3-ready", target: "choose" });
+    await invoke("own_key_test", { name: "choose", key: "ArrowRight" }); await wait(300);
+    st = await chooseCall("state");
+    await log(`arrow sel=${st?.sel} go=${st?.go}`);
+    await invoke("own_key_test", { name: "choose", key: "Enter" }); await wait(2000);
+    await log(`took partner=${tab.partner?.name}#${tab.partner?.id} window=${!!(await chooseCall("state"))} toast=${$("#toast").textContent} avatar-label=${$(".poke-label", tab.view)?.textContent}`);
     await invoke("shot_test", { name: "first-4-partner" });
-    await pokeReady("choose"); await wait(800);
-    d = await pokeCall("d");
-    await log(`reopen starter=${!!d?.choose?.starter} title=${await pokeCall("text", "#dex-title .pk-sub")} cards=${await pokeCall("count", "#box-grid .pk-card[data-i]")}`);
-    await key("Escape", "Escape", 27, null, "poke"); await wait(500);
-    await log(`closed window=${await pokeUp()}`);
   } catch (e) { await log(`ERROR ${e?.stack || e}`); }
   await log("done");
   invoke("log_line", { line: "autotype done" });
@@ -2459,8 +2462,8 @@ async function firstRunTest() {
 // ── UI scenes (npm run ui:shots, docs/UI_SYSTEM.md, src/poke/ui-map.json) ─────────────────────
 // Each scene puts one screen in a known state and captures it; ui:shots compares the pictures with
 // the baseline. Scene names are what ui-map.json lists under each screen. Two data sets, seeded by
-// scripts/ui-shots.cjs: "newuser" (empty box, three starters) and "owner" (six Pokémon, one new,
-// one another folder's partner, this folder without one).
+// scripts/ui-shots.cjs: "newuser" (empty box, three starters — the 포켓몬 고르기 window opens by itself) and "owner"
+// (six Pokémon, one new, the party of one: the 메인 파트너, #122).
 async function uiScenes(set) {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const log = (line) => invoke("log_line", { line: `ui-scenes ${line}` });
@@ -2483,15 +2486,29 @@ async function uiScenes(set) {
     await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
   };
   const search = (q) => pokeCall("search", q);
+  // the 포켓몬 고르기 window (#122): its own window, captured as it is
+  const chooseShot = async (name) => {
+    await wait(700);
+    const r = await invoke("ui_shot", { name, target: "choose" });
+    await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
+  };
   try {
     const tab = active;
     for (let i = 0; i < 40 && !(tab.partner || tab.partnerChecked); i++) await wait(500); // the folder's partner read (none: the pane's button)
     if (set === "newuser") {
-      await pokeReady("choose");
-      for (let i = 0; i < 40 && !(await pokeCall("d"))?.choose?.starter?.ready; i++) await wait(500);
-      await pokeShot("choose-starter"); await pokeShut();
+      // 포켓몬 고르기 (#122, PKM-32): by itself on the first launch — the three starters; picked, the pane shows the 메인 파트너
+      for (let i = 0; i < 40 && (await chooseCall("state"))?.wait !== 0; i++) await wait(500);
+      await chooseShot("choose-first");
+      await invoke("own_key_test", { name: "choose", key: "Enter" });
+      for (let i = 0; i < 40 && !tab.partner; i++) await wait(250);
+      await shot("partner-main");
     } else {
-      await pokeReady("choose"); await wait(500); await pokeShot("choose-box"); await pokeShut();
+      // 포켓몬 고르기 with an empty party (#122 J3): the box newest first to tap — then the party back as it was
+      const partyKept = (await invoke("party_state")).list.map((m) => m.uid);
+      await invoke("party_set", { uids: [] }); await invoke("choose_open");
+      for (let i = 0; i < 40 && (await chooseCall("state"))?.mode !== "suggest"; i++) await wait(250);
+      await chooseShot("choose-suggest"); await invoke("own_close_test", { name: "choose" });
+      await invoke("party_set", { uids: partyKept }); await wait(400);
       await pokeReady("dex"); await pokeShot("dex-grid");
       await search("불꽃,물"); await pokeShot("dex-search");
       await search("불꽃&전설"); await pokeShot("dex-empty");
@@ -2631,9 +2648,9 @@ async function uiScenes(set) {
       await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
       await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" });
       await invoke("overlay_show_test", { on: false });
-      // ⭐ 파티 (#107, PKM-31): three of the box in the party, the next in turn marked
+      // 파티 줄 (#107 · #122, PKM-31): three of the box in the party (the 1st the 메인 파트너), the next in turn marked — 내 포켓몬's top
       await invoke("party_test", { n: 3 });
-      await pokeReady("party"); await wait(700); await pokeShot("party"); await pokeShut();
+      await pokeReady("box"); await wait(700); await pokeShot("box-party"); await pokeShut();
       // 메뉴바 미니 대시보드 (#105, STA-22): 홈 — the party of three with its pictures (#117), Claude's limits behind the agent
       // chips (no reset time: the picture doesn't move with the clock; #118); 작업 — the incubator's egg, this tab needing you
       await invoke("agent_state_test", { ws: tab.id, from: "idle", to: "waiting", hold: true });
@@ -2729,59 +2746,6 @@ async function x1eSteps() {
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   const tab = tabs[0];
   selectTab(tab);
-  // a new folder (the box isn't empty: no starters): the pane's [파트너 고르기] → the Pokémon window with the box (#113 A8)
-  for (let i = 0; i < 60 && !$(".need-partner", tab.view); i++) await wait(500);
-  await pokeReady("choose");
-  await wait(1500);
-  let o = (await pokeCall("d"))?.choose;
-  await log(`dialog open=${(await pokeCall("state"))?.choose} starter=${!!o?.starter} resting=${o?.resting.length} others=${o?.others.length}`);
-  await invoke("shot_test", { name: "x1e-dialog", target: "poke" });
-  const take = async (key) => { await pokeCall("pickKey", key); await pokeCall("enter"); };
-  await take("r1"); await wait(1500);
-  await log(`rest1 partner=${tab.partner?.name}#${tab.partner?.uid} want=${o.resting[1]?.name}#${o.resting[1]?.uid} open=${await pokeUp()}`);
-  await pokeReady("choose"); await wait(500);
-  o = (await pokeCall("d"))?.choose;
-  await log(`reopen current=${o.current?.name} resting0=${o.resting[0]?.name}`);
-  const prev = tab.partner?.uid;
-  await take("r0"); await wait(1500);
-  o = await invoke("partner_options", { ws: tab.id });
-  await log(`rest-take partner=${tab.partner?.name} prev-now-resting=${o.resting.some((m) => m.uid === prev)}`);
-  // another folder's partner: twice (confirm), that tab is left without one
-  await pokeReady("choose"); await wait(500);
-  o = (await pokeCall("d"))?.choose;
-  const target = o.others[0];
-  await take("o0"); await wait(300);
-  const asked = (await pokeCall("state"))?.takeBtn?.includes("(확인)") && (await pokeCall("count", '#box-grid .pk-card[data-key="o0"].confirm')) === 1;
-  await pokeCall("enter"); await wait(1500);
-  const from = tabs.find((t) => base(t.cwd) === target?.folderName);
-  await log(`other-take asked=${asked} partner=${tab.partner?.name}#${tab.partner?.uid} want=${target?.name}#${target?.uid} from=${target?.folderName} from-tab-partner=${from?.partner?.name ?? "none"} from-label=${from && $(".poke-label", from.view).textContent}`);
-  await invoke("shot_test", { name: "x1e-freed" });
-  await pokeShut();
-  // the Pokédex board: cells by state, Enter on an owned species takes a resting one
-  await pokeReady("dex"); await wait(1500);
-  let d = await pokeCall("d");
-  const ownedOne = d.owned.find((id) => id !== tab.partner?.id);
-  await log(`dex caught=${await pokeCall("count", "#dex-grid .cell.caught")} seen=${await pokeCall("count", "#dex-grid .cell.seen")} unknown=${await pokeCall("count", "#dex-grid .cell.unknown")} regions=${(await pokeCall("text", "#dex-regions")).replace(/\s+/g, " ")}`);
-  await invoke("shot_test", { name: "x1e-dex", target: "poke" });
-  await pokeCall("select", ownedOne);
-  await pokeCall("key", "ArrowRight"); await pokeCall("key", "ArrowLeft");
-  d = await pokeCall("d");
-  await log(`dex sel=${d.sel} want=${ownedOne} take-visible=${!!(await pokeCall("state"))?.takeBtn}`);
-  await pokeCall("key", "Enter"); await wait(1500);
-  await log(`dex-enter partner=${tab.partner?.id} want=${ownedOne} dex-open=${await pokeUp()}`);
-  // a species that's only another folder's partner: confirm inside the Pokédex, no other screen
-  await pokeReady("dex"); await wait(800);
-  d = await pokeCall("d");
-  const otherOnly = d.opts.others.find((m) => !d.opts.resting.some((r) => r.id === m.id) && d.opts.current?.id !== m.id);
-  if (otherOnly) {
-    await pokeCall("select", otherOnly.id);
-    const label1 = await pokeCall("text", "#dex-from");
-    await pokeCall("key", "Enter"); await wait(300);
-    const label2 = await pokeCall("text", "#dex-from button.confirm");
-    await log(`dex-other first=${label1} second=${label2} dex-open=${await pokeUp()}`);
-    await pokeCall("key", "Enter"); await wait(1500);
-    await log(`dex-other-taken partner=${tab.partner?.name}#${tab.partner?.uid} want=${otherOnly.name}#${otherOnly.uid} dex-open=${await pokeUp()}`);
-  } else await log("dex-other none");
   // other tabs: needs input / working / done / failed, then the overlay
   const ev = { 1: "Notification", 2: "UserPromptSubmit", 3: "Stop", 4: "StopFailure" };
   for (const [i, e] of Object.entries(ev)) {
@@ -2800,45 +2764,6 @@ async function x1eSteps() {
   await log(`collapsed=${q.collapsed} urgent=${q.urgent} minis=${q.minis.length} bounds=${JSON.stringify(await invoke("overlay_bounds_test"))}`);
   await invoke("overlay_collapse_test");
   await invoke("overlay_show_test", { on: false });
-}
-
-// a first-time user opens several folders: the first partner from 3 starters, the others start
-// empty; a wild one (more likely in an empty folder) becomes that folder's partner
-async function newUserTest() {
-  const log = (line) => invoke("log_line", { line: `newuser-test ${line}` });
-  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
-  try {
-    const first = tabs[0];
-    selectTab(first);
-    for (let k = 0; k < 40 && !$(".need-partner", first.view); k++) await wait(500);
-    await pokeReady("choose"); // the pane's [파트너 고르기] (#113 A8)
-    for (let k = 0; k < 120 && !(await pokeCall("d"))?.choose?.starter?.ready; k++) await wait(500);
-    let o = (await pokeCall("d"))?.choose;
-    await log(`first starter=${o?.starter?.set.map((x) => x.name + ":" + x.types?.[0]).join(",")} note=${(await pokeCall("d"))?.chooseNote || ""}`);
-    await wait(800);
-    await invoke("shot_test", { name: "newuser-starter", target: "poke" });
-    await pokeCall("key", "2");
-    await wait(1500);
-    await log(`first partner=${first.partner?.name}#${first.partner?.uid}`);
-    const empty = tabs[1];
-    selectTab(empty);
-    await wait(1500);
-    await log(`second dialog=${await pokeUp()} need-partner=${!!$(".need-partner", empty.view)}`); // no dialog by itself (#113 A8)
-    await log(`second empty-icon=${!$(".empty-ball", empty.view).hidden} label=${$(".poke-label", empty.view).textContent} hint=${$(".poke-exp", empty.view).textContent}`);
-    await wait(600);
-    await log(`overlays poke=${await pokeUp()} start=${startOpen()} menu=${!$("#menu").hidden} wild=${wild.active()}`);
-    await invoke("shot_test", { name: "newuser-empty" });
-    // a task in the folder with a partner: no wild (normal chance is 0 here); in the empty one: wild
-    await invoke("partner_done_test", { ws: first.id }); await wait(1000);
-    await log(`done-with-partner wild=${wild.active()}`);
-    for (let k = 0; k < 30 && !wild.active(); k++) { await invoke("partner_done_test", { ws: empty.id }); await wait(1500); }
-    await log(`done-in-empty wild=${wild.active()} text=${$(".wild-text").textContent}`);
-    await invoke("wild_rig_test", { result: "caught" });
-    wild.throwBall(); await wait(4200);
-    $(".wild-partner").click(); await wait(1500);
-    await log(`caught-partner empty=${empty.partner?.name}#${empty.partner?.uid} icon-hidden=${$(".empty-ball", empty.view).hidden}`);
-  } catch (e) { await log(`ERROR ${e?.stack || e}`); }
-  await log("autotype done");
 }
 
 // E1: composer → agent (bracketed paste + Enter), image paste → Ctrl+V, dropped files → paths,
@@ -3335,7 +3260,6 @@ async function main() {
   if (info.test.wild_test) wildTest();
   if (info.test.p0_test) resultTest();
   if (info.test.x1e_test) x1eTest();
-  if (info.test.newuser_test) newUserTest();
   if (info.test.e1_test) e1Test();
   if (info.test.e1b_test) e1bTest();
   if (info.test.m1_test) m1Test();
@@ -3525,10 +3449,10 @@ async function main() {
     await invoke("log_line", { line: `box-test ${JSON.stringify(out)}` });
     invoke("log_line", { line: "autotype done" });
   }, 5000);
-  if (info.test.choose_shot) setTimeout(async () => { // the partner dialog as it looks (UI checks) — opened as the pane's button does (#113 A8)
-    await pokeReady("choose"); await new Promise((r) => setTimeout(r, 1500));
-    await invoke("shot_test", { name: "choose", target: "poke" });
-    invoke("log_line", { line: `choose-shot open=${(await pokeCall("state"))?.choose} cards=${await pokeCall("count", "#box-grid .pk-card[data-i]")}` });
+  if (info.test.choose_shot) setTimeout(async () => { // the 포켓몬 고르기 window as it looks (UI checks) — opened as the pane's button does (#122)
+    await invoke("choose_open"); await new Promise((r) => setTimeout(r, 1500));
+    await invoke("shot_test", { name: "choose", target: "choose" });
+    invoke("log_line", { line: `choose-shot open=${(await chooseCall("state"))?.mode} cards=${(await chooseCall("state"))?.cards.length}` });
     invoke("log_line", { line: "autotype done" });
   }, 6000);
   if (info.test.ui_scenes) uiScenes(info.test.ui_scenes);
