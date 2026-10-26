@@ -911,7 +911,7 @@ const OVERLAY_POS = path.join(CACHE, "ui", "desktop_overlay.json");
 // which is how the app behaved before (everything on)
 const SETTINGS = path.join(CACHE, "ui", "settings.json");
 // card background: 0 % by default (#100) — only the Pokémon on the desktop (minimal mode, auto ≤ 30 %); a settings.json that has a value keeps it
-const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away" }, tabGlow: true, theme: "system", side: true, titles: true,
+const SETTINGS_DEFAULT = { overlay: { on: true, partner: true, alerts: true, wild: true, progress: true, alpha: 0, shadow: true, minimal: "auto", when: "away", size: 120 }, tabGlow: true, theme: "system", side: true, titles: true,
   menubar: { on: true, text: "waiting", icon: "ball", iconAsked: false }, // 메뉴바 (STA-19, #64) · 아이콘: 몬스터볼 / 파티 선두 (STA-24, #108), asked once
   limits: { codex: true, claude: null }, // 채팅 없이 한도 (STA-21, #104): Codex app server · Claude usage API (null = not asked yet)
   background: true, loginOpen: false, backgroundSeen: false, // 백그라운드 (APP-21, #106): stay in the menu bar · open at login · the one-time notice
@@ -923,11 +923,12 @@ const WHEN = ["away", "always"]; // 보일 때 (#98): while another app is in fr
 const THEMES = ["system", "dark", "light"]; // 테마 (APP-20, #60)
 function readSettings(raw = readJsonSafe(SETTINGS)) {
   const o = raw?.overlay || {}, d = SETTINGS_DEFAULT.overlay, b = (v, def) => (typeof v === "boolean" ? v : def);
-  const a = Number(o.alpha);
+  const a = Number(o.alpha), z = Number(o.size);
   return {
     overlay: { on: b(o.on, d.on), partner: b(o.partner, d.partner), alerts: b(o.alerts, d.alerts), wild: b(o.wild, d.wild), progress: b(o.progress, d.progress), // #88
       alpha: Number.isFinite(a) ? Math.round(Math.min(100, Math.max(0, a))) : d.alpha,
-      shadow: b(o.shadow, d.shadow), minimal: MINIMAL.includes(o.minimal) ? o.minimal : d.minimal, when: WHEN.includes(o.when) ? o.when : d.when }, // #65 #63 #98
+      shadow: b(o.shadow, d.shadow), minimal: MINIMAL.includes(o.minimal) ? o.minimal : d.minimal, when: WHEN.includes(o.when) ? o.when : d.when, // #65 #63 #98
+      size: Number.isFinite(z) ? Math.round(Math.min(384, Math.max(48, z)) / 8) * 8 : d.size }, // 포켓몬 크기 (#127, STA-15 rule 20): the 메인 파트너's picture box, px
     tabGlow: b(raw?.tabGlow, SETTINGS_DEFAULT.tabGlow),
     side: b(raw?.side, SETTINGS_DEFAULT.side), // the right column shown (#97) — folded, the overlay shows with Tamer in front too
     titles: b(raw?.titles, SETTINGS_DEFAULT.titles), // 세션 제목 (#99): agents' conversation titles read and shown
@@ -1256,7 +1257,7 @@ async function outsideConsent() {
   const r = await dialog.showMessageBox(dialogParent(), {
     type: "question", buttons: ["켜기", "켜지 않음"], defaultId: 0, cancelId: 1,
     message: "Tamer 밖에서 한 작업도 포켓몬에 반영할까요?",
-    detail: "다른 터미널(iTerm 등)·Claude 앱의 Code·Codex 앱에서 끝낸 Claude Code·Codex 작업도 레벨·코인·야생에 반영해요. 탭에서 끝낸 것과 같은 규칙이에요(하루 상한도 함께).\n\n"
+    detail: "다른 터미널 앱·Claude 앱의 Code·Codex 앱에서 끝낸 Claude Code·Codex 작업도 레벨·코인·야생에 반영해요. 탭에서 끝낸 것과 같은 규칙이에요(하루 상한도 함께).\n\n"
       + "· 읽는 곳: 에이전트가 이 맥에 남기는 기록(~/.claude/projects · ~/.codex/sessions)\n"
       + "· 읽는 것: '작업이 끝났다'는 줄의 폴더·걸린 시간·어디서 실행했는지만\n"
       + "· 안 읽는 것: 대화 내용·명령·파일 — 저장·전송도 없어요. 어디까지 읽었는지도 메모리에만\n"
@@ -1762,7 +1763,7 @@ const overlayCommands = {
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
   overlay_fit({ width, height }) {
     if (drag) return;
-    const w = Math.round(Math.min(Math.max(Number(width) || 0, 40), 400));
+    const w = Math.round(Math.min(Math.max(Number(width) || 0, 40), 640)); // 640: a 384 px partner's normal card (#127)
     const h = Math.round(Math.min(Math.max(Number(height) || 0, 40), 900));
     const b = overlay.getBounds();
     if (b.width === w && b.height === h) return;
@@ -1796,7 +1797,7 @@ const overlayCommands = {
 // What the UI may ask for. The UI never names a program: the main process decides what runs in
 // each pane, and folders must be real directories (docs/policy POL-SEC-02). A compromised page can't do more.
 // ⌘-clicked files opened with macOS's default app (a browser for index.html, Preview …) instead of
-// the editor, as in iTerm2 (#57); code and text keep going to the editor at their line
+// the editor, as other terminals do (#57); code and text keep going to the editor at their line
 const OPEN_DEFAULT = new Set([".html", ".htm", ".svg", ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".mp4", ".mov", ".webm", ".mp3", ".wav", ".m4a"]);
 const commands = {
   // 설정 창 (APP-19): read, and change (only known keys survive readSettings)
@@ -1937,7 +1938,7 @@ const commands = {
   session_new({ ws, agent }) { return newSession(wsOf(ws), agent ? String(agent) : null); },
   session_close({ ws, session }) { const w = wsOf(ws); closeSession(w, sessOf(w, session)); },
   session_name({ session, name }) { const x = sessions.get(session); if (!x) return null; x.name = sessionName(name) || undefined; saveSession(); return x.name || null; }, // #99
-  // files / folders dropped on a pane: their paths typed into the pane (shell-escaped like iTerm;
+  // files / folders dropped on a pane: their paths typed into the pane (shell-escaped as other terminals do;
   // Claude turns image paths into attachments). Folders dropped on the tab bar / start screen
   // open as tabs instead (UI → workspace_open).
   drop_paths({ ws: id, pane, paths }) {
@@ -2508,7 +2509,11 @@ const testCommands = {
       noteShadow: note ? getComputedStyle(note).boxShadow : null, noteBg: note ? getComputedStyle(note).backgroundColor : null, // #92
       prog: document.querySelector(".ov-prog")?.textContent || null, progMini: document.querySelector(".ov-prog-mini")?.textContent || null, // #88 #90
       progTip: document.querySelector(".ov-prog-mini")?.dataset.tip || null,
-      hatch: document.querySelector(".wild-note.hatch")?.textContent.replace(/\\s+/g, " ").trim() || null };
+      hatch: document.querySelector(".wild-note.hatch")?.textContent.replace(/\\s+/g, " ").trim() || null,
+      ...(() => { const img = document.querySelector("#cards .card.current .poke"), cur = document.querySelector("#cards .card.current"), // 포켓몬 크기 (#127)
+        nm = document.querySelector("#cards .card.current .name"), ball = document.querySelector("#cards .ball");
+        return { poke: img ? [img.offsetWidth, img.offsetHeight] : null, cardW: cur?.offsetWidth ?? null, nameFont: nm ? getComputedStyle(nm).fontSize : null,
+          ballW: ball?.offsetWidth ?? null, win: [innerWidth, innerHeight], stackW: document.getElementById("stack").offsetWidth }; })() };
   })()`),
   // a mouse click at a point in the window (modifiers: 4 = ⌘) (#19)
   async click_test({ x, y, modifiers = 0, button = "left", count = 1, target }) {
@@ -2846,7 +2851,7 @@ function toBackground() {
   });
 }
 
-// same escaping iTerm2 uses for dropped paths (as v1 did)
+// the usual terminal escaping for dropped paths (as v1 did)
 function shellEscape(p) { return p.replace(/([\s!"#$&'()*,;<=>?[\]\\^`{|}~])/g, "\\$1"); }
 
 // the app menu: Edit (copy / paste for the terminals and text fields), Window, Quit. No Reload,

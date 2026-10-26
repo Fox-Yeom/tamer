@@ -101,7 +101,7 @@ function toast(msg, ms = 1800) {
   toast.timer = setTimeout(() => t.classList.remove("show"), ms);
 }
 
-// ── links in the terminal (#19): ⌘-click opens a web address in the browser, like iTerm2. A plain
+// ── links in the terminal (#19): ⌘-click opens a web address in the browser, as other terminals do. A plain
 // click stays a click (selecting text copies). Web pages only (http/https). ─────────────────────
 function openLink(e, uri) {
   if (!e.metaKey) return;
@@ -216,7 +216,7 @@ function makePane(tab, kind, opts = {}) {
   term.open(el);
   term.registerLinkProvider(webLinks(term)); // plain web addresses in the output: ⌘-click opens (#19)
   term.registerLinkProvider(fileLinks(term, id, tab)); // file paths: ⌘-click opens the editor (#26)
-  // ⌘ shortcuts belong to the app, never to the program in the terminal — except the iTerm2
+  // ⌘ shortcuts belong to the app, never to the program in the terminal — except the usual terminal
   // ("Natural Text Editing") editing keys: ⇧↵ = a new line in the prompt (ESC CR, what Claude
   // Code's /terminal-setup binds; zsh inserts a newline too) (#7), ⌘⌫ = delete to the line start
   // (Ctrl-U) (#8), ⌘← / ⌘→ = line start / end (Ctrl-A / Ctrl-E) (#14). ⌘↑ / ⌘↓ do nothing. Not
@@ -227,7 +227,7 @@ function makePane(tab, kind, opts = {}) {
   // sends the syllable a moment later (setTimeout 0). xterm sends it first only for keys it handles
   // itself — not for ⌥ keys (macOptionIsMeta skips that step) nor for the ⌘ keys handled here, so
   // "ESC b" / Ctrl-A went before the syllable and it landed a word / the line back (#15 #16). One
-  // rule for every key: the pending syllable goes first. And like iTerm2, a key that moves or
+  // rule for every key: the pending syllable goes first. And as in other terminals, a key that moves or
   // deletes (arrows, Home/End, Page Up/Down, Delete, ⌘⌫ ⌥⌫ — any modifier) only finishes the
   // syllable; the next press moves.
   const EDIT_KEYS = { "S:Enter": "\x1b\r", "M:Backspace": "\x15", "M:ArrowLeft": "\x01", "M:ArrowRight": "\x05", "M:ArrowUp": "", "M:ArrowDown": "" };
@@ -278,7 +278,7 @@ function makePane(tab, kind, opts = {}) {
     }
     invoke("pty_write", { id, data });
   });
-  // iTerm-style: selecting copies; typing keeps going to the program
+  // as other terminals: selecting copies; typing keeps going to the program
   term.onSelectionChange(() => {
     const s = term.getSelection();
     if (!s) return;
@@ -586,7 +586,7 @@ const TSEARCH_DECOS = {
 };
 function tsearchCount(i, n) { $("#tsearch-n").textContent = !$("#tsearch-q").value ? "" : n ? `${i >= 0 ? i + 1 : "?"}/${n}` : "없음"; tsearchAlt(); }
 // a full-screen program (alternate screen — e.g. Claude Code scrolling its own view): the terminal
-// holds only the screen you see, so only that can be found; say so (iTerm2 is the same)
+// holds only the screen you see, so only that can be found; say so (other terminals are the same)
 function tsearchAlt() { $("#tsearch-alt").hidden = tsearchPane?.term.buffer.active.type !== "alternate"; }
 function openTermSearch(p) {
   if (!p) return;
@@ -2645,7 +2645,11 @@ async function uiScenes(set) {
         const r = await invoke("ui_shot", { name, target: "overlay" });
         await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`);
       }
-      await invoke("settings_set", { patch: { overlay: { minimal: "auto" } } });
+      // 포켓몬 크기 384 px (#127, STA-15 rule 20): the partner big, the card and the window follow — words and balls as they were
+      await invoke("settings_set", { patch: { overlay: { minimal: "never", size: 384 } } }); await wait(800);
+      { const r = await invoke("ui_shot", { name: "overlay-size-big", target: "overlay" });
+        await log(`shot ${r.name} diff=${r.diff == null ? "-" : r.diff.toFixed(5)} block=${(r.block ?? 0).toFixed(3)}${r.note ? ` ${r.note}` : ""}`); }
+      await invoke("settings_set", { patch: { overlay: { minimal: "auto", size: 120 } } });
       await invoke("agent_state_test", { ws: tab.id, from: "coding", to: "idle" });
       await invoke("overlay_show_test", { on: false });
       // 파티 줄 (#107 · #122, PKM-31): three of the box in the party (the 1st the 메인 파트너), the next in turn marked — 내 포켓몬's top
@@ -3313,7 +3317,7 @@ async function main() {
     // (Enter can't be checked this way: DevTools' Enter puts a newline into the textarea and the
     // syllable is lost even without the guard)
     await invoke("log_line", { line: `keys-test commit-then-key unguarded-left=${JSON.stringify(await commitThenKey(false, LEFT))} guarded-left=${JSON.stringify(await commitThenKey(true, LEFT))}` });
-    // #16: every key that moves / deletes, on an unfinished syllable (iTerm2: only finishes it)
+    // #16: every key that moves / deletes, on an unfinished syllable (other terminals: only finishes it)
     const K = (key, code, keyCode, modifiers = 0, commands) => ({ key, code, keyCode, modifiers, ...(commands ? { commands } : {}) });
     const NAV = {
       "opt-left": K("ArrowLeft", "ArrowLeft", 37, 1, ["moveWordLeft"]), "opt-right": K("ArrowRight", "ArrowRight", 39, 1, ["moveWordRight"]),

@@ -12,6 +12,7 @@ const DEV = path.join(HOME, ".cache/tamer-dev"); // baselines, sprites for tests
 const WORK = process.env.TAMER_LAB_WORK || path.join(os.tmpdir(), "tamer-test"); // another place: the usual test build is open (you trying it)
 const APP = path.join(WORK, "build/Tamer-darwin-arm64/Tamer.app");
 const BIN = path.join(APP, "Contents/MacOS/Tamer");
+const real = (p) => { try { return fs.realpathSync(p); } catch { return p; } }; // $TMPDIR is /var/… → /private/var/…
 const SPRITES = path.join(DEV, "ui-sprites");
 
 // ── the test build ───────────────────────────────────────────────────────────
@@ -190,7 +191,9 @@ function launch({ env, mode = "direct", folders = [], lateMs = 300, until = "lab
   const log = env.CVIM_DESKTOP_LOG;
   // a leftover test instance (ours only: matched by the test build's path) — with arguments too: one started with a folder
   // was missed, stayed, and took every later "open -a … folder" (2026-10-26: the drop cases all failed)
-  const kill = () => { try { execFileSync("pkill", ["-f", `^${BIN}( |$)`]); } catch {} };
+  // and by its real path too: one LaunchServices started ("open") runs as /private/var/…, which ^/var/… missed — it stayed
+  // and took the drop cases' folders (2026-10-26, #127 smoke)
+  const kill = () => { for (const b of new Set([BIN, real(BIN)])) try { execFileSync("pkill", ["-f", `^${b}( |$)`]); } catch {} };
   kill();
   if (mode === "direct") {
     spawn(BIN, args, { env: { ...process.env, ...env, ...(folders.length ? { CVIM_DESKTOP_DIRS: folders.join(":") } : {}) }, stdio: "ignore", detached: true }).unref();
@@ -205,7 +208,8 @@ function launch({ env, mode = "direct", folders = [], lateMs = 300, until = "lab
     const tick = setInterval(() => {
       const text = read();
       if (!handed && text.includes("privacy:")) { handed = true; setTimeout(() => execFileSync("open", ["-g", "-a", APP, ...folders]), lateMs); }
-      if (text.includes(until) || Date.now() - t0 > timeoutMs) { clearInterval(tick); setTimeout(() => { kill(); resolve({ log: read(), timedOut: !text.includes(until) }); }, 300); }
+      // the log is read before the kill: what the app writes as it is ended ("user quit" …) is not the case's (2026-10-26 — background-close)
+      if (text.includes(until) || Date.now() - t0 > timeoutMs) { clearInterval(tick); setTimeout(() => { const all = read(); kill(); resolve({ log: all, timedOut: !text.includes(until) }); }, 300); }
     }, 100);
   });
 }

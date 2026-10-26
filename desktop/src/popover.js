@@ -108,7 +108,7 @@ function drawToday(m) {
     <div class="pop-stat"><small>오늘 코인</small><b class="pop-coin">${c ? `+${c.today.earned.toLocaleString("en-US")}` : "—"}</b></div>${GO}`;
 }
 
-// 한도 칸 (#115, STA-22 rule 10 — PokeTokenBar's "Limits"): per agent, each window a row — the bar fills with
+// 한도 칸 (#115, STA-22 rule 10): per agent, each window a row — the bar fills with
 // what's LEFT (coloured by how much is used, STA-08), "76% 남음", when it resets; a tick = the window's time
 // left (a bar shorter than the tick: using faster than the clock — a fact, no forecast: STA-18 ✖). A window past
 // its reset stays as "초기화됨"; one never heard of is "—"

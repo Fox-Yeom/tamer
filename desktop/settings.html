@@ -9,7 +9,7 @@
   </head>
   <body>
     <main id="settings">
-      <!-- #101: a sidebar of 3 kinds, one shown. Rows: a short label left, its control right — in rounded groups (PokeTokenBar's settings) -->
+      <!-- #101: a sidebar of 3 kinds, one shown. Rows: a short label left, its control right — in rounded groups -->
       <nav class="set-nav"><button data-page="general">⚙︎ 일반</button><button data-page="overlay">◰ 오버레이</button><button data-page="menubar">◓ 메뉴바</button></nav>
       <div class="set-page" data-page="general" hidden>
         <h4>화면</h4>
@@ -50,6 +50,7 @@
             <h4>모양</h4>
             <div class="set-box">
               <label class="set-row"><span>카드 배경</span><span><input type="range" min="0" max="100" step="5" data-set="overlay.alpha" /> <span class="set-val" data-val="overlay.alpha"></span></span></label>
+              <label class="set-row" title="메인 파트너 그림만 — 글자·몬스터볼·알림은 그대로"><span>포켓몬 크기</span><span><input type="range" min="48" max="384" step="8" data-set="overlay.size" /> <span class="set-val" data-val="overlay.size" data-unit="px"></span></span></label>
               <details class="set-more"><summary>모양 더 보기</summary>
                 <div class="set-row" title="최소 모드: 글자 없이 파트너와 몬스터볼만"><span>최소 모드</span><span class="seg" data-set="overlay.minimal"><button data-v="auto">30% 이하</button><button data-v="always">항상</button><button data-v="never">안 씀</button></span></div>
                 <label class="set-row" title="배경을 옅게 할수록 그림자도 옅어져요"><span>그림자</span><input class="set-sw" type="checkbox" data-set="overlay.shadow" /></label>
@@ -57,7 +58,7 @@
             </div>
           </div>
         </div>
-        <figure class="set-preview" aria-label="미리보기"><figcaption class="dim">미리보기</figcaption><div class="set-preview-desk"><div class="ov"><div class="ov-wild"></div><div class="ov-cards"></div></div></div><div class="set-preview-off dim" hidden>오버레이가 뜨지 않아요</div></figure>
+        <figure class="set-preview" aria-label="미리보기"><figcaption class="dim">미리보기<span class="set-preview-small" hidden> · 줄여서</span></figcaption><div class="set-preview-desk"><div class="ov"><div class="ov-wild"></div><div class="ov-cards"></div></div></div><div class="set-preview-off dim" hidden>오버레이가 뜨지 않아요</div></figure>
       </div>
       <div class="set-page" data-page="menubar" hidden>
         <div class="set-box">

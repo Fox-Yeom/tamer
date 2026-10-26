@@ -117,7 +117,8 @@
         "overlay-noshadow",
         "light-overlay",
         "overlay-progress",
-        "overlay-progress-min"
+        "overlay-progress-min",
+        "overlay-size-big"
       ]
     },
     "home": {
@@ -805,7 +806,7 @@
       ]
     },
     "settings-nav": {
-      "what": "설정 창 사이드바와 줄 형식 — 범주 버튼, 묶음 상자(PokeTokenBar), 짧은 라벨 왼쪽·컨트롤 오른쪽, 스위치, 세그먼트 단추, 모양 더 보기 (APP-19 규칙 8·9, APP-22 규칙 9, #101 #113)",
+      "what": "설정 창 사이드바와 줄 형식 — 범주 버튼, 묶음 상자, 짧은 라벨 왼쪽·컨트롤 오른쪽, 스위치, 세그먼트 단추, 모양 더 보기 (APP-19 규칙 8·9, APP-22 규칙 9, #101 #113)",
       "files": [
         "settings.html",
         "src/settings.css",
@@ -875,7 +876,7 @@
       ]
     },
     "ov-cards": {
-      "what": "오버레이 카드 그리기 (오버레이 창과 설정 창 미리보기가 같이 씀) — 카드·말풍선·아이콘 줄·몬스터볼 줄·야생 알림 · 진행 곧 줄·점·부화 알림(#88) · 다른 탭은 보통 모드에서도 몬스터볼, 급한 탭 카드도 몬스터볼(#122)",
+      "what": "오버레이 카드 그리기 (오버레이 창과 설정 창 미리보기가 같이 씀) — 카드·말풍선·아이콘 줄·몬스터볼 줄·야생 알림 · 진행 곧 줄·점·부화 알림(#88) · 다른 탭은 보통 모드에서도 몬스터볼, 급한 탭 카드도 몬스터볼(#122) · 포켓몬 크기 `--ov-poke`(#127)",
       "files": [
         "src/overlay-view.js",
         "src/overlay-cards.css"

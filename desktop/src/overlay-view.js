@@ -20,8 +20,9 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&am
 export const MINIMAL_AT = 30;
 export const isMinimal = (show = {}) => show.minimal === "always" || (show.minimal !== "never" && (show.alpha ?? 82) <= MINIMAL_AT);
 
-// the settings on a root element: background, shadow (#65), minimal (#63)
+// the settings on a root element: background, shadow (#65), minimal (#63), the partner's size (#127)
 export function applyShow(root, show = {}) {
+  root.style.setProperty("--ov-poke", `${show.size || POKE_BOX.big[0]}px`);
   const a = (show.alpha ?? 82) / 100;
   root.style.setProperty("--ov-alpha", String(a));
   // fades with the background below the default 82 % (the look it always had), none when off
@@ -124,16 +125,17 @@ export async function cardsHtml(p, { spriteUrl }) {
   return cards.join("");
 }
 
-// sprites at their pixel size: ×2 on the current tab's card — inside a box (120 × 120, small cards
+// sprites at their pixel size: ×2 on the current tab's card — inside a box (120 × 120 — or 포켓몬 크기, #127: the box
+// is that size and the ×2 grows with it, size/60; small cards
 // 64 × 64): only the width was capped, so a tall one (a deer's antlers) grew to ~290 px and the window,
 // anchored at its bottom, ran out of room above and cut it off (#109)
 export const POKE_BOX = { big: [120, 120], small: [64, 64] };
-export function sizePokes(root) {
-  root.querySelectorAll(".poke").forEach((img) => img.decode().then(() => {
-    const big = !!img.closest(".current"), [w, h] = POKE_BOX[big ? "big" : "small"];
-    const k = Math.min(big ? 2 : 1, w / img.naturalWidth, h / img.naturalHeight);
+export function sizePokes(root, size = POKE_BOX.big[0]) {
+  return Promise.all([...root.querySelectorAll(".poke")].map((img) => img.decode().then(() => {
+    const big = !!img.closest(".current"), [w, h] = big ? [size, size] : POKE_BOX.small;
+    const k = Math.min(big ? 2 * size / POKE_BOX.big[0] : 1, w / img.naturalWidth, h / img.naturalHeight);
     img.style.width = `${Math.round(img.naturalWidth * k)}px`;
-  }).catch(() => {}));
+  }).catch(() => {})));
 }
 
 // 야생 알림 (#66, PKM-08): "야생의 ○○ 등장!" · seconds left · ✕ — a click brings Tamer to catch it

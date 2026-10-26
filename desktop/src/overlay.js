@@ -37,7 +37,7 @@ async function render(p) {
     keys.add(k);
   }
   popped = keys;
-  sizePokes(box);
+  sizePokes(box, show.size);
   if (hoverTip && stack.classList.contains("ov-minimal")) showTip(hoverTip.ws, hoverTip.text); else setTip(null);
   if (!show.wild) note.hide(); // 야생 포켓몬 off (#59): in the main window only
   if (show.progress === false) hatchNote.hide();

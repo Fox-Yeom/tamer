@@ -170,9 +170,9 @@ function canvas(W, H) {
   };
   return { put, out, W, H };
 }
-// ── the limits beside the icon (rule 8 — 2026-10-22: "PokeTokenBar와 같이 더 직관적인 표시"): the % left of 5 hours · the
+// ── the limits beside the icon (rule 8 — 2026-10-22: "더 직관적인 표시"): the % left of 5 hours · the
 // week as the icon's title, in macOS's own font and menu-bar colour — a number at 50 % or less yellow, at 20 % or less red
-// (PokeTokenBar colours only what needs a look the same way). No bars there: 2026-10-23 the picture's bars and pixel digits
+// (only what needs a look is coloured). No bars there: 2026-10-23 the picture's bars and pixel digits
 // were "가독성이 떨어짐" — the dashboard has the bars. Colours are the title's ANSI codes, Electron's fixed ones: red
 // #ff0000; yellow #ffff00 on a dark menu bar, #cdcd00 ("bold" yellow) on a light one ─────────────────────────────────────
 const TINT = { warn: ["\x1b[33m", "\x1b[1;33m"], bad: ["\x1b[31m", "\x1b[31m"] }; // [dark, light]

@@ -359,7 +359,7 @@ module.exports = [
     check: ({ probe }) => [ok(/echo 한글ab$/.test(probe.typed?.line || ""), `셸 줄 ${JSON.stringify(probe.typed?.line)}`)],
   },
   {
-    id: "hangul-cmd-arrow", tags: ["smoke", "input"], what: "한글 조합 중 ⌘← → 조합만 끝내고 글자는 제자리 (#15, iTerm2와 같음)",
+    id: "hangul-cmd-arrow", tags: ["smoke", "input"], what: "한글 조합 중 ⌘← → 조합만 끝내고 글자는 제자리 (#15, 다른 터미널 앱과 같음)",
     data: "owner", mode: "direct", folders: ["proj"],
     steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 3000 }, { text: "echo ab" }, { ime: "ㅎ" }, { ime: "하" }, { key: "ArrowLeft", mods: 4, commands: ["moveToBeginningOfLine"] }, { wait: 300 }, { text: "하" }, { wait: 600 }, { probe: "after" }],
     check: ({ probe }) => [ok(/echo ab하$/.test(probe.after?.line || ""), `셸 줄 ${JSON.stringify(probe.after?.line)}`)],
@@ -2135,6 +2135,42 @@ sleep 40
       return [
         ok(probe.start?.sideW === 0 && probe.start?.sideBtn === "◂", `처음부터 접힘 — 오른쪽 ${probe.start?.sideW}px · 버튼 ${probe.start?.sideBtn}`),
         ok(ws >= 0 && now === "true", `첫 탭이 열린 뒤 Tamer가 앞이어도 오버레이가 떠야 — ${JSON.stringify(front.map((m) => m[1]))}`),
+      ];
+    },
+  },
+  {
+    id: "overlay-size", tags: ["smoke", "app", "poke"], what: "포켓몬 크기(#127, STA-15 규칙 20): 48·120·384px — 메인 파트너 그림 상자가 따라가고 카드·창이 넓어짐, 이름 글자·몬스터볼은 그대로, 최소 모드도 같은 크기, 범위 밖·숫자 아닌 값은 끝값·기본",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"],
+    steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 }, { invoke: "settings_get", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82, minimal: "never" } } } }, { invoke: "overlay_show_test", args: { on: true } }, { wait: 1000 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { size: 48 } } } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { size: 384 } } } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "always" } } } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
+      // the 설정 창: the slider's value, and the 미리보기 drawn smaller when the big partner doesn't fit (APP-19 rule 14)
+      { invoke: "own_open_test", args: { name: "settings" } }, { wait: 1500 }, { invoke: "own_click_test", args: { name: "settings", sel: ".set-nav [data-page='overlay']" } }, { wait: 1200 },
+      { invoke: "own_read_test", args: { name: "settings" }, log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { size: 120 } } } }, { wait: 1200 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
+      { invoke: "own_key_test", args: { name: "settings", key: "Escape" } },
+      { invoke: "settings_set", args: { patch: { overlay: { size: 999 } } } }, { invoke: "settings_get", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { size: 101 } } } }, { invoke: "settings_get", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { size: "big" } } } }, { invoke: "settings_get", log: true },
+      { invoke: "overlay_show_test", args: { on: false } }],
+    check: ({ log }) => {
+      const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const gets = [...log.matchAll(/^lab-invoke settings_get (.*)$/gm)].map((m) => JSON.parse(m[1])?.overlay?.size);
+      const [mid, small, big, bigMin] = dom, side = (d) => Math.max(...(d?.poke || [0]));
+      const fits = (d) => d && d.win[0] >= d.stackW && d.win[0] <= 640;
+      return [
+        ok(dom.length === 4 && dom.every((d) => d.poke), `그림이 4번 다 보여야 ${JSON.stringify(dom.map((d) => d.poke))}`),
+        ok(gets[0] === 120, `기본 120이어야 — ${gets[0]}`),
+        ok(side(mid) > 0 && side(mid) <= 120 && side(small) <= 48 && side(small) < side(mid), `48이면 그림이 48 안, 120보다 작아야 — ${side(small)} · ${side(mid)}`),
+        ok(side(big) <= 384 && side(big) >= 3 * side(mid), `384면 120의 3배 넘게(크기/60배까지) — ${side(big)} · ${side(mid)}`),
+        ok(big?.cardW > mid?.cardW && fits(mid) && fits(big) && fits(small), `카드·창이 따라 넓어지고 창 안에 들어가야(640 한도) — 카드 ${mid?.cardW}→${big?.cardW} · 창 ${dom.map((d) => d?.win.join("x"))}`),
+        ok(mid?.nameFont && mid.nameFont === big?.nameFont && mid.ballW === big?.ballW && mid.ballW === small?.ballW, `이름 글자·몬스터볼은 그대로 — ${mid?.nameFont}/${big?.nameFont} · 공 ${mid?.ballW}/${small?.ballW}/${big?.ballW}`),
+        ok(bigMin?.minimal && side(bigMin) === side(big), `최소 모드도 같은 크기 — ${side(bigMin)} · ${side(big)}`),
+        ok(JSON.stringify(gets.slice(1)) === JSON.stringify([384, 104, 120]), `999 → 384, 101 → 104(8 단위), 숫자 아님 → 120 — ${JSON.stringify(gets.slice(1))}`),
+        (() => { const [b, m] = [...log.matchAll(/^lab-invoke own_read_test (.*)$/gm)].map((x) => JSON.parse(x[1])?.text || "");
+          return ok(/포켓몬 크기/.test(b) && /384px/.test(b) && /줄여서/.test(b) && /120px/.test(m) && !/줄여서/.test(m), `설정 창: 384px면 "미리보기 · 줄여서", 120px면 그대로 — ${JSON.stringify([b.match(/미리보기[^\n]*/)?.[0], m.match(/미리보기[^\n]*/)?.[0]])}`); })(),
       ];
     },
   },

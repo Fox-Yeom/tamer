@@ -36,7 +36,7 @@ const KEYCHAIN_WAIT = 120000; // a prompt nobody answers: given up after 2 minut
 const test = { keychainReads: 0, prompts: 0, fetches: 0, status: 200, denied: false, allowed: false };
 
 // Claude Code keeps its login under "Claude Code-credentials", or with CLAUDE_CONFIG_DIR set, that name
-// plus the first 8 hex of the folder's SHA-256 (as PokeTokenBar reads it — 2026-10-20)
+// plus the first 8 hex of the folder's SHA-256 (as other limit readers do — 2026-10-20)
 function claudeDir(env) { return env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude"); }
 function services(env) {
   if (!env.CLAUDE_CONFIG_DIR) return [SERVICE];

@@ -5,7 +5,7 @@
 .ov #cards, .ov .ov-cards { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .ov .card { position: relative; display: flex; flex-direction: column; align-items: stretch; gap: 6px; padding: 6px 10px 6px 6px; border-radius: 10px; cursor: pointer;
   background: rgba(var(--ov-rgb), var(--ov-alpha, .82)); border: 1px solid var(--ov-edge);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, calc(.35 * var(--ov-shadow, 1))); max-width: 280px; }
+  box-shadow: 0 4px 14px rgba(0, 0, 0, calc(.35 * var(--ov-shadow, 1))); max-width: max(280px, calc(var(--ov-poke, 120px) + 160px)); } /* a big partner (#127) widens it — 280 at the default 120 */
 .ov .card.current { padding: 8px 12px 8px 8px; }
 .ov .card .sprite { display: flex; align-items: flex-end; justify-content: center; min-width: 40px; min-height: 40px; }
 .ov .card .meta { min-width: 0; }

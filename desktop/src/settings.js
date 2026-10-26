@@ -24,12 +24,12 @@ function applySettings(s) {
     const v = getPath(s, el.dataset.set);
     if (el.type === "checkbox") el.checked = !!v; else el.value = v;
   }
-  // a few choices: segment buttons (PokeTokenBar's settings) — the one set is on
+  // a few choices: segment buttons — the one set is on
   for (const seg of root.querySelectorAll(".seg[data-set]")) {
     const v = getPath(s, seg.dataset.set);
     for (const b of seg.querySelectorAll("button")) { b.classList.toggle("on", b.dataset.v === v); b.setAttribute("aria-pressed", String(b.dataset.v === v)); }
   }
-  for (const el of root.querySelectorAll("[data-val]")) el.textContent = `${getPath(s, el.dataset.val)}%`;
+  for (const el of root.querySelectorAll("[data-val]")) el.textContent = `${getPath(s, el.dataset.val)}${el.dataset.unit || "%"}`;
   $(".set-group").classList.toggle("off", !s.overlay.on);
   $(".set-mb").classList.toggle("off", !s.menubar.on);
   if (setPage === "overlay") renderPreview(s.overlay);
@@ -64,7 +64,13 @@ async function renderPreview(show) {
   ov.querySelector(".ov-cards").innerHTML = html;
   ov.querySelector(".ov-wild").innerHTML = !off && show.wild ? wildNoteHtml({ name: "피카츄" }, null) : "";
   ov.querySelector(".wild-note-timer")?.replaceChildren("· 24초");
-  sizePokes(ov);
+  await sizePokes(ov, show.size);
+  if (seq !== previewSeq) return;
+  // 포켓몬 크기 (#127, APP-19 rule 14): a big partner taller / wider than the sample desktop — drawn smaller, from the bottom-right
+  const desk = ov.parentElement, pad = getComputedStyle(ov); // its top / left padding is empty room — not counted
+  const k = Math.min(1, desk.clientHeight / (ov.offsetHeight - parseFloat(pad.paddingTop)), desk.clientWidth / (ov.offsetWidth - parseFloat(pad.paddingLeft)));
+  ov.style.transformOrigin = "100% 100%"; ov.style.transform = k < 1 ? `scale(${k.toFixed(3)})` : "";
+  $(".set-preview-small").hidden = !(k < 1);
   $(".set-preview-off").hidden = !off;
 }
 
@@ -90,7 +96,12 @@ root.addEventListener("change", (e) => {
   const k = e.target.dataset?.set, t = e.target.type;
   if (k) setSetting(k, t === "checkbox" ? e.target.checked : t === "range" ? Number(e.target.value) : e.target.value);
 });
-root.addEventListener("input", (e) => { const k = e.target.dataset?.set; if (k && e.target.type === "range") $(`[data-val="${k}"]`).textContent = `${e.target.value}%`; });
+root.addEventListener("input", (e) => {
+  const k = e.target.dataset?.set, el = k && e.target.type === "range" && $(`[data-val="${k}"]`);
+  if (!el) return;
+  el.textContent = `${e.target.value}${el.dataset.unit || "%"}`;
+  if (k === "overlay.size" && settingsNow) renderPreview({ ...settingsNow.overlay, size: Number(e.target.value) }); // the 미리보기 follows the drag (#127); saved on release
+});
 root.addEventListener("click", async (e) => {
   const pg = e.target.closest(".set-nav button")?.dataset.page;
   if (pg) return settingsPage(pg);

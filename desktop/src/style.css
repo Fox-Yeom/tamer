@@ -28,7 +28,7 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--fg);
 #tabs .tab .doing { font-size: 11px; opacity: .8; overflow: hidden; text-overflow: ellipsis; max-width: 120px; }
 #tabs .tab.active { color: var(--fg); background: var(--pane); border-bottom-color: var(--accent); }
 #tabs .tab.attention { color: var(--bad); }
-/* #61: while the tab's agent works, a gradient runs round its border (iTerm2-like) */
+/* #61: while the tab's agent works, a gradient runs round its border */
 @property --tab-spin { syntax: "<angle>"; inherits: false; initial-value: 0deg; }
 #tabs .tab.working::before { content: ""; position: absolute; inset: 2px 1px 0; border-radius: 6px 6px 0 0; padding: 1.5px; pointer-events: none;
   background: conic-gradient(from var(--tab-spin), #d97757, #f5c542, #56b6c2, #c678dd, #d97757);
@@ -58,7 +58,7 @@ body.side-drag { cursor: col-resize; user-select: none; }
 #toast { position: fixed; z-index: 40; top: 40px; right: 16px; /* above the Pokémon window and dialogs (#83) */ background: var(--raised-hi); padding: 8px 12px; border-radius: 6px; opacity: 0; transition: opacity .2s; }
 #toast.show { opacity: 1; }
 
-/* IME composition like a native text field (iTerm, macOS): inline on the pane background with an
+/* IME composition like a native text field (macOS): inline on the pane background with an
    underline, instead of xterm.js's default black box that reads as a separate/misplaced cell */
 .xterm .composition-view {
   background: var(--pane);

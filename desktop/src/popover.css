@@ -15,7 +15,7 @@ button { font: inherit; color: var(--fg); background: var(--raised); border: 1px
 button:hover:not(:where(.wild-actions button)) { background: var(--hover); } /* the wild card's buttons keep their colours (#125 — :where keeps this as weak as before) */
 .pop-page[hidden] { display: none; }
 
-/* 위쪽 탭 (#118): a segmented control as PokeTokenBar's — 홈 · 작업, a dot on 홈 for a wild one / an evolution */
+/* 위쪽 탭 (#118): a segmented control — 홈 · 작업, a dot on 홈 for a wild one / an evolution */
 #pop-nav { display: flex; gap: 2px; margin: 10px 12px 0; padding: 2px; border-radius: 8px; background: var(--sunken); }
 #pop-nav button { flex: 1; border: 0; background: transparent; padding: 5px 0; border-radius: 6px; color: var(--dim); font-weight: 600; }
 #pop-nav button:hover:not(.on) { color: var(--fg); }
