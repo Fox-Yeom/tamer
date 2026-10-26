@@ -188,8 +188,10 @@ function userTamerRunning() {
 // handed in `lateMs` after the app logged its first line (a drop on the Dock icon while it starts)
 function launch({ env, mode = "direct", folders = [], lateMs = 300, until = "lab-done", timeoutMs = 60000, args = [] }) {
   const log = env.CVIM_DESKTOP_LOG;
-  const kill = () => { try { execFileSync("pkill", ["-f", `${BIN}$`]); } catch {} };
-  kill(); // a leftover test instance (ours only: matched by the test build's path)
+  // a leftover test instance (ours only: matched by the test build's path) — with arguments too: one started with a folder
+  // was missed, stayed, and took every later "open -a … folder" (2026-10-26: the drop cases all failed)
+  const kill = () => { try { execFileSync("pkill", ["-f", `^${BIN}( |$)`]); } catch {} };
+  kill();
   if (mode === "direct") {
     spawn(BIN, args, { env: { ...process.env, ...env, ...(folders.length ? { CVIM_DESKTOP_DIRS: folders.join(":") } : {}) }, stdio: "ignore", detached: true }).unref();
   } else {

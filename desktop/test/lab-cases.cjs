@@ -610,6 +610,34 @@ module.exports = [
     },
   },
   {
+    id: "limits-claude-press", tags: ["smoke", "agent"], what: "키체인 확인 창(#124): 앱이 뜰 때 처음 한 번만 묻고('항상 허용' 가짜) 그 뒤 새로 고침은 창 없이 · Claude Code가 항목을 다시 써 허용이 풀려도(가짜) 쓸 수 있는 토큰이 있으면 새로 고침에서 묻지 않음(keychain=kept) · 토큰이 만료돼 없을 때만 다시 물음 — 어떻게 얻었는지는 앱 기록에(값은 없음) (STA-21 규칙 2, POL-AGENT-02 1-3)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits") },
+    files: {
+      "limits/claude-cred.json": '{"claudeAiOauth":{"accessToken":"LAB-SECRET-TOKEN-124","expiresAt":4102444800000}}',
+      "limits/claude-usage.json": '{"five_hour":{"utilization":31.0,"resets_at":"2099-01-01T05:00:00.000+00:00"},"seven_day":{"utilization":12.0,"resets_at":"2099-01-04T23:00:00+00:00"}}',
+    },
+    setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true } })); },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "limits_test", log: true }, // the start: one prompt, "Always Allow"
+      { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // a press: read again without a prompt
+      { invoke: "limits_allow_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // allowance gone: the token kept
+      { invoke: "limits_test", args: { status: 401, auto: true }, log: true }, // no longer accepted: read again — the prompt
+      { invoke: "limits_test", args: { status: 200 } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }],
+    check: ({ log }) => {
+      const [start, press, kept, expired, after] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const how = [...log.matchAll(/^limits claude (\S+)(?: \(asked\))?(?: keychain=(\w+))?$/gm)].map((m) => `${m[1]}:${m[2] || "-"}`);
+      return [
+        ok(start?.prompts === 1 && start?.token === true && !start?.state?.claude?.error, `앱이 뜰 때 한 번 물음 ${JSON.stringify(start && { p: start.prompts, t: start.token })}`),
+        ok(press?.prompts === 1 && press?.keychainReads === 2 && press?.token === true, `'항상 허용' 뒤 새로 고침은 창 없이 다시 읽음 ${JSON.stringify(press && { p: press.prompts, k: press.keychainReads })}`),
+        ok(kept?.prompts === 1 && kept?.token === true && !kept?.state?.claude?.error, `허용이 풀려도 쓸 수 있는 토큰이면 새로 고침에서 안 물음 ${JSON.stringify(kept && { p: kept.prompts, t: kept.token, s: kept.state?.claude })}`),
+        ok(expired?.prompts === 2 && after?.prompts === 2 && after?.token === true, `토큰을 못 쓰게 되면 그때만 다시 물음 — 그 뒤 새로 고침은 창 없이 ${JSON.stringify([expired?.prompts, after && { p: after.prompts, t: after.token }])}`),
+        ok(how.includes("ok:prompt") && how.includes("ok:silent") && how.includes("ok:kept"), `앱 기록의 keychain= ${JSON.stringify(how)}`),
+        ok(!log.includes("LAB-SECRET-TOKEN-124"), "토큰 값이 앱 기록에 없음"),
+      ];
+    },
+  },
+  {
     id: "limits-claude-declined", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켜지 않음): 처음 질문에 '켜지 않음'이면 꺼진 채 — 로그인 정보·주소 모두 안 씀, 다시 묻지 않음 · 설정에서 켜려 해도 설명 창에서 '켜지 않음'이면 그대로 꺼짐 (STA-21, POL-AGENT-02 1-2, #104)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_CONSENT: "no" },

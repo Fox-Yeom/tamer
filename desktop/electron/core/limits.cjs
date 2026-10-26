@@ -29,9 +29,11 @@ const SERVICE = "Claude Code-credentials";
 let token = null; // { value, exp (ms | null) } — memory only (rule 1-4)
 let auto = true; // may the timer read the login by itself (the app's start · an expired token) — not after a "no"
 let denied = false; // the last read: the Keychain prompt said no
-let keychain = null; // (services, read) → the core's answer (main.cjs: cvim-core's claude_login)
+let keychain = null; // (services, read, silent) → the core's answer (main.cjs: cvim-core's claude_login)
 const KEYCHAIN_WAIT = 120000; // a prompt nobody answers: given up after 2 minutes (the core keeps waiting alone)
-const test = { keychainReads: 0, fetches: 0, status: 200, denied: false }; // what a test can see (counts, never values) and set
+// what a test can see (counts, never values) and set — allowed: an "Always Allow" given (a silent read works),
+// prompts: macOS's prompts shown (#124)
+const test = { keychainReads: 0, prompts: 0, fetches: 0, status: 200, denied: false, allowed: false };
 
 // Claude Code keeps its login under "Claude Code-credentials", or with CLAUDE_CONFIG_DIR set, that name
 // plus the first 8 hex of the folder's SHA-256 (as PokeTokenBar reads it — 2026-10-20)
@@ -42,7 +44,7 @@ function services(env) {
   return [d, `${d}/`].map((p) => `${SERVICE}-${crypto.createHash("sha256").update(p).digest("hex").slice(0, 8)}`);
 }
 const credFile = (env) => path.join(claudeDir(env), ".credentials.json");
-const ask = (env, read) => (keychain ? Promise.race([keychain(services(env), read), new Promise((r) => setTimeout(() => r({ timeout: true }), read ? KEYCHAIN_WAIT : 10000))]).catch(() => null) : Promise.resolve(null));
+const ask = (env, read, silent = false) => (keychain ? Promise.race([keychain(services(env), read, silent), new Promise((r) => setTimeout(() => r({ timeout: true }), read && !silent ? KEYCHAIN_WAIT : 10000))]).catch(() => null) : Promise.resolve(null));
 
 // is there a Claude Code login at all? (asked only then) — the item's attributes, no secret: no prompt
 async function claudeHasLogin(env) {
@@ -57,17 +59,24 @@ const parseCred = (text) => {
     return o?.accessToken ? { value: String(o.accessToken), exp: Number.isFinite(Number(o.expiresAt)) ? Number(o.expiresAt) : null } : null;
   } catch { return null; }
 };
-// the token, read now → { token } | { error: "login" | "denied" | "asking" } (macOS may ask about the Keychain first)
-async function readToken(env) {
+// the token, read now → { token, how } | { error: "login" | "denied" | "asking" | "ask" }. First without macOS's prompt
+// (an "Always Allow" already given reads at once — how "silent"); only when that fails, and prompt allows it, with the
+// prompt (how "prompt") — else { error: "ask" } (#124). how "file": <config>/.credentials.json, no Keychain at all
+async function readToken(env, { prompt = true } = {}) {
   test.keychainReads++;
   if (TEST) {
-    if (test.denied) return { error: "denied" };
     let t = null; try { t = TEST_DIR && parseCred(fs.readFileSync(path.join(TEST_DIR, "claude-cred.json"), "utf8")); } catch {}
-    return t ? { token: t } : { error: "login" };
+    if (test.allowed && !test.denied) return t ? { token: t, how: "silent" } : { error: "login" };
+    if (!prompt) return { error: "ask" };
+    test.prompts++;
+    if (test.denied) return { error: "denied" };
+    test.allowed = true; // the prompt answered "Always Allow"
+    return t ? { token: t, how: "prompt" } : { error: "login" };
   }
-  try { const t = parseCred(fs.readFileSync(credFile(env), "utf8")); if (t) return { token: t }; } catch {}
-  const r = await ask(env, true);
-  if (typeof r?.token === "string" && r.token) return { token: { value: r.token, exp: Number.isFinite(r.exp) ? r.exp : null } };
+  try { const t = parseCred(fs.readFileSync(credFile(env), "utf8")); if (t) return { token: t, how: "file" }; } catch {}
+  let r = await ask(env, true, true), how = "silent";
+  if (r?.ask) { if (!prompt) return { error: "ask" }; r = await ask(env, true); how = "prompt"; }
+  if (typeof r?.token === "string" && r.token) return { token: { value: r.token, exp: Number.isFinite(r.exp) ? r.exp : null }, how };
   return { error: r?.denied ? "denied" : r?.busy || r?.timeout ? "asking" : "login" };
 }
 
@@ -102,13 +111,21 @@ function get(value) {
 // 새로 고침), "login" (no login found), "denied" (the Keychain prompt said no), "asking" (a prompt is open),
 // "expired" (dropped; read once more by itself, then press 새로 고침), "busy" (429), "net", "shape" (the answer changed)
 async function claude(env, { user = false } = {}) {
-  if (user) { token = null; auto = true; } // a press reads again, and lets the timer read by itself again
-  let fresh = false; // read from the login in this call
+  let fresh = false, how = null; // read from the login in this call · how (the app's log: silent | prompt | kept | file)
+  if (user) { // a press reads again, and lets the timer read by itself again
+    auto = true;
+    if (token && !(token.exp && token.exp < Date.now())) {
+      // one that still works is kept unless a read without a prompt finds another (an account switched, a renewed token):
+      // no prompt over a token we can use (#124 — "Always Allow" given, then a press asked again)
+      const r = await readToken(env, { prompt: false });
+      if (r.token) { token = r.token; fresh = true; how = r.how; } else how = "kept";
+    } else token = null;
+  }
   for (;;) {
     if (!token) {
       if (!auto) return { error: denied ? "denied" : "token" };
       const r = await readToken(env);
-      fresh = true;
+      fresh = true; how = r.how || null;
       if (!r.token) { if (r.error !== "asking") { auto = false; denied = r.error === "denied"; } return { error: r.error }; }
       token = r.token; denied = false;
     }
@@ -119,7 +136,8 @@ async function claude(env, { user = false } = {}) {
     if (r.status === 429) return { error: "busy" };
     if (r.status !== 200) return { error: "net" };
     let o = null; try { o = JSON.parse(r.body); } catch {}
-    return parseUsage(o, Date.now()) || { error: "shape" };
+    const u = parseUsage(o, Date.now());
+    return u ? { ...u, how } : { error: "shape" };
   }
 }
 // turned off: the token goes, and the next turning on starts over

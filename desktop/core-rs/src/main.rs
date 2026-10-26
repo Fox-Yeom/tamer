@@ -13,7 +13,8 @@
 //!   {"id":8,"method":"claude_login","params":{"services":["Claude Code-credentials"],"read":false}}
 //!       Claude Code's login in the Keychain (#115 A1, keychain.rs): read false -> {"found":bool} (no prompt);
 //!       read true -> {"token":"…","exp":ms|null} | {"denied":true} | {"found":false} | {"busy":true} — answered
-//!       when macOS's prompt is answered (the loop doesn't wait for it)
+//!       when macOS's prompt is answered (the loop doesn't wait for it); "silent":true -> never a prompt,
+//!       {"ask":true} when macOS would have asked (#124)
 //! stdout (to the main process):
 //!   {"id":1,"result":…} / {"id":1,"error":"…"}
 //!   {"event":"state","ws":"<id>","payload":{state,tool,detail,usage,log}}
@@ -205,16 +206,21 @@ fn read_login(id: Value, p: &Value) {
         return;
     }
     let list = services(p);
+    let silent = p["silent"] == true; // #124: without a prompt — { "ask": true } when macOS would have asked
     std::thread::spawn(move || {
         let mut out = json!({ "found": false });
         for s in &list {
-            match keychain::read(s) {
+            match keychain::read(s, silent) {
                 keychain::Found::Token { value, exp } => {
                     out = json!({ "token": value, "exp": exp });
                     break;
                 }
                 keychain::Found::Denied => {
                     out = json!({ "denied": true });
+                    break;
+                }
+                keychain::Found::NeedsAsk => {
+                    out = json!({ "ask": true });
                     break;
                 }
                 keychain::Found::Bad => out = json!({ "found": true }),

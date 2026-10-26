@@ -1167,7 +1167,7 @@ async function limitsRefresh({ user = false } = {}) {
       const r = await job;
       limitsState[key] = r.error ? { ...limitsState[key], error: r.error } : { at: Date.now(), error: null };
       if (!r.error) broadcast("limits", { key, five_hour: r.five_hour, seven_day: r.seven_day });
-      logLine(`limits ${key} ${r.error || "ok"}${user ? " (asked)" : ""}`);
+      logLine(`limits ${key} ${r.error || "ok"}${user ? " (asked)" : ""}${r.how ? ` keychain=${r.how}` : ""}`); // how the token came: the 진단 정보 shows whether macOS asked (#124)
     }
   })();
   try { await limitsBusy; } finally { limitsBusy = null; }
@@ -2468,11 +2468,12 @@ const testCommands = {
     return true;
   },
   // auto: the timer's read now (as if a minute had passed — the login only as limits.cjs allows by itself)
-  limits_deny_test({ on }) { limits.test.denied = !!on; return true; }, // the Keychain prompt answered "no" (#115 A1)
+  limits_deny_test({ on }) { limits.test.denied = !!on; if (on) limits.test.allowed = false; return true; }, // the Keychain prompt answered "no" (#115 A1)
+  limits_allow_test({ on }) { limits.test.allowed = !!on; return true; }, // an "Always Allow" given / gone (Claude Code wrote its item anew — #124)
   async limits_test({ status, auto } = {}) {
     if (status != null) limits.setTestStatus(status);
     if (auto) { limitsLast = 0; await limitsRefresh(); }
-    return { ...limitsView(), keychainReads: limits.test.keychainReads, fetches: limits.test.fetches, settings: settings.limits }; },
+    return { ...limitsView(), keychainReads: limits.test.keychainReads, prompts: limits.test.prompts, fetches: limits.test.fetches, settings: settings.limits }; },
   tray_click_test({ path: labels }) {
     let items = trayNow().items, it = null;
     for (const l of labels || []) { it = items.find((x) => x.label === l); items = it?.submenu || []; }
@@ -2721,7 +2722,7 @@ app.whenReady().then(() => {
   // the core starts at once (tabs and shells don't wait for the shell environment, #35); the
   // agents' log folders follow when the environment has been read
   core = new RustCore({ onEvent: onCoreEvent, log: logLine });
-  limits.useKeychain((services, read) => core.request("claude_login", { services, read })); // the core reads the Keychain (#115 A1)
+  limits.useKeychain((services, read, silent) => core.request("claude_login", { services, read, silent })); // the core reads the Keychain (#115 A1) — silent: never a prompt (#124)
   titlesToCore(); // 세션 제목 (#99): the core reads no title until told it's on
   const envT0 = since();
   ready = agents.prepareEnv().then((env) => {

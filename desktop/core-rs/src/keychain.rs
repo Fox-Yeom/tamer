@@ -26,6 +26,8 @@ pub enum Found {
     NotFound,
     /// the user said no (Deny / Cancel) or there was no one to ask
     Denied,
+    /// read without a prompt (silent) and macOS would have asked: not "Always Allow"ed yet (#124)
+    NeedsAsk,
     Error(i32),
 }
 
@@ -65,12 +67,16 @@ mod sys {
         pub static kSecMatchLimit: CFTypeRef;
         pub static kSecMatchLimitOne: CFTypeRef;
         pub static kSecReturnData: CFTypeRef;
+        pub static kSecUseAuthenticationUI: CFTypeRef;
+        pub static kSecUseAuthenticationUIFail: CFTypeRef;
         pub fn SecItemCopyMatching(query: CFTypeRef, result: *mut CFTypeRef) -> i32;
     }
 }
 
+// silent: macOS mustn't ask (kSecUseAuthenticationUIFail) — an "Always Allow" already given reads at once, else
+// errSecInteractionNotAllowed (#124: read like this first, the prompt only when that fails)
 #[cfg(target_os = "macos")]
-fn copy_matching(service: &str, data: bool) -> (i32, Option<Vec<u8>>) {
+fn copy_matching(service: &str, data: bool, silent: bool) -> (i32, Option<Vec<u8>>) {
     use sys::*;
     const UTF8: u32 = 0x0800_0100;
     unsafe {
@@ -83,6 +89,10 @@ fn copy_matching(service: &str, data: bool) -> (i32, Option<Vec<u8>>) {
         if data {
             keys.push(kSecReturnData);
             values.push(kCFBooleanTrue);
+        }
+        if silent {
+            keys.push(kSecUseAuthenticationUI);
+            values.push(kSecUseAuthenticationUIFail);
         }
         let query = CFDictionaryCreate(std::ptr::null(), keys.as_ptr(), values.as_ptr(), keys.len() as CFIndex, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
         CFRelease(name);
@@ -104,6 +114,7 @@ fn copy_matching(service: &str, data: bool) -> (i32, Option<Vec<u8>>) {
 
 const NOT_FOUND: i32 = -25300; // errSecItemNotFound
 const DENIED: [i32; 3] = [-128, -25293, -25308]; // errSecUserCanceled · errSecAuthFailed · errSecInteractionNotAllowed
+const NOT_ALLOWED: i32 = -25308; // errSecInteractionNotAllowed: a silent read that would have prompted
 
 /// is the item there? Its attributes only — no prompt. None: couldn't tell
 #[cfg(target_os = "macos")]
@@ -111,20 +122,20 @@ pub fn exists(service: &str) -> Option<bool> {
     if !allowed(service) {
         return Some(false);
     }
-    match copy_matching(service, false).0 {
+    match copy_matching(service, false, false).0 {
         0 => Some(true),
         NOT_FOUND => Some(false),
         _ => None,
     }
 }
 
-/// the item's access token — macOS may ask the user (this waits for the answer)
+/// the item's access token — macOS may ask the user (this waits for the answer); silent: never asks (NeedsAsk)
 #[cfg(target_os = "macos")]
-pub fn read(service: &str) -> Found {
+pub fn read(service: &str, silent: bool) -> Found {
     if !allowed(service) {
         return Found::NotFound;
     }
-    match copy_matching(service, true) {
+    match copy_matching(service, true, silent) {
         (0, Some(mut bytes)) => {
             let t = token_of(&bytes);
             bytes.iter_mut().for_each(|b| *b = 0); // the item's text (refresh token too) doesn't stay around
@@ -134,6 +145,7 @@ pub fn read(service: &str) -> Found {
             }
         }
         (NOT_FOUND, _) => Found::NotFound,
+        (NOT_ALLOWED, _) if silent => Found::NeedsAsk,
         (s, _) if DENIED.contains(&s) => Found::Denied,
         (s, _) => Found::Error(s),
     }
@@ -144,7 +156,7 @@ pub fn exists(_: &str) -> Option<bool> {
     Some(false)
 }
 #[cfg(not(target_os = "macos"))]
-pub fn read(_: &str) -> Found {
+pub fn read(_: &str, _: bool) -> Found {
     Found::NotFound
 }
 
@@ -160,7 +172,8 @@ mod tests {
         assert!(!allowed("Claude Code-credentials-zz1b2c3d"));
         assert!(!allowed("Claude Code-credentials2"));
         assert!(!allowed("github.com"));
-        assert_eq!(read("github.com"), Found::NotFound);
+        assert_eq!(read("github.com", false), Found::NotFound);
+        assert_eq!(read("github.com", true), Found::NotFound);
         assert_eq!(exists("Chrome Safe Storage"), Some(false));
     }
 
@@ -178,6 +191,7 @@ mod tests {
     #[test]
     fn missing_item() {
         assert_eq!(exists("Claude Code-credentials-00000000"), Some(false));
-        assert_eq!(read("Claude Code-credentials-00000000"), Found::NotFound);
+        assert_eq!(read("Claude Code-credentials-00000000", false), Found::NotFound);
+        assert_eq!(read("Claude Code-credentials-00000000", true), Found::NotFound); // silent: same, no prompt
     }
 }
