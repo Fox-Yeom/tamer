@@ -779,6 +779,35 @@ module.exports = [
     },
   },
   {
+    id: "outside-claude-app", tags: ["smoke", "poke"], what: "Claude 앱의 Code(entrypoint claude-desktop)는 turn_duration을 안 써도 셈(#123): 응답의 end_turn — 여러 줄로 나뉜 한 응답은 한 번, 도구 사용 중·하위 에이전트는 안 셈, 걸린 시간 = 사용자 입력부터(45초 → +5 · 10초 → +1), 본문은 남지 않음 (STA-23 규칙 2)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_OUTSIDE_CONSENT: "yes" },
+    files: { "claudecfg/projects/-app/s1.jsonl": "" }, // logs there at launch: asked, then on
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "outside_append_test", args: { agent: "claude", rel: "-app/s1.jsonl", lines: [0, 1].flatMap((k) => {
+        const ep = { entrypoint: "claude-desktop", cwd: "/tmp/tamer-lab-app", isSidechain: false, sessionId: "s1" }, t = (s) => `2026-10-26T05:0${k}:${String(s).padStart(2, "0")}.000Z`;
+        return [
+          { type: "user", ...ep, timestamp: t(0), message: { role: "user", content: "LAB-PRIVATE-123 해 줘" } },
+          ...(k ? [] : [{ type: "assistant", ...ep, timestamp: t(5), message: { id: "m-tool", stop_reason: "tool_use", content: [{ type: "tool_use" }] } },
+            { type: "user", ...ep, timestamp: t(6), message: { role: "user", content: [{ type: "tool_result", content: "LAB-PRIVATE-123" }] } },
+            { type: "assistant", ...ep, isSidechain: true, timestamp: t(20), message: { id: "m-side", stop_reason: "end_turn", content: [] } }]),
+          { type: "assistant", ...ep, timestamp: t(k ? 10 : 45), message: { id: `m-end${k}`, stop_reason: "end_turn", content: [{ type: "thinking", thinking: "LAB-PRIVATE-123" }] } },
+          { type: "assistant", ...ep, timestamp: t(k ? 10 : 45), message: { id: `m-end${k}`, stop_reason: "end_turn", content: [{ type: "text", text: "LAB-PRIVATE-123 끝" }] } },
+          { type: "system", subtype: "stop_hook_summary", ...ep, timestamp: t(k ? 10 : 45), hookCount: 0 }];
+      }) } },
+      { wait: 1500 }],
+    check: ({ log, box }) => {
+      const done = [...log.matchAll(/^outside done claude took=(\S+)$/gm)].map((m) => m[1]);
+      const files = []; const walk = (d) => { for (const n of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, n.name); if (n.isDirectory()) walk(p); else files.push(p); } };
+      try { walk(box.data); } catch {}
+      const leaked = files.filter((f) => { try { return fs.readFileSync(f, "utf8").includes("LAB-PRIVATE-123"); } catch { return false; } });
+      return [
+        ok(JSON.stringify(done) === '["45000","10000"]', `센 것 ${JSON.stringify(done)} (턴 둘 — 45초 · 10초, 나뉜 응답·도구 중·하위 에이전트는 안 셈)`),
+        ok(/^coins outside \+\d+ \(5/m.test(log) && /^coins outside \+1 \(1\)$/m.test(log), `코인 ${(log.match(/^coins outside .*/gm) || []).join(" | ")}`),
+        ok(!log.includes("LAB-PRIVATE-123") && !leaked.length, `기록 본문이 앱 기록·데이터에 없어야 ${JSON.stringify(leaked)}`),
+      ];
+    },
+  },
+  {
     id: "outside-egg", tags: ["smoke", "poke"], what: "Tamer 밖 작업이 끝나도 부화기의 알이 한 칸 가까워짐 — 탭과 같은 공용 처리(finishGame) (PKM-25, #116)",
     data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_OUTSIDE_CONSENT: "yes" },
     files: { "claudecfg/projects/-elsewhere/.keep": "" },

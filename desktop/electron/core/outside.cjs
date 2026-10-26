@@ -3,7 +3,8 @@
 // lines that say a turn finished are read — their kind, folder (cwd), source and length only, never the
 // conversation — and fed to the same game as a tab's finish.
 //   Claude  <CLAUDE_CONFIG_DIR|~/.claude>/projects/*/*.jsonl — `type: system, subtype: turn_duration`
-//           (cwd · durationMs · entrypoint · isSidechain on that line)
+//           (cwd · durationMs · entrypoint · isSidechain on that line); the Claude app's Code writes none of
+//           those: its replies' `stop_reason: end_turn` (claudeDesktop, #123)
 //   Codex   <CODEX_HOME|~/.codex>/sessions/**/*.jsonl — `event_msg / task_complete` without an error
 //           (duration_ms); where it came from: the file's first line, `session_meta` (originator · source · cwd)
 // Not counted (rule 3): scripts and headless runs (Claude entrypoint sdk-*, `codex_exec`), sub-agents
@@ -81,6 +82,28 @@ function claudeDone(d) {
   if (typeof d.cwd !== "string" || !d.cwd) return null;
   return { agent: "claude", cwd: d.cwd, took: Number.isFinite(d.durationMs) ? d.durationMs : null };
 }
+// the Claude app's Code (entrypoint claude-desktop) writes no turn_duration line (#123 — none in its logs on 2026-10-26,
+// the CLI's have one a turn): there a turn ends with the reply whose stop_reason is end_turn — once per message id (a
+// reply is split over lines), its time from the prompt before it (st: the file's { prompt, endId, td }). Only that
+// source: the CLI writes end_turn too, before its turn_duration (it would count twice); and once a turn_duration
+// turns up in such a file, only those count there. Read: type · timestamp · cwd · isSidechain · isMeta · the message's
+// id and stop_reason — never its text
+const DESKTOP = "claude-desktop";
+function claudeDesktop(d, st) {
+  if (d?.entrypoint !== DESKTOP || d.isSidechain || st.td) return null;
+  const m = d.message || {}, at = Date.parse(d.timestamp);
+  if (d.type === "user") { // a prompt typed (not a tool's result, not a note the app adds)
+    const typed = typeof m.content === "string" || (Array.isArray(m.content) && m.content.some((b) => b?.type === "text"));
+    if (typed && !d.isMeta && Number.isFinite(at)) st.prompt = at;
+    return null;
+  }
+  if (d.type !== "assistant" || m.stop_reason !== "end_turn" || !m.id || m.id === st.endId) return null;
+  if (typeof d.cwd !== "string" || !d.cwd) return null;
+  st.endId = m.id;
+  const took = st.prompt != null && Number.isFinite(at) ? Math.max(0, at - st.prompt) : null;
+  st.prompt = null;
+  return { agent: "claude", cwd: d.cwd, took };
+}
 function codexDone(d, meta) {
   const p = d?.payload;
   if (d?.type !== "event_msg" || p?.type !== "task_complete" || p.error) return null;
@@ -113,10 +136,13 @@ function createWatch(env) {
       if (end < 0) { if (buf.length === MAX_READ) st.off += buf.length; continue; }
       st.off += end + 1;
       for (const line of buf.subarray(0, end).toString("utf8").split("\n")) {
-        // only lines that can be a finish are parsed at all
-        if (kind === "claude" ? !line.includes('"turn_duration"') : !line.includes('"task_complete"')) continue;
+        // only lines that can be a finish are parsed at all (the Claude app's: its replies' ends and the prompts — #123)
+        const td = kind === "claude" && line.includes('"turn_duration"');
+        const app = kind === "claude" && !td && line.includes('"claude-desktop"') && (line.includes('"end_turn"') || line.includes('"type":"user"'));
+        if (kind === "claude" ? !td && !app : !line.includes('"task_complete"')) continue;
         let d; try { d = JSON.parse(line); } catch { continue; }
-        const done = kind === "claude" ? claudeDone(d) : codexDone(d, st.meta);
+        if (td && d?.subtype === "turn_duration") st.td = true;
+        const done = kind === "claude" ? (td ? claudeDone(d) : claudeDesktop(d, st)) : codexDone(d, st.meta);
         if (done) out.push(done);
       }
     }
@@ -126,4 +152,4 @@ function createWatch(env) {
   return { poll, size: () => files.size };
 }
 
-module.exports = { createWatch, hasLogs, roots, claudeFiles, codexFiles, claudeDone, codexDone, codexMeta };
+module.exports = { createWatch, hasLogs, roots, claudeFiles, codexFiles, claudeDone, claudeDesktop, codexDone, codexMeta };
