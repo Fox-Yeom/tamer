@@ -2520,6 +2520,29 @@ const testCommands = {
       await send("Input.dispatchMouseEvent", { type: "mouseReleased", x, y, modifiers, button, clickCount: n });
     }
   },
+  // an element's colours at rest, then with the (test) pointer on it (#125): { rest, hover } — each { bg, fg, outline, contrast,
+  // over } (contrast: WCAG, text on its background). target "popover" · a window of its own ("catch" …) · else the main
+  // window; the pointer goes back to the corner after
+  async hover_test({ target, sel }) {
+    const wc = target === "popover" ? popover?.webContents : testWc(target);
+    if (!wc || wc.isDestroyed()) return null;
+    const q = JSON.stringify(String(sel));
+    const look = () => wc.executeJavaScript(`(() => { const el = document.querySelector(${q}); if (!el) return null;
+      const cs = getComputedStyle(el), lum = (c) => { const v = (c.match(/[\\d.]+/g) || []).slice(0, 3).map((x) => Number(x) / 255)
+        .map((x) => (x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4)); return 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2]; };
+      const [a, b] = [lum(cs.color), lum(cs.backgroundColor)].sort((x, y) => y - x), r = el.getBoundingClientRect();
+      return { bg: cs.backgroundColor, fg: cs.color, outline: cs.outlineStyle, contrast: Math.round(((a + 0.05) / (b + 0.05)) * 100) / 100,
+        over: el.matches(":hover"), x: r.left + r.width / 2, y: r.top + r.height / 2 }; })()`);
+    const rest = await look();
+    if (!rest) return null;
+    const dbg = wc.debugger;
+    if (!dbg.isAttached()) dbg.attach("1.3");
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: rest.x, y: rest.y });
+    await new Promise((r) => setTimeout(r, 250));
+    const hover = await look();
+    await dbg.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: 0, y: 0 });
+    return { rest, hover };
+  },
   // the (test) pointer to a corner of the page: no :hover left on a scene by wherever the real mouse is
   async mouse_park_test({ target } = {}) {
     const dbg = testWc(target).debugger;

@@ -742,6 +742,23 @@ module.exports = [
     check: ({ log }) => [ok(/^user quit: next launch starts clean$/m.test(log) && !/stays in the menu bar/.test(log), "메인 창을 닫으면 끝나야")], // not quitting = no line, and the run times out
   },
   {
+    id: "wild-hover", tags: ["smoke", "poke"], what: "야생 카드 던지기 단추에 마우스를 올려도 제 색 그대로 고리만 — 메인 창 · 메뉴바 대시보드 · 잡기 창 모두, 글자 대비가 쉴 때보다 안 떨어짐(대시보드는 공통 단추 hover가 배경을 어둡게 바꿔 글자가 안 읽혔음) (#125, PKM-07 규칙 7)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1" },
+    setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } })),
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 }, ...DONE("$ws"), { wait: 1500 },
+      { invoke: "hover_test", args: { sel: "#wild .wild-throw" }, log: true },
+      { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "hover_test", args: { target: "popover", sel: "#pop-wild .wild-throw" }, log: true },
+      { invoke: "popover_test", args: { open: false } }, { invoke: "catch_test", args: { open: true } }, { wait: 1500 }, { invoke: "hover_test", args: { target: "catch", sel: ".wild-throw" }, log: true }],
+    check: ({ log }) => {
+      const r = [...log.matchAll(/^lab-invoke hover_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      return ["메인 창", "대시보드", "잡기 창"].map((w, i) => {
+        const x = r[i], same = x && x.hover.bg === x.rest.bg && x.hover.fg === x.rest.fg;
+        return ok(x?.hover?.over && same && x.hover.outline === "solid" && x.hover.contrast >= x.rest.contrast - 0.01,
+          `${w}: ${JSON.stringify(x && { rest: [x.rest.bg, x.rest.fg, x.rest.contrast], hover: [x.hover.bg, x.hover.fg, x.hover.contrast, x.hover.outline, x.hover.over] })}`);
+      });
+    },
+  },
+  {
     id: "popover-wild", tags: ["smoke", "poke"], what: "메뉴바 대시보드에서 야생 잡기: 야생이 나와 있으면 홈 맨 위에 야생 카드, 작업 탭을 보면 홈 탭에 점(#118) — 마스터볼을 골라 던지면 잡히고 가방에서 한 개 줄어듦 (STA-22 규칙 3·13, #105 #118)",
     data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1" },
     setup: (box) => {

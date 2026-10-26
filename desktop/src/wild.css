@@ -34,6 +34,10 @@
 .wild-actions { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
 .wild-actions button { border: 0; border-radius: 6px; padding: 5px 10px; font: inherit; cursor: pointer; background: var(--accent); color: var(--on-accent); font-weight: 700; }
 .wild-actions button:disabled { opacity: .45; cursor: default; }
+/* hover (#125, PKM-07 rule 7): a ring around it, its colours untouched — never another background (the dashboard's
+   plain-button hover put the throw button's dark text on a dark grey) and no brighter (white text in the light theme would
+   fade). Same in the main window, the catch window and the dashboard */
+.wild-actions button:hover:not(:disabled) { outline: 2px solid color-mix(in srgb, var(--fg) 45%, transparent); outline-offset: 1px; }
 .wild-actions button[hidden] { display: none; }
 .wild-actions .k { font-weight: 400; opacity: .7; font-size: 11px; }
 .wild-partner { background: var(--ok) !important; }

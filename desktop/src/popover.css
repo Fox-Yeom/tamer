@@ -12,7 +12,7 @@ html { overflow-y: auto; }
 .pop-sec:empty { display: none; }
 .pop-h { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-size: 11px; font-weight: 600; color: var(--dim); }
 button { font: inherit; color: var(--fg); background: var(--raised); border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; cursor: pointer; }
-button:hover { background: var(--hover); }
+button:hover:not(:where(.wild-actions button)) { background: var(--hover); } /* the wild card's buttons keep their colours (#125 — :where keeps this as weak as before) */
 .pop-page[hidden] { display: none; }
 
 /* 위쪽 탭 (#118): a segmented control as PokeTokenBar's — 홈 · 작업, a dot on 홈 for a wild one / an evolution */
