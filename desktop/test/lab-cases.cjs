@@ -2150,6 +2150,12 @@ sleep 40
       { invoke: "own_open_test", args: { name: "settings" } }, { wait: 1500 }, { invoke: "own_click_test", args: { name: "settings", sel: ".set-nav [data-page='overlay']" } }, { wait: 1200 },
       { invoke: "own_read_test", args: { name: "settings" }, log: true },
       { invoke: "settings_set", args: { patch: { overlay: { size: 120 } } } }, { wait: 1200 }, { invoke: "own_read_test", args: { name: "settings" }, log: true },
+      // dragging the slider: the desktop overlay follows before it's saved, shown with the 설정 창 in front, 2 s after the last move it hides again
+      { invoke: "overlay_show_test", args: { on: false } }, { wait: 600 }, { invoke: "overlay_visible_test", log: true },
+      { invoke: "own_range_test", args: { name: "settings", sel: "[data-set='overlay.size']", values: [160, 200, 240] } }, { wait: 500 },
+      { invoke: "overlay_visible_test", log: true }, { invoke: "overlay_dom_test", log: true }, { invoke: "settings_get", log: true },
+      { invoke: "own_range_test", args: { name: "settings", sel: "[data-set='overlay.size']", values: [240], commit: true } }, { wait: 600 }, { invoke: "settings_get", log: true },
+      { wait: 2600 }, { invoke: "overlay_visible_test", log: true },
       { invoke: "own_key_test", args: { name: "settings", key: "Escape" } },
       { invoke: "settings_set", args: { patch: { overlay: { size: 999 } } } }, { invoke: "settings_get", log: true },
       { invoke: "settings_set", args: { patch: { overlay: { size: 101 } } } }, { invoke: "settings_get", log: true },
@@ -2158,17 +2164,20 @@ sleep 40
     check: ({ log }) => {
       const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const gets = [...log.matchAll(/^lab-invoke settings_get (.*)$/gm)].map((m) => JSON.parse(m[1])?.overlay?.size);
-      const [mid, small, big, bigMin] = dom, side = (d) => Math.max(...(d?.poke || [0]));
+      const [mid, small, big, bigMin, drag] = dom, side = (d) => Math.max(...(d?.poke || [0]));
       const fits = (d) => d && d.win[0] >= d.stackW && d.win[0] <= 640;
       return [
-        ok(dom.length === 4 && dom.every((d) => d.poke), `그림이 4번 다 보여야 ${JSON.stringify(dom.map((d) => d.poke))}`),
+        ok(dom.length === 5 && dom.every((d) => d.poke), `그림이 5번 다 보여야 ${JSON.stringify(dom.map((d) => d.poke))}`),
         ok(gets[0] === 120, `기본 120이어야 — ${gets[0]}`),
         ok(side(mid) > 0 && side(mid) <= 120 && side(small) <= 48 && side(small) < side(mid), `48이면 그림이 48 안, 120보다 작아야 — ${side(small)} · ${side(mid)}`),
         ok(side(big) <= 384 && side(big) >= 3 * side(mid), `384면 120의 3배 넘게(크기/60배까지) — ${side(big)} · ${side(mid)}`),
         ok(big?.cardW > mid?.cardW && fits(mid) && fits(big) && fits(small), `카드·창이 따라 넓어지고 창 안에 들어가야(640 한도) — 카드 ${mid?.cardW}→${big?.cardW} · 창 ${dom.map((d) => d?.win.join("x"))}`),
         ok(mid?.nameFont && mid.nameFont === big?.nameFont && mid.ballW === big?.ballW && mid.ballW === small?.ballW, `이름 글자·몬스터볼은 그대로 — ${mid?.nameFont}/${big?.nameFont} · 공 ${mid?.ballW}/${small?.ballW}/${big?.ballW}`),
         ok(bigMin?.minimal && side(bigMin) === side(big), `최소 모드도 같은 크기 — ${side(bigMin)} · ${side(big)}`),
-        ok(JSON.stringify(gets.slice(1)) === JSON.stringify([384, 104, 120]), `999 → 384, 101 → 104(8 단위), 숫자 아님 → 120 — ${JSON.stringify(gets.slice(1))}`),
+        ok(JSON.stringify(gets.slice(3)) === JSON.stringify([384, 104, 120]), `999 → 384, 101 → 104(8 단위), 숫자 아님 → 120 — ${JSON.stringify(gets.slice(3))}`),
+        (() => { const vis = [...log.matchAll(/^lab-invoke overlay_visible_test (.*)$/gm)].map((m) => m[1]);
+          return ok(JSON.stringify(vis) === JSON.stringify(["false", "true", "false"]) && side(drag) <= 240 && side(drag) > side(mid) && gets[1] === 120 && gets[2] === 240,
+            `끄는 동안: 숨었던 오버레이가 보이고 240 크기로, 저장은 손 뗄 때, 2초 뒤 다시 숨음 — 보임 ${vis} · 그림 ${side(drag)} · 저장 ${gets[1]}→${gets[2]}`); })(),
         (() => { const [b, m] = [...log.matchAll(/^lab-invoke own_read_test (.*)$/gm)].map((x) => JSON.parse(x[1])?.text || "");
           return ok(/포켓몬 크기/.test(b) && /384px/.test(b) && /줄여서/.test(b) && /120px/.test(m) && !/줄여서/.test(m), `설정 창: 384px면 "미리보기 · 줄여서", 120px면 그대로 — ${JSON.stringify([b.match(/미리보기[^\n]*/)?.[0], m.match(/미리보기[^\n]*/)?.[0]])}`); })(),
       ];

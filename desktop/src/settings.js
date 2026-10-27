@@ -100,7 +100,10 @@ root.addEventListener("input", (e) => {
   const k = e.target.dataset?.set, el = k && e.target.type === "range" && $(`[data-val="${k}"]`);
   if (!el) return;
   el.textContent = `${e.target.value}${el.dataset.unit || "%"}`;
-  if (k === "overlay.size" && settingsNow) renderPreview({ ...settingsNow.overlay, size: Number(e.target.value) }); // the 미리보기 follows the drag (#127); saved on release
+  if (k !== "overlay.size" || !settingsNow) return;
+  // the 미리보기 and the desktop overlay follow the drag (#127, APP-19 rule 14); saved on release
+  renderPreview({ ...settingsNow.overlay, size: Number(e.target.value) });
+  invoke("overlay_size_try", { size: Number(e.target.value) }).catch(() => {});
 });
 root.addEventListener("click", async (e) => {
   const pg = e.target.closest(".set-nav button")?.dataset.page;

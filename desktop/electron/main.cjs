@@ -1563,7 +1563,7 @@ function overlayPayload() {
     minis: overlayCollapsed ? [] : rest.slice(0, MINI_MAX), more: overlayCollapsed ? 0 : Math.max(0, rest.length - MINI_MAX),
     counts: { waiting: count((t) => t.state === "waiting"), working: count((t) => WORKING.includes(t.state)),
       done: count((t) => t.ended === "done"), error: count((t) => t.ended === "error") },
-    wild: settings.overlay.wild ? wild.current() : null, stallMs: STALL_MS, show: settings.overlay, theme: settings.theme, // #59 #60
+    wild: settings.overlay.wild ? wild.current() : null, stallMs: STALL_MS, show: overlayTry ? { ...settings.overlay, size: overlayTry.size } : settings.overlay, theme: settings.theme, // #59 #60 · #127 while dragging
     prog: settings.overlay.progress ? progressNow() : null, // #88
     // 파티 (#107): only while no tab is open; the last finish outside Tamer / by the party for 15 s
     party: tabs.length ? null : partyLite(), partyNote: recentDone[0] && now - recentDone[0].at < 15000 ? recentDone[0] : null, // (prog above shows under it too, #116)
@@ -1630,7 +1630,7 @@ function overlayWants({ focused = !!BrowserWindow.getFocusedWindow(), quiet = QU
   // the 설정 창 (#59): off, or nothing chosen to show (a wild card counts only while one is out)
   const something = o.partner || o.alerts || (o.wild && wild.current()) || (o.progress && progShown()); // #88 #90: the progress line alone
   // no tab (in the menu bar only, #106): the party shows instead (#107, STA-15 rule 11)
-  return !!((away || overlayForced) && (workspaces.size || (o.partner && partner.party().list.length)) && o.on && something);
+  return !!((away || overlayForced || overlayTry) && (workspaces.size || (o.partner && partner.party().list.length)) && o.on && something);
 }
 let overlayFront = null; // tests: would it show with Tamer in front — logged when it changes (#97)
 function overlaySync() {
@@ -1643,6 +1643,16 @@ function overlaySync() {
   } else if (overlay.isVisible()) overlay.hide();
 }
 let overlayForced = false; // tests
+// 포켓몬 크기를 끄는 동안 (#127, STA-15 rule 20): the overlay drawn at that size before it's saved — shown even with
+// the 설정 창 in front, until 2 s after the last move
+let overlayTry = null, overlayTryTimer = null;
+function overlaySizeTry(size) {
+  overlayTry = { size: readSettings({ ...settings, overlay: { ...settings.overlay, size } }).overlay.size };
+  clearTimeout(overlayTryTimer);
+  overlayTryTimer = setTimeout(() => { overlayTry = null; overlaySync(); overlayUpdate(); }, 2000);
+  overlaySync(); overlayUpdate();
+  return overlayTry.size;
+}
 
 function focusMain(wsId) {
   if (!win || win.isDestroyed()) { if (app.isReady()) createMain(); return; } // in the menu bar only (#106): open it again (last tabs back)
@@ -1706,6 +1716,7 @@ const settingsCommands = {
   settings_get: () => settings,
   settings_set: (args) => commands.settings_set(args), // the same checks · consent dialogs
   settings_page({ page }) { if (SETTINGS_PAGES.includes(page)) settingsLastPage = page; },
+  overlay_size_try: ({ size }) => overlaySizeTry(size), // the slider moving (#127) — not saved
   // 미리보기 (#67): the tab in front's folder and the 메인 파트너, the other tabs (balls since #122) — names and pictures only (APP-22 rule 2)
   settings_preview() {
     const cur = workspaces.get(activeWs), lite = (p) => p && { name: p.name, shiny: p.shiny, gif: p.gif, types: p.types };
@@ -2345,6 +2356,10 @@ const testCommands = {
   },
   own_resize_test({ name, w, h }) { const x = ownWin(name); if (x) x.setContentSize(Math.max(100, Number(w) || 400), Math.max(100, Number(h) || 300)); return x ? x.getBounds() : null; }, // its minimum holds (#38)
   own_click_test: ({ name, sel }) => ownJs(name, `(() => { const b = document.querySelector(${JSON.stringify(String(sel))}); if (b) b.click(); return !!b; })()`),
+  // a slider moved (#127): input events, then change when let go
+  own_range_test: ({ name, sel, values = [], commit }) => ownJs(name, `(async () => { const el = document.querySelector(${JSON.stringify(String(sel))}); if (!el) return false;
+    for (const v of ${JSON.stringify(values.map(Number))}) { el.value = v; el.dispatchEvent(new Event("input", { bubbles: true })); await new Promise((r) => setTimeout(r, 80)); }
+    if (${!!commit}) el.dispatchEvent(new Event("change", { bubbles: true })); return el.value; })()`),
   own_key_test: ({ name, key, meta }) => ownJs(name, `(() => { document.dispatchEvent(new KeyboardEvent("keydown", { key: ${JSON.stringify(String(key))}, metaKey: ${!!meta}, bubbles: true })); return true; })()`),
   // a function the page offers tests (window.lab, test mode only): its state, a scene … — by name, JSON in and out
   own_call_test: ({ name, fn, args = [] }) => ownJs(name, `(async () => { const f = window.lab?.[${JSON.stringify(String(fn))}]; return f ? f(...${JSON.stringify(Array.isArray(args) ? args : [args])}) : undefined; })()`),
