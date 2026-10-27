@@ -1082,9 +1082,13 @@ function rememberUsage(key, u) {
     if ((st.shellKey || st.agent?.key || active.agent?.key) === key) renderBar(active);
   }
 }
-// 메뉴바 (STA-19, #64): the menu bar shows the same remembered limits — the main process keeps them in memory
+// 메뉴바 (STA-19, #64): the menu bar shows the same remembered limits — the main process keeps them in memory, merged
+// with what it read itself; its answer may be newer (read while no window was open, #128) — kept here then
+const sameWin = (a, b) => { [a, b] = [a, b].map((w) => (live(w) ? w : null)); return a?.pct === b?.pct && a?.resets_at === b?.resets_at; }; // past its reset = none here
 function tellUsage(key, l = lastUsage(key)) {
-  if (l.five_hour || l.seven_day) invoke("usage_seen", { key, five_hour: l.five_hour || null, seven_day: l.seven_day || null, model: l.model || null }).catch(() => {});
+  invoke("usage_seen", { key, five_hour: l.five_hour || null, seven_day: l.seven_day || null, model: l.model || null }).then((m) => {
+    if (m && (!sameWin(m.five_hour, l.five_hour) || !sameWin(m.seven_day, l.seven_day))) rememberUsage(key, { five_hour: m.five_hour, seven_day: m.seven_day });
+  }).catch(() => {});
 }
 for (const k of ["claude", "codex"]) tellUsage(k);
 // 채팅 없이 한도 (STA-21, #104): read by the main process — merged like an agent's report (newer window wins)

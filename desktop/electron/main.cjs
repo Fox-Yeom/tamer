@@ -962,7 +962,26 @@ function setSettings(patch) {
 
 // ── 메뉴바 (STA-19, #64): an icon (+ who waits / the 5-hour limit) and a menu made fresh on each click ──
 let tray = null;
-const usageSeen = {}; // agent → its last 5h · 7d, as the window remembers them (memory only, POL-DATA-02)
+const usageSeen = {}; // agent → its last 5h · 7d, as the window remembers them and as read here (memory only, POL-DATA-02)
+// of two reports of a window the newer (STA-09 rule 5 — the window's newerWin, src/main.js, the same rule): a later reset is a
+// newer window; the same window (resets within 2 min): the one received later (at), the higher use when neither says; no reset time: b.
+// Neither live: the one past its reset is kept — the dashboard shows it as 초기화됨 (STA-22), the menu bar as 100 %
+const usageLive = (w) => w && (w.resets_at == null || w.resets_at * 1000 > Date.now());
+function usageNewer(a, b) {
+  if (!usageLive(a)) return usageLive(b) ? b : b || a || null;
+  if (!usageLive(b)) return a;
+  if (a.resets_at == null || b.resets_at == null) return b;
+  if (Math.abs(a.resets_at - b.resets_at) >= 120) return b.resets_at > a.resets_at ? b : a;
+  if (a.at != null || b.at != null) return (b.at ?? 0) >= (a.at ?? 0) ? b : a;
+  return b.pct >= a.pct ? b : a;
+}
+// what a window tells, or what limitsRefresh read itself — merged here, so the menu bar and the dashboard follow with no
+// window open (STA-21 rule 4, #128: they stayed at the values of when the window was closed)
+function usageMerge(key, u) {
+  const l = usageSeen[key] || {}, five_hour = usageNewer(l.five_hour, u.five_hour), seven_day = usageNewer(l.seven_day, u.seven_day);
+  if (!five_hour && !seven_day && !usageSeen[key]) return null;
+  return (usageSeen[key] = { five_hour, seven_day, model: u.model || l.model || null });
+}
 let trayTimer = null;
 const trayTabs = () => [...workspaces.values()].map((ws) => ({ ws: ws.id, name: path.basename(ws.cwd), state: ws.state || "idle", active: ws.id === activeWs,
   ended: ws.ended && Date.now() - ws.ended.at < 15000 ? ws.ended.how : null }));
@@ -1167,13 +1186,14 @@ async function limitsRefresh({ user = false } = {}) {
     for (const [key, job] of jobs) {
       const r = await job;
       limitsState[key] = r.error ? { ...limitsState[key], error: r.error } : { at: Date.now(), error: null };
-      if (!r.error) broadcast("limits", { key, five_hour: r.five_hour, seven_day: r.seven_day });
+      if (!r.error) { usageMerge(key, { five_hour: r.five_hour, seven_day: r.seven_day }); broadcast("limits", { key, five_hour: r.five_hour, seven_day: r.seven_day }); }
       logLine(`limits ${key} ${r.error || "ok"}${user ? " (asked)" : ""}${r.how ? ` keychain=${r.how}` : ""}`); // how the token came: the 진단 정보 shows whether macOS asked (#124)
     }
   })();
   try { await limitsBusy; } finally { limitsBusy = null; }
   broadcast("limits-state", limitsView()); // the 설정 창 shows when each was read
   trayUpdateSoon();
+  limitsResetSoon();
   return limitsView();
 }
 // a window's reset time passed: read again once (30 s after)
@@ -1832,13 +1852,16 @@ const commands = {
   // 파티 (PKM-31, #107): the list and its changes (checked by partner.partySet); everyone showing it hears
   party_state: () => ({ ...partner.party(), recent: recentDone }),
   party_set({ uids }) { const v = partner.partySet(uids); logLine(`party ${v.list.map((m) => m.uid).join(",") || "-"}`); broadcast("party", v); mainSync(); return v; }, // the first may be a new 메인 파트너 (#122)
-  // 메뉴바 (STA-19): the last 5h · 7d the window remembers for an agent — numbers only, kept in memory
+  // 메뉴바 (STA-19): the last 5h · 7d the window remembers for an agent — numbers only, kept in memory. Answers with the
+  // merged ones: a window opened again takes what was read while it was closed (#128)
   usage_seen({ key, five_hour, seven_day, model }) {
-    if (!TRAY_AGENTS.some(([k]) => k === key)) return;
-    const win = (w) => (w && Number.isFinite(Number(w.pct)) ? { pct: Number(w.pct), resets_at: Number.isFinite(Number(w.resets_at)) && w.resets_at != null ? Number(w.resets_at) : null } : null);
-    usageSeen[key] = { five_hour: win(five_hour), seven_day: win(seven_day), model: typeof model === "string" ? model.slice(0, 40) : null }; // the model's name: 포켓몬 창 홈 (#113 P2)
+    if (!TRAY_AGENTS.some(([k]) => k === key)) return null;
+    const num = (v) => (v != null && Number.isFinite(Number(v)) ? Number(v) : null);
+    const win = (w) => (w && num(w.pct) != null ? { pct: Number(w.pct), resets_at: num(w.resets_at), ...(num(w.at) != null ? { at: num(w.at) } : {}) } : null);
+    const v = usageMerge(key, { five_hour: win(five_hour), seven_day: win(seven_day), model: typeof model === "string" ? model.slice(0, 40) : null }); // the model's name: 포켓몬 창 홈 (#113 P2)
     trayUpdateSoon();
     limitsResetSoon();
+    return v;
   },
   startup_mark({ what }) { logLine(`startup ${String(what).slice(0, 40)} +${since()}ms`); },
   app_info() {
@@ -2253,7 +2276,7 @@ const commands = {
   },
 };
 
-let backgroundTested = false;
+let backgroundTested = false, limitsBgTested = false;
 // 따로 뜨는 창 (APP-22): tests reach each by name — the same few commands for every window of its own, now and later
 const OWN = { catch: { win: () => catchWin, open: () => catchOpen(null), close: () => catchClose() },
   settings: { win: () => settingsWin, open: (a) => settingsOpen(a.page), close: () => settingsClose() },
@@ -2392,6 +2415,25 @@ const testCommands = {
   // 백그라운드 (#106): close the window, then — the page is gone, so from here — the dashboard's
   // [Tamer 열기] brings a window back; each step logged ("bg …"), "bg-done" at the end
   // once: the window opened again runs the case's steps from the top
+  // 한도 with no window (#128): close it, the Anthropic answer changes (CVIM_TEST_LIMITS), a read → the menu bar's title follows;
+  // [Tamer 열기] → the window takes the newer values (its remembered ones were older) — logged "lim …", "bg-done" at the end
+  limits_bg_test() {
+    if (limitsBgTested) return;
+    limitsBgTested = true;
+    const T = (ms) => new Promise((r) => setTimeout(r, ms)), pct = () => JSON.stringify([usageSeen.claude?.five_hour?.pct ?? null, usageSeen.claude?.seven_day?.pct ?? null]);
+    (async () => {
+      logLine(`lim before ${pct()} title=${trayNow().title}`);
+      await T(100); win.close(); await T(1500);
+      fs.writeFileSync(path.join(process.env.CVIM_TEST_LIMITS, "claude-usage.json"), JSON.stringify({ five_hour: { utilization: 40, resets_at: "2099-01-01T05:00:00.000+00:00" }, seven_day: { utilization: 20, resets_at: "2099-01-04T23:00:00+00:00" } }));
+      await limitsRefresh({ user: true }); await T(300);
+      logLine(`lim closed win=${!!win} ${pct()} title=${trayNow().title}`);
+      focusMain(); await T(5000);
+      const kept = await win?.webContents.executeJavaScript(`localStorage.getItem("cvim.usage.claude")`).catch(() => null);
+      const k = (() => { try { const o = JSON.parse(kept); return [o.five_hour?.pct ?? null, o.seven_day?.pct ?? null]; } catch { return null; } })();
+      logLine(`lim reopened win=${!!win && !win.isDestroyed()} ${pct()} title=${trayNow().title} window=${JSON.stringify(k)}`);
+      logLine("bg-done");
+    })();
+  },
   background_test() {
     if (backgroundTested) return;
     backgroundTested = true;

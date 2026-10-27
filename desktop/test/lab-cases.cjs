@@ -638,6 +638,27 @@ module.exports = [
     },
   },
   {
+    id: "limits-no-window", tags: ["smoke", "agent"], what: "창을 닫아 메뉴바만 쓸 때도 한도를 읽으면 메뉴바 제목이 바뀜(전엔 닫을 때 값에 멈춤) · 다시 연 창은 닫혀 있던 동안 읽은 더 새 값을 받음 (STA-21 규칙 4, STA-19 규칙 1, #128)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 40000,
+    env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_CONSENT: "yes" },
+    files: {
+      "limits/claude-cred.json": '{"claudeAiOauth":{"accessToken":"LAB-SECRET-TOKEN-128","expiresAt":4102444800000}}',
+      "limits/claude-usage.json": '{"five_hour":{"utilization":31.0,"resets_at":"2099-01-01T05:00:00.000+00:00"},"seven_day":{"utilization":12.0,"resets_at":"2099-01-04T23:00:00+00:00"}}',
+    },
+    setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true }, menubar: { ...(cur.menubar || {}), text: "limit" } })); },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 }, { invoke: "limits_bg_test" }, { wait: 15000 }],
+    check: ({ log }) => {
+      const line = (w) => log.match(new RegExp(`^lim ${w} (.*)$`, "m"))?.[1] || "";
+      const [before, closed, back] = ["before", "closed", "reopened"].map(line);
+      return [
+        ok(/^\[31,12\] title=69 · 88%$/.test(before), `처음: 31 · 12 읽음 → 제목 69 · 88% — ${before}`),
+        ok(/^win=false \[40,20\] title=60 · 80%$/.test(closed), `창 없이 읽음 → 제목 60 · 80% — ${closed}`),
+        ok(/^win=true \[40,20\] title=60 · 80% window=\[40,20\]$/.test(back), `다시 연 창이 더 새 값을 받음(옛 31 · 12로 덮지 않음) — ${back}`),
+        ok(!log.includes("LAB-SECRET-TOKEN-128"), "토큰 값이 앱 기록에 없음"),
+      ];
+    },
+  },
+  {
     id: "limits-claude-declined", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켜지 않음): 처음 질문에 '켜지 않음'이면 꺼진 채 — 로그인 정보·주소 모두 안 씀, 다시 묻지 않음 · 설정에서 켜려 해도 설명 창에서 '켜지 않음'이면 그대로 꺼짐 (STA-21, POL-AGENT-02 1-2, #104)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_CONSENT: "no" },
