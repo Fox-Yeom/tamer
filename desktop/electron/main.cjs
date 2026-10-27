@@ -1076,15 +1076,18 @@ function trayUpdate() {
   if (!settings.menubar.on) { if (tray) { tray.destroy(); tray = null; } leadStop(); return; }
   if (!tray) {
     tray = new Tray(trayIcon(nativeImage));
-    tray.setToolTip("Tamer");
+    trayTip = null; // set below
     const open = () => { popoverHide(); limitsRefresh(); tray.popUpContextMenu(Menu.buildFromTemplate(trayTemplate(trayNow().items))); }; // #104: older than a minute → read again (shown next time)
     tray.on("click", (_e, bounds) => popoverToggle(bounds)); // left: the dashboard (#105) · right: the menu
     tray.on("right-click", open);
     leadAnim.img = null; leadAnim.title = null; leadAnim.shown = "ball"; // a new icon: drawn again below
   }
+  const tip = trayNow().tip; // what the limits beside the icon are (#129)
+  if (tip !== trayTip) { trayTip = tip; tray.setToolTip(tip); }
   leadModel();
   leadKick();
 }
+let trayTip = null;
 
 // ── 메뉴바 아이콘 — 움직이는 파티 선두 (STA-24, #108): with 설정 › 메뉴바 "아이콘: 파티 선두", the lead's cached
 // GIF (never downloaded for this — POL-ASSET-01) instead of the Poké Ball, always playing (5 pictures a second; 10 while tabs

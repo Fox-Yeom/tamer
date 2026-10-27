@@ -651,9 +651,9 @@ module.exports = [
       const line = (w) => log.match(new RegExp(`^lim ${w} (.*)$`, "m"))?.[1] || "";
       const [before, closed, back] = ["before", "closed", "reopened"].map(line);
       return [
-        ok(/^\[31,12\] title=69 · 88%$/.test(before), `처음: 31 · 12 읽음 → 제목 69 · 88% — ${before}`),
-        ok(/^win=false \[40,20\] title=60 · 80%$/.test(closed), `창 없이 읽음 → 제목 60 · 80% — ${closed}`),
-        ok(/^win=true \[40,20\] title=60 · 80% window=\[40,20\]$/.test(back), `다시 연 창이 더 새 값을 받음(옛 31 · 12로 덮지 않음) — ${back}`),
+        ok(/^\[31,12\] title=5h 69 · 7d 88%$/.test(before), `처음: 31 · 12 읽음 → 제목 5h 69 · 7d 88% — ${before}`),
+        ok(/^win=false \[40,20\] title=5h 60 · 7d 80%$/.test(closed), `창 없이 읽음 → 제목 5h 60 · 7d 80% — ${closed}`),
+        ok(/^win=true \[40,20\] title=5h 60 · 7d 80% window=\[40,20\]$/.test(back), `다시 연 창이 더 새 값을 받음(옛 31 · 12로 덮지 않음) — ${back}`),
         ok(!log.includes("LAB-SECRET-TOKEN-128"), "토큰 값이 앱 기록에 없음"),
       ];
     },
@@ -2287,8 +2287,8 @@ sleep 40
         ok(cpu && cpu.ticks >= 20 && cpu.ticks <= 40 && cpu.made <= (w1?.frames || 0) + 5 && cpu.cpu < 5, `재생 중 틱 초당 10번쯤·그림은 한 번씩만 만듦·메인 프로세스 CPU 5% 밑 ${JSON.stringify(cpu)}`),
         ok(wait1?.state === "waiting" && wait1.marks === "badge" && wait2?.marks === "badge" && wait2.frame !== wait1.frame, `입력 필요: 빨간 ! (그림은 계속 재생) ${JSON.stringify([wait1, wait2?.frame])}`),
         ok(done?.state === "wild" && /grass/.test(done.marks || "") && /🌿\d+/.test(done.title || "") && /\+\d+/.test(done.title || ""), `완료: 코인 +n · 야생이 나와 풀숲 + 남은 초 ${JSON.stringify(done)}`),
-        ok((gauge?.title ?? "x").replace(/🌿\d*|\+\d+/g, "").trim() === "58 · \u001b[31m14%\u001b[0m" && gauge?.gauge?.agent === "claude" && gauge.gauge.five?.left === 58 && gauge.gauge.week?.left === 14 && gauge.w === rest.w, `"5시간 한도": 글자 한 줄 "58 · 14%"(20% 이하 14만 빨강), 그림엔 막대 없음(폭 그대로) — 5시간을 더 쓴 Claude ${JSON.stringify(gauge && { title: gauge.title, g: gauge.gauge, w: [rest?.w, gauge.w] })}`),
-        ok(back?.kind === "ball" && back?.ask === null && back?.gauge?.five?.left === 58 && back.title === "58 · \u001b[31m14%\u001b[0m" && back.w > 10 && st.menubar?.icon === "ball" && st.menubar?.iconAsked === true, `다시 몬스터볼(글자는 그대로), 고른 뒤엔 안 물음 ${JSON.stringify([back, st.menubar])}`),
+        ok((gauge?.title ?? "x").replace(/🌿\d*|\+\d+/g, "").trim() === "5h 58 · 7d \u001b[31m14%\u001b[0m" && gauge?.gauge?.agent === "claude" && gauge.gauge.five?.left === 58 && gauge.gauge.week?.left === 14 && gauge.w === rest.w, `"5시간 한도": 글자 한 줄 "58 · 14%"(20% 이하 14만 빨강), 그림엔 막대 없음(폭 그대로) — 5시간을 더 쓴 Claude ${JSON.stringify(gauge && { title: gauge.title, g: gauge.gauge, w: [rest?.w, gauge.w] })}`),
+        ok(back?.kind === "ball" && back?.ask === null && back?.gauge?.five?.left === 58 && back.title === "5h 58 · 7d \u001b[31m14%\u001b[0m" && back.w > 10 && st.menubar?.icon === "ball" && st.menubar?.iconAsked === true, `다시 몬스터볼(글자는 그대로), 고른 뒤엔 안 물음 ${JSON.stringify([back, st.menubar])}`),
       ];
     },
   },
@@ -2311,7 +2311,7 @@ sleep 40
     },
   },
   {
-    id: "menubar", tags: ["smoke", "app"], what: "메뉴바: 기다리는 탭 수 글자·5시간 한도 글자 \"58 · 82%\"(#108), 탭 상태 줄·한도 줄, 메뉴로 설정 바꾸기·아이콘 숨기기, 시험 앱은 아이콘을 안 띄움 (STA-19, #64)",
+    id: "menubar", tags: ["smoke", "app"], what: "메뉴바: 기다리는 탭 수 글자·5시간 한도 글자 \"5h 58 · 7d 82%\"(#108 #129) · 마우스 올림 설명 · 한도에 더 가까운 에이전트(#130), 탭 상태 줄·한도 줄, 메뉴로 설정 바꾸기·아이콘 숨기기, 시험 앱은 아이콘을 안 띄움 (STA-19, #64)",
     data: "owner", mode: "direct", folders: ["a", "b"],
     steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
       { invoke: "tray_test", log: true },
@@ -2320,6 +2320,9 @@ sleep 40
       { invoke: "usage_seen", args: { key: "codex", five_hour: { pct: 90, resets_at: 1000 } } },
       { invoke: "usage_seen", args: { key: "nope", five_hour: { pct: 77 } } },
       { invoke: "settings_set", args: { patch: { menubar: { text: "limit" } } } }, { wait: 300 }, { invoke: "tray_test", log: true },
+      // #130: Claude's 5 hours just reset (0 %), its week at 11 % · Codex's 5 hours at 2 %, its week 0 → still Claude (nearer a limit)
+      { invoke: "usage_seen", args: { key: "claude", five_hour: { pct: 0, resets_at: null }, seven_day: { pct: 11, resets_at: 4102444800 } } },
+      { invoke: "usage_seen", args: { key: "codex", five_hour: { pct: 2, resets_at: 4102444800 }, seven_day: { pct: 0, resets_at: 4102444800 } } }, { wait: 300 }, { invoke: "tray_test", log: true },
       { invoke: "tray_click_test", args: { path: ["오버레이 보일 것", "파트너"] }, log: true },
       { invoke: "tray_click_test", args: { path: ["최소 모드", "항상"] }, log: true },
       { invoke: "tray_click_test", args: { path: ["메뉴바 아이콘 숨기기"] }, log: true }, { wait: 300 },
@@ -2328,17 +2331,19 @@ sleep 40
       { invoke: "settings_set", args: { patch: { menubar: { text: "bogus" } } } }, { invoke: "tray_test", log: true }],
     check: ({ log, box }) => {
       const t = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
-      const [idle, waiting, limit, last] = t;
+      const [idle, waiting, limit, pick, last] = t;
       const got = JSON.parse(log.match(/^lab-invoke settings_get (.*)$/m)?.[1] || "{}");
       const clicks = [...log.matchAll(/^lab-invoke tray_click_test (\w+)$/gm)].map((m) => m[1]);
       let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
       const labels = (m) => (m?.items || []).map((i) => i.label || "—");
       return [
-        ok(t.length === 4 && t.every((x) => x.shown === false), `시험 앱은 메뉴바 아이콘을 안 띄워야 ${JSON.stringify(t.map((x) => x.shown))}`),
+        ok(t.length === 5 && t.every((x) => x.shown === false), `시험 앱은 메뉴바 아이콘을 안 띄워야 ${JSON.stringify(t.map((x) => x.shown))}`),
         ok(labels(idle).includes("🪙 포켓코인 54 · 오늘 +0") && !/54/.test(idle?.title || ""), `코인 한 줄(시작 코인 27 × 2)이 메뉴에, 아이콘 글자엔 없음 ${JSON.stringify(labels(idle).filter((l) => /포켓코인/.test(l)))}`),
         ok(idle?.title === "" && labels(idle).filter((l) => / — /.test(l)).length === 2, `처음: 글자 없음, 탭 줄 2개 ${JSON.stringify(idle?.title)} ${JSON.stringify(labels(idle).slice(0, 3))}`),
         ok(waiting?.title === "1" && /^❗ /.test(labels(waiting)[0]), `입력 필요 1개면 "1"·첫 줄 ❗ ${JSON.stringify(waiting?.title)} ${labels(waiting)[0]}`),
-        ok(limit?.title === "58 · 82%" && limit?.gauge?.agent === "claude" && limit.gauge.five?.left === 58 && limit.gauge.week?.left === 82 && labels(limit).some((l) => /Claude Code\s+5시간 42%.*주간 18%/.test(l)) && !labels(limit).some((l) => /Codex|77/.test(l)), `"5시간 한도" = 글자 "58 · 82%"(Claude 남은 %, 넉넉해 색 없음 — #108)·Claude 줄, 지난 Codex·모르는 에이전트는 없음 ${JSON.stringify(limit?.title)} ${JSON.stringify(labels(limit).filter((l) => /%/.test(l)))}`),
+        ok(idle?.tip === "Tamer" && limit?.tip === "Claude — 5시간 58% 남음 · 주간 82% 남음\nCodex — 5시간 100% 남음", `마우스 올림 설명(#129): 모르면 "Tamer", 글자에 보인 에이전트가 먼저 ${JSON.stringify([idle?.tip, limit?.tip])}`),
+        ok(pick?.gauge?.agent === "claude" && pick?.title === "5h 100 · 7d 89%" && pick?.tip === "Claude — 5시간 100% 남음 · 주간 89% 남음\nCodex — 5시간 98% 남음 · 주간 100% 남음", `Claude 5시간 초기화 · 주간 11% vs Codex 5시간 2% → 한도에 더 가까운 Claude(#130) ${JSON.stringify([pick?.gauge?.agent, pick?.title, pick?.tip])}`),
+        ok(limit?.title === "5h 58 · 7d 82%" && limit?.gauge?.agent === "claude" && limit.gauge.five?.left === 58 && limit.gauge.week?.left === 82 && labels(limit).some((l) => /Claude Code\s+5시간 42%.*주간 18%/.test(l)) && !labels(limit).some((l) => /Codex|77/.test(l)), `"5시간 한도" = 글자 "5h 58 · 7d 82%"(Claude 남은 %, 넉넉해 색 없음 — #108)·Claude 줄, 지난 Codex·모르는 에이전트는 없음 ${JSON.stringify(limit?.title)} ${JSON.stringify(labels(limit).filter((l) => /%/.test(l)))}`),
         ok(JSON.stringify(clicks) === '["true","true","true"]' && got.overlay?.partner === false && got.overlay?.minimal === "always" && got.menubar?.on === false, `메뉴로 바꾼 설정 ${JSON.stringify(clicks)} ${JSON.stringify(got.overlay)} ${JSON.stringify(got.menubar)}`),
         ok(saved?.menubar?.on === true && saved?.menubar?.text === "waiting", `설정 창에서 다시 켜고, 모르는 글자 값은 기본(waiting)이어야 ${JSON.stringify(saved?.menubar)}`),
         ok(last?.title === "1", `기본으로 돌아간 글자 ${JSON.stringify(last?.title)}`),

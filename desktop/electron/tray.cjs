@@ -32,6 +32,7 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null,
   // beside the icon: who waits — or the limits' % left, coloured when low (STA-24 rule 8); dark: the menu bar's appearance
   const gauge = mb.text === "limit" ? gaugeOf(usage, now) || { agent: null, five: null, week: null } : null;
   const title = mb.text === "waiting" ? (waiting ? String(waiting) : "") : gauge ? gaugeTitle(gauge, dark) : "";
+  const tip = gaugeTip(usage, now, gauge?.agent); // the pointer on the icon (#129): what the numbers are
 
   const items = [];
   const rows = tabs.map(tabRow).sort((a, b) => a.rank - b.rank);
@@ -94,7 +95,7 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null,
     { type: "separator" },
     { label: "Tamer 종료", act: "quit" },
   );
-  return { title, gauge, items };
+  return { title, gauge, tip, items };
 }
 
 // the icon: a Poké Ball outline as a template image (black + alpha; macOS paints it in the menu
@@ -182,7 +183,7 @@ function gaugeTitle(g, dark = true) {
   const a = g?.five?.left ?? null, b = g?.week?.left ?? null;
   if (a == null && b == null) return "";
   const num = (v, pct = "") => { const t = TINT[v == null ? "ok" : levelOf(v)]; return t ? `${t[dark ? 0 : 1]}${v}${pct}\x1b[0m` : `${v ?? "–"}${pct}`; };
-  return `${num(a)} · ${num(b, "%")}`;
+  return `5h ${num(a)} · 7d ${num(b, "%")}`; // named (#129 — "97 · 81%" alone said nothing)
 }
 // one picture of the icon: a frame of the lead with the state drawn on → BGRA premultiplied, at 2×
 function leadIcon(lead, i, { badge = false, grass = false, hop = false } = {}) {
@@ -203,13 +204,24 @@ function leadIcon(lead, i, { badge = false, grass = false, hop = false } = {}) {
   }
   return c.out();
 }
-// the title's numbers from what the agents last told (STA-19 rule 1): the agent that used more of its 5 hours; a window past
-// its reset shows as 100 % (초기화됨, STA-22) — { agent, five: { left } | null, week: { left } | null } or null with none known
-function gaugeOf(usage = {}, now = Date.now()) {
+// the title's numbers from what the agents last told (STA-19 rule 1): the agent nearer a limit — the least left of its 5 hours
+// and its week, then of its 5 hours (#130: by the 5 hours alone, a Claude whose 5 hours had just reset gave way to a Codex at 2 %
+// though its week was at 11 %); a window past its reset shows as 100 % (초기화됨, STA-22) — { agent, five: { left } | null,
+// week: { left } | null } or null with none known
+const gaugeRows = (usage, now) => {
   const win = (w) => (w && Number.isFinite(w.pct) ? { left: w.resets_at && w.resets_at * 1000 <= now ? 100 : Math.max(0, Math.min(100, 100 - Math.round(w.pct))) } : null);
-  const rows = AGENTS.map(([k]) => ({ agent: k, five: win(usage[k]?.five_hour), week: win(usage[k]?.seven_day) })).filter((r) => r.five || r.week);
-  if (!rows.length) return null;
-  return rows.sort((a, b) => (a.five?.left ?? 101) - (b.five?.left ?? 101) || (a.week?.left ?? 101) - (b.week?.left ?? 101))[0];
+  return AGENTS.map(([k]) => ({ agent: k, five: win(usage[k]?.five_hour), week: win(usage[k]?.seven_day) })).filter((r) => r.five || r.week);
+};
+function gaugeOf(usage = {}, now = Date.now()) {
+  const least = (r) => Math.min(r.five?.left ?? 101, r.week?.left ?? 101);
+  return gaugeRows(usage, now).sort((a, b) => least(a) - least(b) || (a.five?.left ?? 101) - (b.five?.left ?? 101))[0] || null;
+}
+// the icon's tooltip (#129): one line an agent, the one in the title first — "Claude — 5시간 79% 남음 · 주간 89% 남음"
+const TIP_NAME = { claude: "Claude", codex: "Codex" };
+function gaugeTip(usage = {}, now = Date.now(), first = null) {
+  const rows = gaugeRows(usage, now).sort((a, b) => (b.agent === first) - (a.agent === first));
+  const line = (r) => `${TIP_NAME[r.agent]} — ${[r.five && `5시간 ${r.five.left}% 남음`, r.week && `주간 ${r.week.left}% 남음`].filter(Boolean).join(" · ")}`;
+  return rows.length ? rows.map(line).join("\n") : "Tamer";
 }
 // what the icon does now (rule 4): wild → needs you → working (faster with more working tabs) → resting. It always plays
 // (2026-10-22: the preview's lead "멈춰 있었음") — fast: 10 pictures a second, else 5; step: frames each picture
@@ -220,4 +232,4 @@ function leadState({ tabs = [], wild = null, now = Date.now() }) {
     wildLeft: wild && !wild.big && wild.until ? Math.max(0, Math.ceil((wild.until - now) / 1000)) : null };
 }
 
-module.exports = { trayModel, trayIcon, trayIconBitmap, AGENTS, leadFrames, leadIcon, leadState, gaugeOf, gaugeTitle };
+module.exports = { trayModel, trayIcon, trayIconBitmap, AGENTS, leadFrames, leadIcon, leadState, gaugeOf, gaugeTitle, gaugeTip };
