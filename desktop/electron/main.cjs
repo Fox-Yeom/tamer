@@ -6,7 +6,7 @@ const { app, BrowserWindow, ipcMain, clipboard, session, dialog, screen, Menu, T
 const fs = require("node:fs");
 const path = require("node:path");
 const pty = require("node-pty");
-const { execFile } = require("node:child_process");
+const { execFile, execFileSync } = require("node:child_process");
 const { HOME, CACHE, STATE, TABS, ROOT, writeFile, mkdirPrivate, tighten, pruneTabs } = require("./core/paths.cjs");
 const agents = require("./core/agents.cjs");
 const partner = require("./core/partner.cjs");
@@ -121,19 +121,22 @@ async function claudeLinkAsk() {
 }
 
 // Cursor CLI only reads ~/.cursor/hooks.json (no per-run flag). Ask, then append Tamer's
-// observational hooks. The launcher no-ops outside Tamer. Shell approval is left alone.
+// observational hooks (AGT-22, POL-USER-01 rule 7). Outside Tamer the launcher writes nothing — but a CLI's
+// finish while Tamer runs with "Tamer 밖 작업" on; never the Cursor editor's. Shell approval is left alone.
 async function cursorLinkAsk() {
   const p = agents.cursorLinkPreview();
   const file = p.file.replace(HOME, "~");
   const r = await dialog.showMessageBox(win, {
     type: "question", buttons: ["연결", "취소"], defaultId: 0, cancelId: 1,
     message: "Cursor CLI를 Tamer에 연결할까요?",
-    detail: `생각 중·도구·완료를 Tamer에 알려 줍니다. 5시간·주간 한도와 ctx는 Cursor가 알려 주지 않아요.\n\n${file}에 이 이벤트만 추가해요: ${p.events.join(", ")}\n이미 있는 훅은 그대로 두고, 명령 승인(beforeShellExecution)은 넣지 않아요.\n\nTamer 안에서 띄운 agent만 기록해요(CVIM_TAB_ID가 없으면 아무 것도 쓰지 않음). 넣기 전 파일 사본은 ~/.cache/tamer/backup/cursor-hooks에 두고, 에이전트 연결 창에서 언제든 해제할 수 있어요. 다음에 띄우는 Cursor부터 적용돼요.`,
+    detail: `생각 중·도구·완료를 Tamer에 알려 줍니다. 입력 필요 · 5시간·주간 한도 · ctx는 Cursor가 알려 주지 않아요.\n\n${file}에 이 이벤트만 추가해요: ${p.events.join(", ")}\n이미 있는 훅은 그대로 두고, 명령 승인(beforeShellExecution)은 넣지 않아요.\n\nTamer 탭에서 띄운 agent는 그 탭에 기록해요. 다른 터미널의 agent는 "Tamer 밖 작업"을 켰고 Tamer가 켜져 있을 때만 끝난 작업 한 줄(시각·걸린 시간·폴더 — Tamer가 읽으면 지움). 같은 파일이 Cursor 편집기에도 걸리지만 편집기의 작업은 어디에도 쓰지 않아요. 넣기 전 파일 사본은 ~/.cache/tamer/backup/cursor-hooks에 두고, 에이전트 연결 창에서 언제든 해제할 수 있어요. 다음에 띄우는 Cursor부터 적용돼요.`,
   });
   if (r.response !== 0) return { ok: false, cancelled: true };
   try {
     const l = agents.cursorLink();
-    logLine(`cursor link ${l.already ? "already" : "ok"} ${l.file}`);
+    logLine(`cursor link ${l.already ? "already" : "ok"}`);
+    cursorOnSync();
+    if (settings.outside === null) outsideStart(); // never asked (no Claude · Codex logs here): "Tamer 밖 작업" — Cursor's too now (#132)
     return { ok: true, msg: "연결했어요 — 다음에 띄우는 Cursor부터 적용돼요" };
   } catch (e) { logLine(`cursor link error ${e.code || e.message}`); return { ok: false, msg: `연결하지 못했어요: ${e.message}` }; }
 }
@@ -148,6 +151,7 @@ async function cursorUnlinkAsk() {
   try {
     const u = agents.cursorUnlink();
     logLine(`cursor unlink ${u.absent ? "absent" : "ok"}`);
+    cursorOnSync();
     return { ok: true, msg: "해제했어요 — 다음에 띄우는 Cursor부터" };
   } catch (e) { logLine(`cursor unlink error ${e.code || e.message}`); return { ok: false, msg: `해제하지 못했어요: ${e.message}` }; }
 }
@@ -813,10 +817,13 @@ async function changeRevert(ws, rel) {
 // agent the UI swaps that pane into the big slot, and back when it exits. Only names and the
 // command's first words are looked at, nothing is kept.
 function agentOf(args) {
-  const words = String(args).trim().split(/\s+/).slice(0, 2).map((w) => path.basename(w));
+  const raw = String(args).trim().split(/\s+/).slice(0, 2), words = raw.map((w) => path.basename(w));
   for (const d of Object.values(agents.all())) {
-    const names = [d.key, ...(d.cmd || []).map((c) => path.basename(c))];
-    if (words.some((w) => names.includes(w))) return d;
+    // an agent known by what it answers (Cursor's `agent`, AGT-06 checkIncludes): only the file it was recognised by —
+    // not its key (`cursor` opens the Cursor editor) nor any other program of that name (AGT-07, #132)
+    const strict = !!d.checkIncludes, names = [...(strict ? [] : [d.key]), ...(d.cmd || []).map((c) => path.basename(c))];
+    const i = words.findIndex((w) => names.includes(w));
+    if (i >= 0 && (!strict || agents.isBin(d.key, raw[i]))) return d;
   }
   return null;
 }
@@ -1275,7 +1282,7 @@ const tabHas = (agent, cwd) => {
 function outsidePoll() {
   if (!outsideWatch) return;
   spendPoll();
-  for (const d of outsideWatch.poll()) {
+  for (const d of [...outsideWatch.poll(), ...outside.cursorTake()]) {
     if (tabHas(d.agent, d.cwd)) { logLine(`outside skip ${d.agent}: a tab runs it there`); continue; }
     logLine(`outside done ${d.agent} took=${d.took ?? "-"}`);
     finishGame({ cwd: d.cwd, agent: d.agent, took: d.took, outside: true });
@@ -1287,8 +1294,20 @@ function outsideSync() {
     outsideWatch = outside.createWatch(agents.processEnv()); // from the logs' size now: nothing before counts (rule 4)
     spendWatch = spend.createSpend(agents.processEnv()); // today's tokens: today's lines (rule 9)
     outsideTimer = setInterval(outsidePoll, TEST ? 700 : 3000);
+    outside.cursorReset(); // the Cursor CLI's lines from before don't count either (#132)
     logLine(`outside on: ${outsideWatch.size()} logs`);
   } else if (!on && outsideWatch) { clearInterval(outsideTimer); outsideWatch = null; spendWatch = null; spendSeen = ""; logLine("outside off"); }
+  cursorOnSync();
+}
+// the Cursor CLI's finishes elsewhere (#132, AGT-22 rule 5): its hook writes them only while this mark is there —
+// "Tamer 밖 작업" on and Cursor linked, Tamer running (gone when it quits)
+let cursorMarked = null;
+function cursorOnSync(quitting = false) {
+  const on = !quitting && !!outsideWatch && agents.cursorLinked();
+  if (on === cursorMarked) return;
+  cursorMarked = on;
+  outside.cursorMark(on, ROOT);
+  logLine(`outside cursor ${on ? "on" : "off"}`);
 }
 // 오늘 사용량 (STA-23 rule 9, #115 A5): per agent, the tokens and ≈$ (API prices, STA-10 — not a bill); memory only
 let spendWatch = null, spendSeen = "", spendPrices = null, spendPricesAt = 0;
@@ -1312,8 +1331,8 @@ async function outsideConsent() {
   const r = await dialog.showMessageBox(dialogParent(), {
     type: "question", buttons: ["켜기", "켜지 않음"], defaultId: 0, cancelId: 1,
     message: "Tamer 밖에서 한 작업도 포켓몬에 반영할까요?",
-    detail: "다른 터미널 앱·Claude 앱의 Code·Codex 앱에서 끝낸 Claude Code·Codex 작업도 레벨·코인·야생에 반영해요. 탭에서 끝낸 것과 같은 규칙이에요(하루 상한도 함께).\n\n"
-      + "· 읽는 곳: 에이전트가 이 맥에 남기는 기록(~/.claude/projects · ~/.codex/sessions)\n"
+    detail: "다른 터미널 앱·Claude 앱의 Code·Codex 앱에서 끝낸 Claude Code·Codex 작업, 다른 터미널에서 끝낸 Cursor CLI 작업도 레벨·코인·야생에 반영해요. 탭에서 끝낸 것과 같은 규칙이에요(하루 상한도 함께).\n\n"
+      + "· 읽는 곳: 에이전트가 이 맥에 남기는 기록(~/.claude/projects · ~/.codex/sessions) · Cursor CLI는 훅을 연결했을 때 Tamer 훅이 남긴 한 줄(읽으면 지움 — Cursor 편집기의 작업은 세지 않아요)\n"
       + "· 읽는 것: '작업이 끝났다'는 줄의 폴더·걸린 시간·어디서 실행했는지만\n"
       + "· 안 읽는 것: 대화 내용·명령·파일 — 저장·전송도 없어요. 어디까지 읽었는지도 메모리에만\n"
       + "· Tamer가 켜져 있는 동안만 세요(창이 없어도). 스크립트·다른 에이전트가 띄운 실행은 세지 않아요\n"
@@ -1322,7 +1341,7 @@ async function outsideConsent() {
   return r.response === 0;
 }
 async function outsideStart() {
-  if (settings.outside === null && outside.hasLogs(agents.processEnv())) setSettings({ outside: await outsideConsent() });
+  if (settings.outside === null && (outside.hasLogs(agents.processEnv()) || agents.cursorLinked())) setSettings({ outside: await outsideConsent() });
   outsideSync();
 }
 
@@ -2728,6 +2747,31 @@ const testCommands = {
   partner_done_test({ ws }) { onCoreEvent({ event: "transition", ws, from: "thinking", to: "done" }); },
   // #45: the opt-in shell line without its dialog (lab: the line goes into the sandbox shell's ZDOTDIR)
   claude_link_test({ on }) { const r = on ? agents.claudeLink() : agents.claudeUnlink(); relinkShown(); return r; },
+  // Cursor (#132, AGT-22): link / unlink as the window's buttons do (no dialog) · its hook run as Cursor would — by
+  // the installed launcher, under stand-in parents (via, outer → inner): "editor" a program inside Cursor.app,
+  // "cli" a cursor-agent install, "plain" neither; tab = a Tamer tab's id (else elsewhere). Returns what it answered
+  // and what it wrote (the tab's log, the finishes not yet read)
+  async cursor_link_test({ on }) {
+    let r; try { r = on ? agents.cursorLink() : agents.cursorUnlink(); } catch (e) { r = { error: e.message }; }
+    cursorOnSync();
+    if (on && !r.error && settings.outside === null) await outsideStart(); // as cursorLinkAsk
+    const read = (f) => { try { return fs.readFileSync(f, "utf8"); } catch { return null; } }, p = agents.cursorLinkPreview();
+    return { ...r, linked: agents.cursorLinked(), text: read(p.file), launcher: fs.existsSync(p.launcher), mark: fs.existsSync(path.join(CACHE, "outside", "cursor.on")) };
+  },
+  cursor_hook_test({ via = [], tab = null, input = {}, env = {} }) {
+    const base = path.join(CACHE, "lab-cursor"), at = { editor: "Cursor.app/Contents/MacOS/Cursor Helper", cli: "cursor-agent/versions/1/cursor-agent", plain: "plain/sh" };
+    // a parent that runs its arguments and waits, under that name: /usr/bin/time linked there (a script would show as bash)
+    const wraps = via.map((v) => { const f = path.join(base, at[v] || at.plain); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.rmSync(f, { force: true }); fs.symlinkSync("/usr/bin/time", f); return f; });
+    const cmd = [...wraps, "/bin/bash", agents.cursorLinkPreview().launcher];
+    const e = { ...process.env, CVIM_CACHE_DIR: CACHE, CVIM_STATE_DIR: STATE, ...env };
+    delete e.CVIM_TAB_ID; delete e.CVIM_ROOT;
+    if (tab) Object.assign(e, { CVIM_TAB_ID: String(tab), CVIM_ROOT: ROOT });
+    const t0 = Date.now();
+    const out = execFileSync(cmd[0], cmd.slice(1), { input: JSON.stringify(input), env: e, timeout: 5000, encoding: "utf8", stdio: ["pipe", "pipe", "ignore"] });
+    const read = (f) => { try { return fs.readFileSync(f, "utf8"); } catch { return ""; } };
+    return { answer: out.trim(), ms: Date.now() - t0, tabLog: tab ? read(path.join(STATE, "tabs", `${tab}.log`)) : null, outside: read(path.join(CACHE, "outside", "cursor.jsonl")),
+      mark: fs.existsSync(path.join(CACHE, "outside", "cursor.on")) };
+  },
   // an agent's state changes as the core would report it
   // hold: keep this state — the core's own updates for that tab are ignored until a call without hold
   // (UI scenes: the core's idle came between setting a state and the picture)
@@ -3029,6 +3073,7 @@ function drainPtys() {
 let drained = false, draining = false;
 app.on("before-quit", (e) => {
   userQuit();
+  cursorOnSync(true); // the Cursor CLI's hook stops writing finishes (#132)
   if (drained) return;
   e.preventDefault();
   if (draining) return;

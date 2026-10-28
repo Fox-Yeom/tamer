@@ -7,6 +7,9 @@
 //           those: its replies' `stop_reason: end_turn` (claudeDesktop, #123)
 //   Codex   <CODEX_HOME|~/.codex>/sessions/**/*.jsonl — `event_msg / task_complete` without an error
 //           (duration_ms); where it came from: the file's first line, `session_meta` (originator · source · cwd)
+//   Cursor  the CLI keeps no log of a known shape: Tamer's own hook (agents/cursor/event.sh, AGT-22) writes a
+//           finished turn's { ts, took, cwd } to <CACHE>/outside/cursor.jsonl — only while outside/cursor.on is
+//           there (Tamer running with this on, cursorMark), never for the Cursor editor; read here, then removed (#132)
 // Not counted (rule 3): scripts and headless runs (Claude entrypoint sdk-*, `codex_exec`), sub-agents
 // (isSidechain, Codex source.subagent), a Codex started by another agent (originator "Claude Code").
 // Where reading got to is kept in memory only (no paths written); every start begins at the files' current
@@ -14,6 +17,8 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const os = require("node:os");
+
+const { CACHE, mkdirPrivate } = require("./paths.cjs");
 
 const MAX_READ = 1 << 20; // a burst of new lines is read in steps of 1 MB
 
@@ -152,4 +157,40 @@ function createWatch(env) {
   return { poll, size: () => files.size };
 }
 
-module.exports = { createWatch, hasLogs, roots, claudeFiles, codexFiles, claudeDone, claudeDesktop, codexDone, codexMeta };
+// ── Cursor CLI (#132): the hook writes only while this mark is there — Tamer running with "Tamer 밖 작업" on and
+// Cursor linked; it holds the app's folder (the launcher in ~/.cursor/hooks runs that copy's event.sh)
+const CURSOR_DIR = () => path.join(CACHE, "outside");
+const cursorFile = () => path.join(CURSOR_DIR(), "cursor.jsonl");
+function cursorMark(on, root) {
+  const mark = path.join(CURSOR_DIR(), "cursor.on");
+  try {
+    if (on && root) { mkdirPrivate(CURSOR_DIR()); fs.writeFileSync(mark, `${root}\n`, { mode: 0o600 }); }
+    else fs.rmSync(mark, { force: true });
+  } catch {}
+}
+// a start: what was written while Tamer was off isn't counted (rule 4), nor a question older than a day
+function cursorReset() {
+  try { fs.rmSync(cursorFile(), { force: true }); } catch {}
+  const turns = path.join(CURSOR_DIR(), "cursor-turns"), old = Date.now() - 86400000;
+  let es = [];
+  try { es = fs.readdirSync(turns); } catch { return; }
+  for (const f of es) { try { const p = path.join(turns, f); if (fs.statSync(p).mtimeMs < old) fs.rmSync(p, { force: true }); } catch {} }
+}
+// the finishes written since the last look — the file is taken away first (moved, read, removed), so nothing is read
+// twice and no folder stays on disk (POL-DATA-02 rule 3)
+function cursorTake() {
+  const f = cursorFile(), taking = `${f}.taking`;
+  try { fs.renameSync(f, taking); } catch { return []; }
+  let text = "";
+  try { text = fs.readFileSync(taking, "utf8"); } catch {}
+  try { fs.rmSync(taking, { force: true }); } catch {}
+  const out = [];
+  for (const line of text.split("\n")) {
+    let d; try { d = JSON.parse(line); } catch { continue; }
+    if (typeof d?.cwd !== "string" || !d.cwd) continue;
+    out.push({ agent: "cursor", cwd: d.cwd, took: Number.isFinite(d.took) ? d.took : null });
+  }
+  return out;
+}
+
+module.exports = { cursorMark, cursorReset, cursorTake, createWatch, hasLogs, roots, claudeFiles, codexFiles, claudeDone, claudeDesktop, codexDone, codexMeta };

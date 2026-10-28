@@ -2538,4 +2538,89 @@ sleep 40
       ok(/🔗 연결 안 됨/.test(probe.unlinked?.usage || ""), `해제 뒤 상단 바 ${probe.unlinked?.usage}`),
     ],
   },
+  // ── Cursor CLI (#132, AGT-22 — PR #120): the hook link, its hook under stand-in parents, a typed `agent` ──
+  {
+    id: "cursor-link", tags: ["smoke", "agents", "data"], what: "Cursor 훅 연결(AGT-22, POL-USER-01 규칙 7): 다른 훅이 있는 hooks.json에 이벤트 6개 × Tamer 항목 하나만 · 사본 · 다시 연결 = 그대로 · 해제 = 우리 것만(실행기도 지움) · Claude 형식 파일은 고치지 않고 거절 (#132)",
+    data: "owner", mode: "direct", folders: ["proj"],
+    files: { "cursor/hooks.json": JSON.stringify({ version: 1, hooks: { stop: [{ command: "/opt/other/stop.sh" }], beforeReadFile: [{ command: "/opt/other/read.sh" }] }, extra: true }) },
+    steps: [{ until: "tabs.0" }, { wait: 800 },
+      { invoke: "cursor_link_test", args: { on: true }, log: true }, { invoke: "cursor_link_test", args: { on: true }, log: true },
+      { invoke: "cursor_link_test", args: { on: false }, log: true },
+      { call: "focusShell" }, { text: `printf '{"hooks":{"stop":[{"matcher":"","hooks":[{"type":"command","command":"x"}]}]}}' > "$CVIM_CURSOR_HOOKS"` }, { key: "Enter" }, { wait: 800 },
+      { invoke: "cursor_link_test", args: { on: true }, log: true }],
+    check: ({ log, box }) => {
+      const r = [...log.matchAll(/^lab-invoke cursor_link_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const j = (t) => { try { return JSON.parse(t); } catch { return null; } }, a = j(r[0]?.text), c = j(r[2]?.text);
+      const ours = (h) => Object.values(h?.hooks || {}).flat().filter((x) => /tamer-cursor\.sh$/.test(x?.command || ""));
+      const backups = (() => { try { return fs.readdirSync(path.join(box.data, "backup", "cursor-hooks")).length; } catch { return 0; } })();
+      return [
+        ok(r.length === 4, `연결 결과 4번 ${r.length}`),
+        ok(a && ours(a).length === 6 && ["sessionStart", "beforeSubmitPrompt", "postToolUse", "afterFileEdit", "afterShellExecution", "stop"].every((e) => a.hooks[e]?.some((x) => /tamer-cursor\.sh$/.test(x.command))) && a.hooks.stop.some((x) => x.command === "/opt/other/stop.sh") && a.hooks.beforeReadFile?.length === 1 && a.extra === true && r[0].launcher && r[0].linked,
+          `연결: 이벤트 6개에 우리 항목, 다른 항목·키 그대로, 실행기 있음 — ${r[0]?.text?.slice(0, 300)}`),
+        ok(!a?.hooks?.beforeShellExecution && !a?.hooks?.preToolUse, "권한 훅은 넣지 않음"),
+        ok(r[1]?.already === true && ours(j(r[1]?.text)).length === 6, `다시 연결 = 그대로 (already ${r[1]?.already})`),
+        ok(c && !ours(c).length && c.hooks.stop?.[0]?.command === "/opt/other/stop.sh" && c.hooks.beforeReadFile?.length === 1 && c.extra === true && r[2].launcher === false && r[2].linked === false, `해제: 우리 것만 빠지고 실행기도 지움 — ${r[2]?.text}`),
+        ok(backups >= 2, `넣기·빼기 전 사본 ${backups}개`),
+        ok(/Claude 형식/.test(r[3]?.error || "") && !ours(j(r[3]?.text)).length, `Claude 형식 파일은 거절 — ${r[3]?.error}`),
+      ];
+    },
+  },
+  {
+    id: "cursor-hook", tags: ["smoke", "agents", "data", "poke"], what: "Cursor 훅(AGT-22 규칙 3–5): Tamer 탭이면 탭 기록(질문 = 생각 중, 도구 이름 그대로, 명령은 안 남음, 편집기에서 부르면 안 씀, 편집기 안 터미널 CLI는 씀) · 탭 밖이면 밖 작업을 켰고 Tamer가 켜져 있을 때 CLI의 끝남만 셈(편집기 · 누가 불렀는지 모름 · 백그라운드 · 중단은 안 셈) · 응답은 빈 것만, 3초 안 · 연결을 풀면 표시 파일이 없어 안 씀 (#132)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"], env: { CVIM_TEST_OUTSIDE_CONSENT: "yes" },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "cursor_link_test", args: { on: true }, log: true },
+      // a Tamer tab
+      { invoke: "cursor_hook_test", args: { tab: "lab-tab", input: { hook_event_name: "beforeSubmitPrompt", conversation_id: "t", prompt: "LAB-PRIVATE-132" } }, log: true },
+      { invoke: "cursor_hook_test", args: { tab: "lab-tab", input: { hook_event_name: "postToolUse", conversation_id: "t", tool_name: "Shell", tool_input: { command: "curl LAB-PRIVATE-132" } } }, log: true },
+      { invoke: "cursor_hook_test", args: { tab: "lab-tab", via: ["editor"], input: { hook_event_name: "stop", conversation_id: "t", status: "completed" } }, log: true },
+      { invoke: "cursor_hook_test", args: { tab: "lab-tab", via: ["editor", "cli"], input: { hook_event_name: "stop", conversation_id: "t", status: "completed" } }, log: true },
+      // elsewhere (CURSOR_PROJECT_DIR = the folder Cursor works in)
+      ...[["cli"], ["editor", "cli"]].flatMap((via, k) => [
+        { invoke: "cursor_hook_test", args: { via, env: { CURSOR_PROJECT_DIR: "/tmp/tamer-lab-cursor" }, input: { hook_event_name: "beforeSubmitPrompt", conversation_id: `c${k}` } } }, { wait: 1100 },
+        { invoke: "cursor_hook_test", args: { via, env: { CURSOR_PROJECT_DIR: "/tmp/tamer-lab-cursor" }, input: { hook_event_name: "stop", conversation_id: `c${k}`, status: "completed" } }, log: true }, { wait: 1500 }]),
+      { invoke: "cursor_hook_test", args: { via: ["editor"], env: { CURSOR_PROJECT_DIR: "/tmp/tamer-lab-cursor" }, input: { hook_event_name: "stop", conversation_id: "e", status: "completed" } } },
+      { invoke: "cursor_hook_test", args: { via: [], env: { CURSOR_PROJECT_DIR: "/tmp/tamer-lab-cursor" }, input: { hook_event_name: "stop", conversation_id: "u", status: "completed" } } },
+      { invoke: "cursor_hook_test", args: { via: ["cli"], env: { CURSOR_PROJECT_DIR: "/tmp/tamer-lab-cursor" }, input: { hook_event_name: "sessionStart", conversation_id: "b", is_background_agent: true } } },
+      { invoke: "cursor_hook_test", args: { via: ["cli"], env: { CURSOR_PROJECT_DIR: "/tmp/tamer-lab-cursor" }, input: { hook_event_name: "stop", conversation_id: "b", status: "completed" } } },
+      { invoke: "cursor_hook_test", args: { via: ["cli"], env: { CURSOR_PROJECT_DIR: "/tmp/tamer-lab-cursor" }, input: { hook_event_name: "stop", conversation_id: "x", status: "aborted" } } },
+      // "Tamer 밖 작업" off (as when Tamer quits): the mark goes — the hook writes nothing; then unlinked
+      { wait: 1500 }, { invoke: "settings_set", args: { patch: { outside: false } } }, { wait: 300 },
+      { invoke: "cursor_hook_test", args: { via: ["cli"], env: { CURSOR_PROJECT_DIR: "/tmp/tamer-lab-cursor" }, input: { hook_event_name: "stop", conversation_id: "z", status: "completed" } }, log: true },
+      { invoke: "cursor_link_test", args: { on: false }, log: true }, { wait: 1500 }],
+    check: ({ log, box }) => {
+      const h = [...log.matchAll(/^lab-invoke cursor_hook_test (.*)$/gm)].map((m) => JSON.parse(m[1])), l = [...log.matchAll(/^lab-invoke cursor_link_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const rows = (t) => String(t || "").trim().split("\n").filter(Boolean).map((x) => JSON.parse(x));
+      const tab = rows(h[3]?.tabLog), done = [...log.matchAll(/^outside done cursor took=(\S+)$/gm)].map((m) => m[1]);
+      const files = []; const walk = (d) => { for (const n of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, n.name); if (n.isDirectory()) walk(p); else files.push(p); } };
+      try { walk(box.data); walk(path.join(box.dir, "state")); } catch {}
+      const leaked = files.filter((f) => { try { return fs.readFileSync(f, "utf8").includes("LAB-PRIVATE-132"); } catch { return false; } });
+      return [
+        ok(/^outside ask$/m.test(log) && l[0]?.linked && l[0]?.mark, `연결 → (아직 안 물었으니) 밖 작업 질문 · 켬 → 표시 파일 ${JSON.stringify(l[0] && { linked: l[0].linked, mark: l[0].mark })}`),
+        ok(h[0]?.answer === '{"continue":true}' && h.slice(1).every((x) => x.answer === "{}") && h.every((x) => x.ms < 3000), `응답 ${JSON.stringify(h.map((x) => x.answer))} · 시간 ${JSON.stringify(h.map((x) => x.ms))}`),
+        ok(JSON.stringify(tab.map((x) => [x.event, x.tool])) === JSON.stringify([["UserPromptSubmit", ""], ["PreToolUse", "Shell"], ["Stop", ""]]), `탭 기록: 질문 · 도구 · (편집기 끝남은 없음) · 편집기 안 터미널 CLI의 끝남 — ${JSON.stringify(tab.map((x) => [x.event, x.tool]))}`),
+        ok(done.length === 2 && done[0] !== "-" && Number(done[0]) >= 1000, `밖: CLI · 편집기 안 터미널 CLI 2번만(편집기 · 모름 · 백그라운드 · 중단은 안 셈) — ${JSON.stringify(done)}`),
+        ok((log.match(/^coins outside \+/gm) || []).length === 2, `밖 작업 코인 2번 ${(log.match(/^coins outside .*/gm) || []).join(" | ")}`),
+        ok(h[h.length - 1]?.mark === false && !h[h.length - 1]?.outside && l[1]?.linked === false && l[1]?.mark === false, `밖 작업을 끄면 표시 파일이 없어 안 씀 · 해제 ${JSON.stringify(h[h.length - 1] && { mark: h[h.length - 1].mark, outside: h[h.length - 1].outside })} ${JSON.stringify(l[1] && { linked: l[1].linked, mark: l[1].mark })}`),
+        ok(!fs.existsSync(path.join(box.data, "outside", "cursor.jsonl")), "읽은 줄은 지움 — 폴더 경로가 남지 않음"),
+        ok(!log.includes("LAB-PRIVATE-132") && !leaked.length, `질문·명령이 앱 기록·데이터에 없어야 ${JSON.stringify(leaked)}`),
+      ];
+    },
+  },
+  {
+    id: "cursor-typed", tags: ["smoke", "agents"], what: "셸에서 친 agent(AGT-07 · AGT-22 규칙 1): --help가 Cursor Agent인 그 실행 파일이면 Cursor · 이름만 agent인 다른 프로그램, 편집기를 여는 cursor 명령은 에이전트 아님 (#132 — 전엔 이름만 보면 다 Cursor)",
+    data: "owner", mode: "direct", folders: ["proj"], pathFirst: ["fakebin"],
+    files: { "fakebin/agent": '#!/bin/sh\ncase "$1" in --help) echo "Cursor Agent — lab"; exit 0 ;; esac\nsleep 4\n', "fakebin/cursor": "#!/bin/sh\nsleep 4\n", "proj/other/agent": "#!/bin/sh\nsleep 4\n" },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 2500 }, { call: "focusShell" },
+      { text: "agent" }, { key: "Enter" }, { wait: 5500 },
+      { text: "cursor ." }, { key: "Enter" }, { wait: 5500 },
+      { text: "chmod +x other/agent; $PWD/other/agent" }, { key: "Enter" }, { wait: 5500 }],
+    check: ({ log }) => {
+      const seen = [...log.matchAll(/^(?:shell|host)-agent ws=\S+ (\S+)/gm)].map((m) => m[1]);
+      return [
+        ok(seen[0] === "cursor", `agent → Cursor ${JSON.stringify(seen)}`),
+        ok(seen.filter((k) => k === "cursor").length === 1, `cursor . · 다른 agent는 Cursor로 안 봄 ${JSON.stringify(seen)}`),
+      ];
+    },
+  },
 ];

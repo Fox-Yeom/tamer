@@ -94,11 +94,11 @@ pub fn is_idle_reminder(detail: Option<&str>) -> bool {
 
 pub fn tool_state(tool: Option<&str>) -> &'static str {
     match tool.unwrap_or("") {
-        // Claude names, then Gemini CLI's (A2), then OpenCode's (lower case)
-        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "write_file" | "replace" | "edit" | "write" | "patch" | "multiedit" => "coding",
+        // Claude names, then Gemini CLI's (A2), then OpenCode's (lower case), then Cursor's (#132 — after the tool ran)
+        "Edit" | "MultiEdit" | "Write" | "NotebookEdit" | "write_file" | "replace" | "edit" | "write" | "patch" | "multiedit" | "StrReplace" | "Delete" | "EditNotebook" => "coding",
         "WebSearch" | "WebFetch" | "web_fetch" | "google_web_search" | "webfetch" | "websearch" => "searching",
-        "Read" | "Grep" | "Glob" | "LS" | "read_file" | "read_many_files" | "glob" | "search_file_content" | "list_directory" | "read" | "grep" | "list" => "reading",
-        "Bash" | "BashOutput" | "KillShell" | "run_shell_command" | "bash" => "bash",
+        "Read" | "Grep" | "Glob" | "LS" | "read_file" | "read_many_files" | "glob" | "search_file_content" | "list_directory" | "read" | "grep" | "list" | "ListDir" => "reading",
+        "Bash" | "BashOutput" | "KillShell" | "run_shell_command" | "bash" | "Shell" => "bash",
         "Task" | "Agent" | "task" => "agent",
         _ => "tool",
     }
@@ -306,6 +306,10 @@ mod tests {
         for (tool, want) in [("edit", "coding"), ("read", "reading"), ("bash", "bash"), ("webfetch", "searching"), ("task", "agent"), ("todowrite", "tool")] {
             s.apply(ev("PreToolUse", Some(tool)), t0);
             assert_eq!(s.state, want, "opencode {tool}");
+        }
+        for (tool, want) in [("Shell", "bash"), ("Read", "reading"), ("Write", "coding"), ("StrReplace", "coding"), ("Delete", "coding"), ("Grep", "reading"), ("Task", "agent"), ("MCPlinear", "tool")] {
+            s.apply(ev("PreToolUse", Some(tool)), t0);
+            assert_eq!(s.state, want, "cursor {tool}");
         }
         // Claude's idle reminder is not "needs you"
         let before = s.state;

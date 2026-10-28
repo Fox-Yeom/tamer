@@ -25,8 +25,9 @@ const DEFS = {
   gemini: { name: "Gemini CLI", short: "Gemini", icon: "✦", color: "#4F8DF7", cmd: ["gemini"], state: "hooks" },
   opencode: { name: "OpenCode", short: "OpenCode", icon: "◆", color: "#E0E0E0", cmd: ["opencode"], state: "hooks" },
   // Cursor CLI (`agent`) has no per-run hooks flag. Lifecycle comes from an opt-in block in
-  // ~/.cursor/hooks.json (cursorLink) that no-ops unless CVIM_TAB_ID is set. `agent` is a generic
-  // name, so --help must say Cursor Agent before we claim the binary.
+  // ~/.cursor/hooks.json (cursorLink, AGT-22): a Tamer tab's run (CVIM_TAB_ID) writes the tab's log, a run
+  // elsewhere only its finish while Tamer runs with "Tamer 밖 작업" on, the Cursor editor nothing. `agent` is a
+  // generic name, so --help must say Cursor Agent before we claim the binary (and a typed one must be that file)
   cursor: {
     name: "Cursor", short: "Cursor", icon: "▶", color: "#7C3AED", state: "hooks",
     cmd: ["agent", "cursor-agent"], check: ["--help"], checkIncludes: "Cursor Agent",
@@ -195,6 +196,13 @@ function where(key) {
   const c = bin(key);
   return c ? findExe(c.split(/\s+/)[0]) : null;
 }
+// a word typed in a shell is that agent's own program (AGT-07, #132): the file it was recognised by — for a name
+// as common as Cursor's `agent`, matching the name alone would take any other `agent` for it
+const realOr = (p) => { try { return fs.realpathSync(p); } catch { return p; } };
+function isBin(key, word) {
+  const at = where(key), p = word && findExe(String(word));
+  return !!at && !!p && path.isAbsolute(p) && realOr(p) === realOr(at);
+}
 
 // how to get the agents CVIM knows (official instructions; npm ones need Node.js)
 const INSTALL = {
@@ -326,10 +334,11 @@ function claudeUnlink() {
 
 // ── Cursor CLI (opt-in): one marked set of entries in ~/.cursor/hooks.json.
 // Cursor has no per-run settings flag, so the user agrees once and we append command hooks.
-// The launcher no-ops unless CVIM_TAB_ID is set (Tamer's shells and ⌘G both set it). Existing
+// The launcher no-ops unless CVIM_TAB_ID is set (Tamer's shells and ⌘G both set it) or Tamer runs with
+// "Tamer 밖 작업" on (outside/cursor.on — then a CLI's finish only, AGT-22 rule 5). Existing
 // hooks stay. "연결 해제" removes only entries whose command is our launcher. beforeShellExecution
 // is not added: that hook must return a permission decision, and Tamer does not approve commands.
-const CURSOR_EVENTS = ["sessionStart", "postToolUse", "afterFileEdit", "afterShellExecution", "stop"];
+const CURSOR_EVENTS = ["sessionStart", "beforeSubmitPrompt", "postToolUse", "afterFileEdit", "afterShellExecution", "stop"]; // beforeSubmitPrompt: 생각 중 from the question on (#132)
 const CURSOR_LAUNCHER = "tamer-cursor.sh";
 
 function cursorHooksPath() {
@@ -428,4 +437,4 @@ function cursorUnlink() {
   return { file, backup };
 }
 
-module.exports = { claudeLinkFile, claudeLinked, claudeLink, claudeUnlink, LINK_BEGIN, cursorHooksPath, cursorLinkPreview, cursorLinked, cursorLink, cursorUnlink, CURSOR_EVENTS, envFailed: () => envFailed, all, get, bin, available, command, agentEnv, stateOf, geminiLinked, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };
+module.exports = { claudeLinkFile, claudeLinked, claudeLink, claudeUnlink, LINK_BEGIN, cursorHooksPath, cursorLinkPreview, cursorLinked, cursorLink, cursorUnlink, CURSOR_EVENTS, envFailed: () => envFailed, all, get, bin, available, command, agentEnv, stateOf, geminiLinked, isBin, forDir, chosen, remember, next, label, shellPath, loginEnv, prepareEnv, processEnv, userShell, shellArgs, where, status, INSTALL };

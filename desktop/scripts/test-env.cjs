@@ -95,6 +95,7 @@ function sandbox(name, { data = "empty", folders = ["proj"], session = null, tod
     CODEX_HOME: path.join(dir, "codex"), SHELL: testShell(dir),
     CVIM_AGENTS_JSON: path.join(dir, "agents-user.json"), // the user's own registered agents (~/.cvim/agents.json): not read in tests
     CLAUDE_CONFIG_DIR: path.join(dir, "claudecfg"), CVIM_DESKTOP_USERDATA: path.join(dir, "profile"),
+    CVIM_CURSOR_HOOKS: path.join(dir, "cursor", "hooks.json"), // the Cursor hook link (#132) — never ~/.cursor
     CVIM_DESKTOP_SHOTS: path.join(dir, "shots"), CVIM_DESKTOP_LOG: path.join(dir, "log.txt"), CVIM_DESKTOP_QUIT_AFTER: "120000",
   };
   return { dir, env, folder, data: C };
@@ -173,6 +174,8 @@ const REAL = [
   path.join(HOME, ".cache/cvim"), path.join(HOME, ".claude/settings.json"),
   // the shell startup files the #45 opt-in line goes into
   path.join(HOME, ".zshrc"), path.join(HOME, ".bash_profile"), path.join(HOME, ".profile"), path.join(HOME, ".config/fish/config.fish"),
+  // the Cursor hook link (#132, POL-USER-01 rule 7)
+  path.join(HOME, ".cursor/hooks.json"), path.join(HOME, ".cursor/hooks"),
 ];
 function realSnapshot() {
   return Object.fromEntries(REAL.map((p) => { try { const s = fs.statSync(p); return [p, `${s.mtimeMs}:${s.size}`]; } catch { return [p, "-"]; } }));
