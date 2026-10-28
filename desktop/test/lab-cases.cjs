@@ -755,6 +755,19 @@ module.exports = [
       ];
     },
   },
+  ...[[null], ["box"], ["dex"], [null, "불꽃"]].map(([pre, search]) => ({
+    id: `background-big-dex${pre ? `-${pre}` : ""}${search ? "-search" : ""}`, tags: [search ? "smoke" : "explore", "app", "poke"], what: `창 없이 대발견 전설을 잡기 창에서 잡고 [📕 도감에서 보기] → 포켓몬 창 도감이 그 종에, "새로 잡은" 줄 맨 앞에 그 종${pre ? ` — 포켓몬 창을 먼저 ${pre === "box" ? "내 포켓몬" : "도감"}에 열어 둔 채` : ""}${search ? ` — 전에 도감에서 "${search}"을 검색해 둔 채(검색어는 앱을 끌 때까지 남음): 그 종을 가리는 검색어는 지움` : ""} (PKM-13 규칙 5, #131)`,
+    data: "owner", offline: true, mode: "direct", folders: ["a"], until: "bg-done", timeoutMs: 60000, env: { CVIM_STAMPS: "2" },
+    setup: (box) => { birds(box); putEcon(box, { "state.json": { startSeen: true, stampsSince: dayAgo(1) } }); },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { invoke: "bg_big_dex_test", args: { pre, search } }, { wait: 40000 }],
+    check: ({ log }) => {
+      const id = Number(log.match(/^bigdex catch big=true id=(\d+)/m)?.[1]), a = JSON.parse(log.match(/^bigdex after dex=true open=true (\{.*\})$/m)?.[1] || "null");
+      return [
+        ok(id >= 144 && id <= 146 && /^wild throw caught/m.test(log), `대발견 ${id || "-"} 잡기 창에서 잡힘 — ${log.match(/^bigdex catch.*$/m)?.[0]}`),
+        ok(a?.view === "dex" && a.recent?.[0] === id && String(a.sel).endsWith(`:${id}`), `포켓몬 창 도감 · 새로 잡은 줄 맨 앞 · 고른 종이 ${id} — ${JSON.stringify(a)}`),
+      ];
+    },
+  })),
   {
     id: "background-off-quits", tags: ["smoke", "app"], what: "백그라운드를 끄면 메인 창을 닫을 때 전처럼 앱이 끝남 — 대시보드를 한 번 열었어도(숨은 창이 앱을 붙잡지 않음) (APP-21 규칙 1, #105 미리보기에서 발견)",
     data: "owner", offline: true, mode: "direct", folders: ["a"], until: "user quit", timeoutMs: 25000,

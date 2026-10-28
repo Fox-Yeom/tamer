@@ -2437,6 +2437,34 @@ const testCommands = {
       logLine("bg-done");
     })();
   },
+  // a breakthrough's legend caught with no window (#131): close it, a finish outside fills the stamps → the legend's notice,
+  // its catch window, caught there, [📕 도감에서 보기] → what the Pokémon window shows — pre: that window open on a view first
+  bg_big_dex_test({ pre = null, search = null } = {}) {
+    if (backgroundTested) return;
+    backgroundTested = true;
+    const T = (ms) => new Promise((r) => setTimeout(r, ms));
+    const read = () => pokeWin?.webContents.executeJavaScript(`(() => { const s = window.lab?.state() || {};
+      return { view: s.poke, sel: s.dexSel, recent: [...document.querySelectorAll("#dex-grid .cells.recent .cell")].map((c) => Number(c.dataset.n)),
+        name: document.querySelector("#dex-name")?.textContent || null, cards: [...document.querySelectorAll("#box-grid .pk-card .pk-name, #box-grid .pk-card b")].map((c) => c.textContent).slice(0, 8) }; })()`).catch(() => null);
+    (async () => {
+      await T(100); win.close(); await T(1500);
+      if (search) { pokeOpen({ view: "dex" }); await T(2500); await pokeWin?.webContents.executeJavaScript(`window.lab?.search(${JSON.stringify(String(search))})`); await T(800); pokeClose(); await T(300); } // a search typed earlier, kept
+      if (pre) { pokeOpen({ view: pre }); await T(2500); logLine(`bigdex pre ${JSON.stringify(await read())}`); }
+      finishGame({ cwd: "/tmp/tamer-lab-outside", agent: "claude", took: 60000, outside: true }); await T(3000);
+      overlayForced = true; overlaySync(); overlayUpdate(); await T(2000);
+      overlayCommands.wild_open({ rect: await overlay.webContents.executeJavaScript(NOTE_RECT) }); await T(2000);
+      const c = wild.current();
+      logLine(`bigdex catch big=${!!c?.big} id=${c?.id ?? "-"} open=${!!catchWin}`);
+      testCommands.wild_rig_test({ result: "caught" });
+      await catchWin?.webContents.executeJavaScript(`document.querySelector(".wild-throw")?.click()`);
+      let dexed = false;
+      for (let i = 0; i < 50 && !dexed && catchWin; i++) { await T(200); dexed = await catchWin?.webContents.executeJavaScript(`(() => { const b = document.querySelector(".wild-dex"); if (b && !b.hidden) { b.click(); return true; } return false; })()`).catch(() => false); }
+      await T(2500);
+      logLine(`bigdex after dex=${dexed} open=${!!pokeWin} ${JSON.stringify(await read())}`);
+      overlayForced = false; overlaySync();
+      logLine("bg-done");
+    })();
+  },
   background_test() {
     if (backgroundTested) return;
     backgroundTested = true;

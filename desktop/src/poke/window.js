@@ -66,6 +66,8 @@ async function openDex(sel, view) {
   const byNo = new Map(d.entries.map((e) => [e.id, e]));
   if (view === "party" || view === "choose") view = "box";
   const [box, party] = await Promise.all([invoke("box_list").catch(() => []), invoke("party_state").catch(() => null)]); // where each one is (#122)
+  // asked to show a species the kept search hides (a catch's 도감에서 보기 · an evolution · a hatch): the search goes (#131, PKM-13 rule 5)
+  if (sel && dexQuery.trim() && !dexMatch(dexQuery.trim(), sel, byNo.get(sel))) setQuery("");
   // a new catch you haven't looked at comes first — in the "새로 잡은" row (zone "recent", ri = its
   // place there); otherwise the grid. The arrows move inside the zone the selection is in (#17)
   const ri = sel ? d.recent?.findIndex((m) => m.id === sel) ?? -1 : d.recent?.findIndex((m) => m.new) ?? -1;
