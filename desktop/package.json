@@ -2,7 +2,7 @@
   "name": "cvim-desktop",
   "private": true,
   "license": "MIT",
-  "version": "0.9.0",
+  "version": "0.9.1",
   "description": "Tamer (CVIM v2) desktop app — Electron + Rust core (cvim-core)",
   "type": "module",
   "scripts": {
