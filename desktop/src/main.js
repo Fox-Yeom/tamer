@@ -203,7 +203,7 @@ function makePane(tab, kind, opts = {}) {
   const el = opts.el || $(".term", section);
   const term = new Terminal({
     fontFamily: '"Fira Code", "CVIM Hangul", Menlo, monospace',
-    fontSize, theme: THEME, minimumContrastRatio: TERM_CONTRAST[themeNow()], macOptionIsMeta: true, scrollback: 100000, allowProposedApi: true,
+    fontSize, theme: THEME, minimumContrastRatio: TERM_CONTRAST[themeNow()], macOptionIsMeta: true, scrollback: 10000, /* #133: a line takes its columns' room whatever it holds — 100,000 lines of 180 columns ≈ 0.4 GB a pane (TRM-09 rule 2) */ allowProposedApi: true,
     // links a program marks itself (OSC 8, e.g. an agent's "출처" list): ⌘-click opens (#19)
     linkHandler: { activate: (e, uri) => openLink(e, uri) },
   });
@@ -1419,6 +1419,7 @@ const wild = createWild($("#wild"), {
 
 // ── 📝 changes panel (E1b): the folder's changed files (git), refreshed when a turn ends, the tab
 // is selected, every 10 s while on screen, or ↻. A file → side-by-side diff, "revert this file". ──
+const CHANGES_SHOWN = 1000; // the main process sends this many lines at most (TRM-14 rule 4, #134)
 const STATUS = { modified: ["M", "mod"], added: ["A", "add"], new: ["N", "add"], deleted: ["D", "del"], renamed: ["R", "mod"] };
 
 async function refreshChanges(tab) {
@@ -1427,6 +1428,10 @@ async function refreshChanges(tab) {
   tab.changesBusy = true;
   try {
     const r = await invoke("changes_list", { ws: tab.id });
+    // the same list as last time: no redraw (#134 — 50,000 lines drawn again every 10 s froze the window)
+    const key = JSON.stringify(r);
+    if (key === tab.changesKey && tab.changes) return;
+    tab.changesKey = key;
     tab.changes = r;
     renderChanges(tab);
   } catch {} finally { tab.changesBusy = false; }
@@ -1494,7 +1499,8 @@ function renderChanges(tab) {
   // a redraw (every 10 s) must not take the keyboard away from the list
   const had = document.activeElement?.closest?.(".changes li[data-i]") && ul.contains(document.activeElement)
     ? document.activeElement.title : null;
-  $(".changes-count", tab.view).textContent = r?.repo && r.items.length ? `(${r.items.length})` : "";
+  const total = r?.total ?? r?.items?.length ?? 0;
+  $(".changes-count", tab.view).textContent = r?.repo && total ? `(${total.toLocaleString("en-US")})` : "";
   // the branch the list is measured against (TRM-18): ⎇ main ↑2 — git's own idea of the remote (no fetch)
   const b = r?.repo ? r.branch : null, bEl = $(".changes-branch", tab.view);
   // a long name shrinks to … — the ↑↓ counts stay
@@ -1506,12 +1512,12 @@ function renderChanges(tab) {
   if (!r.items.length) { ul.innerHTML = '<li class="dim">바뀐 파일이 없어요</li>'; return; }
   ul.innerHTML = r.items.map((x, i) => {
     const [mark, cls] = STATUS[x.status] || ["?", ""];
-    const nums = x.binary ? '<span class="dim">바이너리</span>'
+    const nums = x.dir ? `<span class="dim">파일 ${Number(x.files || 0).toLocaleString("en-US")}개</span>` : x.binary ? '<span class="dim">바이너리</span>'
       : `${x.add ? `<span class="add">+${x.add}</span>` : ""} ${x.del ? `<span class="del">−${x.del}</span>` : ""}`;
-    const slash = x.path.lastIndexOf("/");
+    const slash = x.path.lastIndexOf("/", x.dir ? x.path.length - 2 : undefined);
     return `<li data-i="${i}" tabindex="0" title="${esc(x.path)}"><b class="st ${cls}">${mark}</b>`
       + `<span class="file">${esc(x.path.slice(slash + 1))}</span><span class="dir dim">${esc(slash > 0 ? x.path.slice(0, slash) : "")}</span><span class="nums">${nums}</span></li>`;
-  }).join("");
+  }).join("") + (total > r.items.length ? `<li class="dim changes-more">외 ${(total - r.items.length).toLocaleString("en-US")}개 — 너무 많아 ${CHANGES_SHOWN.toLocaleString("en-US")}개까지만 보여요. 빌드 결과·패키지 폴더는 .gitignore에 넣으면 빨라져요</li>` : "");
   if (had != null) [...ul.querySelectorAll("li[data-i]")].find((li) => li.title === had)?.focus();
 }
 
@@ -1569,6 +1575,7 @@ async function openDiff(tab, item, index = 0) {
   $("#diff-title").innerHTML = `<b class="st">${mark}</b> ${esc(item.path)} <span class="add">${item.add ? `+${item.add}` : ""}</span> <span class="del">${item.del ? `−${item.del}` : ""}</span>`;
   const btn = $("#diff-revert");
   btn.className = "";
+  btn.hidden = !!item.dir; // a new folder as one line: nothing to compare or revert (TRM-15 rule 4, #134)
   btn.textContent = item.status === "new" || item.status === "added" ? "이 파일 지우기(휴지통)" : "이 파일 되돌리기";
   const body = $("#diff-body");
   body.innerHTML = '<p class="dim">불러오는 중…</p>';
@@ -1576,6 +1583,7 @@ async function openDiff(tab, item, index = 0) {
   $("#diffview").focus();
   let r;
   try { r = await invoke("changes_diff", { ws: tab.id, path: item.path }); } catch (e) { body.innerHTML = `<p class="bad">${esc(e.message)}</p>`; return; }
+  if (r.dir) { body.innerHTML = `<p class="dim">새 폴더 · 파일 ${Number(r.files || 0).toLocaleString("en-US")}개 — 새 파일이 많아 폴더로 묶었어요. 빌드 결과·패키지 폴더라면 .gitignore에 넣으면 목록이 가벼워져요</p>`; return; }
   if (r.binary) { body.innerHTML = '<p class="dim">바이너리 파일이라 비교할 수 없어요</p>'; return; }
   const rows = sideBySide(r.diff);
   const cell = (c) => (c ? `<td class="ln">${c.n}</td><td class="tx ${c.k}">${esc(c.t)}</td>` : '<td class="ln"></td><td class="tx none"></td>');
@@ -2321,6 +2329,11 @@ function labState() {
     sid: active?.sid ?? null,
     astate: active?.state?.state || null,
     branch: active ? { text: $(".changes-branch", active.view)?.textContent || "", title: $(".changes-branch", active.view)?.title || "" } : null, // TRM-18
+    // TRM-14 · TRM-15 (#134): every tab's change list as drawn, the compare view; TRM-09 (#133): the big pane's scrollback
+    changes: tabs.map((t) => ({ count: $(".changes-count", t.view)?.textContent || "", lines: t.view.querySelectorAll(".changes li[data-i]").length,
+      more: $(".changes-more", t.view)?.textContent || null, dirs: [...t.view.querySelectorAll(".changes li[data-i]")].filter((li) => li.title.endsWith("/")).map((li) => li.textContent) })),
+    diff: diffOpen() ? { body: $("#diff-body").textContent, revertHidden: $("#diff-revert").hidden } : null,
+    scrollback: active ? bigPane(active)?.term.options.scrollback ?? null : null,
     doing: $("#doing")?.textContent || "", // the top bar's state sentence (STA-20 times)
     tabTitle: active ? $(`#tabs .tab[data-ws="${active.id}"]`)?.title || "" : null,
     noTabGlow: document.body.classList.contains("no-tab-glow"), // #59 설정

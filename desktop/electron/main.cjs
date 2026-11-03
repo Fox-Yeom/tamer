@@ -693,11 +693,12 @@ function git(cwd, args) {
   });
 }
 
-const lineCount = (file) => {
+// read without holding the main process (#134: 50,000 new files read at once stopped the app ~1 s every 10 s)
+const lineCount = async (file) => {
   try {
-    const st = fs.statSync(file);
+    const st = await fs.promises.stat(file);
     if (!st.isFile() || st.size > 2 * 1024 * 1024) return null;
-    const buf = fs.readFileSync(file);
+    const buf = await fs.promises.readFile(file);
     if (buf.includes(0)) return null; // binary
     return buf.length ? buf.toString("utf8").split("\n").length - (buf.at(-1) === 10 ? 1 : 0) : 0;
   } catch { return null; }
@@ -723,6 +724,10 @@ async function watchGit(ws) {
   } catch { ws.gitWatch = null; }
 }
 
+// more than this many new files: untracked folders become one line each; the window gets this many lines at most (TRM-14 rules 2 · 4, #134)
+const CHANGES_MAX = 1000;
+const statusArgs = (all) => ["status", "--porcelain=v1", "-b", "-z", `--untracked-files=${all ? "all" : "normal"}`, "--", "."];
+
 async function changesOf(ws) {
   const top = await git(ws.cwd, ["rev-parse", "--show-toplevel"]);
   if (!top.ok) return { repo: false };
@@ -730,7 +735,13 @@ async function changesOf(ws) {
   const root = top.out.trim();
   const head = (await git(ws.cwd, ["rev-parse", "--verify", "-q", "HEAD"])).ok;
   // -b: the first entry is the branch line (TRM-18) — no extra git run for it
-  const st = await git(ws.cwd, ["status", "--porcelain=v1", "-b", "-z", "--untracked-files=all", "--", "."]);
+  let st = await git(ws.cwd, statusArgs(true));
+  // a folder git doesn't ignore with thousands of files in it (a build, packages): ask again with each new folder as one line
+  let newFiles = null;
+  if (st.out.split("\0").filter((e) => e.startsWith("?? ")).length > CHANGES_MAX) {
+    newFiles = st.out.split("\0").filter((e) => e.startsWith("?? ")).map((e) => e.slice(3));
+    st = await git(ws.cwd, statusArgs(false));
+  }
   const items = [];
   const parts = st.out.split("\0");
   const branch = parts[0]?.startsWith("## ") ? branchOf(parts.shift().slice(3)) : null;
@@ -742,7 +753,14 @@ async function changesOf(ws) {
     if (xy[0] === "R" || xy[0] === "C") i++; // the next entry is the old name
     const abs = path.join(root, rel);
     const status = xy === "??" ? "new" : xy.includes("D") ? "deleted" : xy.includes("A") ? "added" : xy[0] === "R" ? "renamed" : "modified";
-    items.push({ abs, path: path.relative(ws.cwd, abs), status, xy, add: null, del: null });
+    const x = { abs, path: path.relative(ws.cwd, abs), status, xy, add: null, del: null };
+    if (status === "new" && rel.endsWith("/")) { x.dir = true; x.path += "/"; x.rel = rel; x.files = 0; }
+    items.push(x);
+  }
+  // each folder line's file count: the folder line a new file is under
+  const dirs = new Map(items.filter((x) => x.dir).map((x) => [x.rel, x]));
+  for (const f of newFiles || []) {
+    for (let i = f.indexOf("/"); i >= 0; i = f.indexOf("/", i + 1)) { const d = dirs.get(f.slice(0, i + 1)); if (d) { d.files++; break; } }
   }
   // +/- lines: git for tracked files (vs HEAD), the file's lines for new ones
   if (head && items.some((x) => x.status !== "new")) {
@@ -758,10 +776,13 @@ async function changesOf(ws) {
       if (x) { x.add = m[1] === "-" ? null : Number(m[1]); x.del = m[2] === "-" ? null : Number(m[2]); x.binary = m[1] === "-"; }
     }
   }
-  for (const x of items) if (x.status === "new" || (x.status === "added" && x.add == null)) { const n = lineCount(x.abs); x.add = n; x.del = 0; x.binary = n == null; }
   items.sort((a, b) => a.path.localeCompare(b.path));
+  // a new file's lines: only for the lines the window gets
+  const shown = items.slice(0, CHANGES_MAX);
+  await Promise.all(shown.filter((x) => !x.dir && (x.status === "new" || (x.status === "added" && x.add == null)))
+    .map(async (x) => { const n = await lineCount(x.abs); x.add = n; x.del = 0; x.binary = n == null; }));
   ws.changes = new Map(items.map((x) => [x.path, x]));
-  return { repo: true, branch, items: items.map(({ abs, ...x }) => x) };
+  return { repo: true, branch, total: items.length, items: shown.map(({ abs, rel, ...x }) => x) };
 }
 
 // git status -b's branch line (TRM-18): "main...origin/main [ahead 2, behind 1]" · "main" ·
@@ -779,6 +800,7 @@ function branchOf(line) {
 async function changeDiff(ws, rel) {
   const x = ws.changes?.get(rel);
   if (!x) throw new Error("not in the change list");
+  if (x.dir) return { dir: true, files: x.files }; // a new folder as one line (TRM-15 rule 4)
   if (x.binary) return { binary: true };
   const head = (await git(ws.cwd, ["rev-parse", "--verify", "-q", "HEAD"])).ok;
   const r = x.status === "new" || (x.status === "added" && !head)
@@ -797,6 +819,7 @@ async function toTrash(file) {
 async function changeRevert(ws, rel) {
   const x = ws.changes?.get(rel);
   if (!x) throw new Error("not in the change list");
+  if (x.dir) throw new Error("폴더는 되돌릴 수 없어요");
   const { inside } = await core.request("path_inside", { root: ws.cwd, path: x.abs });
   if (!inside) throw new Error("outside the folder");
   if (x.status === "new") {
@@ -2848,6 +2871,23 @@ const NOTICES = () => [process.resourcesPath && path.join(process.resourcesPath,
 // "진단 정보 복사": version, macOS, agent connections, open tabs/shells and the recent app log —
 // for the tester to paste into a feedback mail (nothing is sent by the app). No conversations,
 // commands or file names: folders become 폴더1, 폴더2 …, paths become <경로>, the home folder ~.
+// Tamer's own processes, MB (APP-10 rule 5, #133): the main process, each window's page, the GPU, the rest, the core —
+// agents run as processes of their own (Activity Monitor shows them apart)
+function memoryRows() {
+  const mb = (kb) => Math.round(kb / 1024);
+  const by = { Browser: 0, Tab: 0, GPU: 0, other: 0 };
+  let pages = 0;
+  for (const m of app.getAppMetrics()) {
+    const k = m.type in by ? m.type : "other";
+    by[k] += m.memory?.workingSetSize || 0;
+    if (k === "Tab") pages++;
+  }
+  let coreKb = null;
+  try { coreKb = Number(execFileSync("ps", ["-o", "rss=", "-p", String(core?.proc?.pid)], { encoding: "utf8", timeout: 2000 }).trim()) || null; } catch {}
+  const all = by.Browser + by.Tab + by.GPU + by.other + (coreKb || 0);
+  return `메모리 ${mb(all)}MB — 메인 ${mb(by.Browser)} · 화면 ${mb(by.Tab)}(창 ${pages}개) · GPU ${mb(by.GPU)} · 그 밖 ${mb(by.other)} · 핵심부 ${coreKb == null ? "?" : mb(coreKb)}`;
+}
+
 function diagnostics() {
   const folders = [...workspaces.values()].map((w) => w.cwd);
   const label = new Map(folders.map((f, i) => [f, `폴더${i + 1}`]));
@@ -2865,6 +2905,7 @@ function diagnostics() {
   return [
     `Tamer ${VERSION()} · macOS ${process.getSystemVersion()} · ${process.arch} · Electron ${process.versions.electron}`,
     `만든 시각 ${new Date().toISOString()} · 켜진 지 ${Math.round(process.uptime() / 60)}분 · 야생 포켓몬 ${wild.enabled() ? "켬" : "끔"}`,
+    memoryRows(),
     "", "에이전트 연결:", ...agentRows,
     "", `열린 탭 ${workspaces.size}개:`, ...tabRows,
     "", `최근 앱 기록 (${RECENT_LOG.length}줄):`, ...RECENT_LOG.map(clean),

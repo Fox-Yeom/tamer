@@ -2057,6 +2057,45 @@ sleep 40
     ],
   },
   {
+    // #134: a folder git doesn't ignore with thousands of files (a build, packages) — one line; more than 1,000 lines — only 1,000 drawn
+    id: "changes-many", tags: ["smoke", "terminal"], what: "바뀐 파일이 아주 많으면: 새 폴더는 한 줄(파일 N개, 비교·되돌리기 없음), 1,000줄까지만 그리고 \"외 N개\", 개수는 전체 (#134 #133)",
+    data: "owner", mode: "direct", folders: ["proj", "flat"],
+    setup: (box) => {
+      gitRepo(box.folder("proj"), [["init", "-q"], (d) => fs.writeFileSync(path.join(d, "a.txt"), "1\n"), ["add", "."], ["commit", "-qm", "one"], (d) => {
+        fs.writeFileSync(path.join(d, "a.txt"), "1\n2\n"); fs.writeFileSync(path.join(d, "b.txt"), "x\ny\nz\n");
+        for (let k = 0; k < 3; k++) { const n = path.join(d, "node_modules", `pkg${k}`, "lib"); fs.mkdirSync(n, { recursive: true }); for (let i = 0; i < 500; i++) fs.writeFileSync(path.join(n, `f${i}.js`), "x\n"); }
+      }]);
+      gitRepo(box.folder("flat"), [["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "one"], (d) => { for (let i = 0; i < 1200; i++) fs.writeFileSync(path.join(d, `f${String(i).padStart(4, "0")}.txt`), "x\n"); }]);
+    },
+    steps: [{ until: "tabs.1" }, { wait: 3000 }, { probe: "lists" }, { key: "1", mods: 4 }, { wait: 800 },
+      { click: 'main.grid:not([hidden]) .changes li[title$="node_modules/"]' }, { wait: 800 }, { probe: "dir" }, { invoke: "diag_test", log: true }],
+    check: ({ probe, log }) => {
+      const [proj, flat] = probe.lists?.changes || [];
+      const mem = log.match(/^lab-invoke diag_test "[^"]*?(메모리 \d+MB — 메인 \d+ · 화면 \d+\(창 \d+개\) · GPU \d+ · 그 밖 \d+ · 핵심부 (\d+|\?))/m);
+      return [
+        ok(proj?.count === "(3)" && proj?.lines === 3, `proj ${JSON.stringify(proj)} (a.txt · b.txt · node_modules/ 세 줄이어야)`),
+        ok(proj?.dirs?.length === 1 && /node_modules/.test(proj.dirs[0]) && /파일 1,500개/.test(proj.dirs[0]), `묶은 폴더 ${JSON.stringify(proj?.dirs)} (파일 1,500개)`),
+        ok(!proj?.more, "3줄인데 \"외 N개\"가 보임"),
+        ok(flat?.count === "(1,200)" && flat?.lines === 1000, `flat ${flat?.count} · 그린 줄 ${flat?.lines} (전체 1,200 · 1,000줄이어야)`),
+        ok(/^외 200개/.test(flat?.more || "") && /\.gitignore/.test(flat?.more || ""), `끝 안내 ${flat?.more}`),
+        ok(/새 폴더 · 파일 1,500개/.test(probe.dir?.diff?.body || "") && probe.dir?.diff?.revertHidden === true, `폴더 줄 비교 창 ${JSON.stringify(probe.dir?.diff)} (안내만, 되돌리기 버튼 없음)`),
+        ok(probe.lists?.scrollback === 10000, `스크롤백 ${probe.lists?.scrollback}줄 (1만이어야, #133)`),
+        ok(mem && mem[2] !== "?", `진단 정보 메모리 줄 ${mem?.[1] || "없음"} (핵심부까지, #133)`),
+      ];
+    },
+  },
+  {
+    // #134 worst case: 20,000 new files not under any folder (can't be one line) — one read stays short, 1,000 lines drawn
+    id: "changes-many-flat", tags: ["explore", "terminal"], what: "폴더로 못 묶는 새 파일 2만 개: 목록 한 번 읽기가 짧고(메인을 안 막음) 1,000줄만 그림 (#134)",
+    data: "owner", mode: "direct", folders: ["flat"],
+    setup: (box) => gitRepo(box.folder("flat"), [["init", "-q"], ["commit", "-q", "--allow-empty", "-m", "one"], (d) => { for (let i = 0; i < 20000; i++) fs.writeFileSync(path.join(d, `f${String(i).padStart(5, "0")}.txt`), "x\n".repeat(50)); }]),
+    steps: [{ until: "tabs.0" }, { wait: 4000 }, { probe: "a" }, { invoke: "changes_list", args: { ws: "$ws" } }, { probe: "b" }],
+    check: ({ probe }) => [
+      ok(probe.b?.changes?.[0]?.count === "(20,000)" && probe.b?.changes?.[0]?.lines === 1000, `${JSON.stringify(probe.b?.changes?.[0]?.count)} · ${probe.b?.changes?.[0]?.lines}줄`),
+      ok(probe.b && probe.b._ms - probe.a._ms < 1500, `한 번 읽기 ${probe.b && probe.b._ms - probe.a._ms}ms (1.5초 안이어야)`),
+    ],
+  },
+  {
     id: "open-file-kinds", tags: ["smoke", "terminal"], what: "⌘-클릭한 파일: index.html·그림은 기본 앱(브라우저 등), 코드는 편집기 그 줄로 (#57, TRM-08)",
     data: "owner", mode: "direct", folders: ["proj"],
     setup: (box) => { const d = box.folder("proj"); fs.mkdirSync(path.join(d, "src"), { recursive: true }); fs.writeFileSync(path.join(d, "index.html"), "<p>x</p>\n"); fs.writeFileSync(path.join(d, "src", "a.ts"), "1\n2\n3\n"); fs.writeFileSync(path.join(d, "shot.png"), ""); },
