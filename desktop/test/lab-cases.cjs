@@ -19,6 +19,9 @@ const path = require("node:path");
 const filesWith = (dir, needle) => { const out = []; if (!fs.existsSync(dir)) return out; const walk = (d) => { for (const e of fs.readdirSync(d, { withFileTypes: true })) { const f = path.join(d, e.name); if (e.isDirectory()) walk(f); else { try { if (fs.readFileSync(f, "utf8").includes(needle)) out.push(path.relative(dir, f)); } catch {} } } }; walk(dir); return out; };
 // #45: a stand-in Claude for the shell (prints its arguments, feeds a status line through Tamer's script)
 const FAKE_CLAUDE = "#!/bin/sh\n# a stand-in Claude: says what it was started with, then — like the real one, which redraws its status line all the time — reports a status line through Tamer's script every second\necho \"fake-claude args: $*\"\nfor i in $(seq 30); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":12}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $((now+3600)) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n";
+// sprites of different sizes for the overlay's notice (#138): the smallest · usual ones · Blissey · the tallest cached
+const NOTE_IDS = [100, 16, 25, 134, 222, 242, 567];
+const noteSteps = (id) => [{ invoke: "overlay_note_test", args: { id } }, { wait: 500 }, { invoke: "overlay_fit_test", log: true }, { invoke: "overlay_note_test", args: { id: null, name: id } }, { wait: 300 }];
 // a 메인 파트너 one task away from evolving (Charmander Lv 15, evolves at 16 — #74): uid 1, the party's first and only
 // (#122 — no folder partners; the party grows in turn, so a one-member party is the one that grows) (PKM-04, PKM-21)
 function evolvePartner(box, extra = {}) {
@@ -2309,6 +2312,35 @@ sleep 40
       const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const [deflt, first, clear, never, flat, always, wild, zero] = dom;
       const alphaOf = (c) => { const m = /rgba?\(([^)]*)\)/.exec(c || ""); const p = m ? m[1].split(",").map(Number) : []; return p.length === 4 ? p[3] : p.length === 3 ? 1 : null; };
+    },
+  },
+  {
+    id: "overlay-note-fit", tags: ["smoke", "app", "poke"], what: "바탕화면 알림이 창 안에 다 들어옴(#138): 그림 크기가 다른 포켓몬 일곱 — 카드를 누른 뒤에도(전엔 누름이 끝나지 않아 창이 카드를 안 따라가 알림 위가 잘림), 알림을 누른 뒤 사라지면 창이 다시 줄고, 끄는 동안 바뀐 크기는 놓을 때 따라감 (STA-15 규칙 3)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 0, minimal: "always", when: "always", size: 112 } } } }, { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 },
+      ...NOTE_IDS.flatMap(noteSteps),
+      { invoke: "overlay_press_test", args: { sel: "#cards .card" } }, { wait: 300 }, // a click on a card, no note on screen
+      ...NOTE_IDS.flatMap(noteSteps),
+      { invoke: "overlay_note_test", args: { id: 242 } }, { wait: 500 }, { invoke: "overlay_press_test", args: { sel: "#wild .wild-note" } }, { wait: 300 }, // the notice clicked, then gone
+      { invoke: "overlay_note_test", args: { id: null, name: 242 } }, { wait: 500 }, { invoke: "overlay_fit_test", log: true },
+      { invoke: "overlay_press_test", args: { sel: "#cards .card", move: 30, up: false } }, { wait: 200 }, // a note comes during a drag
+      { invoke: "overlay_note_test", args: { id: 134 } }, { wait: 500 }, { invoke: "overlay_fit_test", log: true },
+      { invoke: "overlay_press_test", args: { sel: "#cards .card", move: 30, down: false } }, { wait: 500 }, { invoke: "overlay_fit_test", log: true },
+      { invoke: "overlay_note_test", args: { id: null, name: 134 } }, { wait: 300 },
+      { invoke: "overlay_show_test", args: { on: false } }],
+    check: ({ log }) => {
+      const fits = [...log.matchAll(/^lab-invoke overlay_fit_test (.*)$/gm)].map((m) => JSON.parse(m[1])), n = NOTE_IDS.length;
+      const inside = (f) => f && f.noteH > 0 && f.top >= 0 && f.win === f.stack, base = fits.slice(0, n), after = fits.slice(n, 2 * n), [gone, during, dropped] = fits.slice(2 * n);
+      return [
+        ok(fits.length === 2 * n + 3, `확인 ${fits.length}번 (${2 * n + 3}이어야)`),
+        ok(base.every(inside), `누르기 전 일곱 다 창 안이어야 ${JSON.stringify(base.map((f) => [f?.top, f?.win, f?.stack]))}`),
+        ok(after.every(inside), `카드를 누른 뒤에도 일곱 다 창 안이어야 (#138) ${JSON.stringify(after.map((f) => [f?.top, f?.win, f?.stack]))}`),
+        ok(new Set(base.map((f) => f?.img?.[1])).size > 1 && base.every((f) => f?.img?.[0] <= 48 && f?.img?.[1] <= 48), `그림 크기가 서로 달라야 대조가 되고 48 안이어야 ${JSON.stringify(base.map((f) => f?.img))}`),
+        ok(gone && gone.noteH === null && gone.win === gone.stack, `알림을 누른 뒤 사라지면 창이 줄어야 ${JSON.stringify(gone)}`),
+        ok(during && during.win < during.stack, `끄는 동안엔 창 크기가 그대로여야 ${JSON.stringify(during)}`),
+        ok(inside(dropped), `놓으면 끄는 동안 바뀐 크기를 따라가야 ${JSON.stringify(dropped)}`),
+      ];
       const gets = [...log.matchAll(/^lab-invoke settings_get (.*)$/gm)].map((m) => JSON.parse(m[1])), got = gets.at(-1) || {};
       let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
       const none = (sh) => !sh || sh === "none" || /rgba\(0, 0, 0, 0\)/.test(sh);

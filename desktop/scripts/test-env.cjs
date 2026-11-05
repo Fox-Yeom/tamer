@@ -63,7 +63,7 @@ function ensureSprites(ids) {
     if (!fs.existsSync(path.join(SPRITES, "pokemon", `${id}.evo.json`))) fetch(["evo", String(id)]);
   }
 }
-const SEED_IDS = [[1], [4], [7], [16], [25], [37], [134], [222], [418], [422, true]];
+const SEED_IDS = [[1], [4], [7], [16], [25], [37], [100], [134], [222], [242], [418], [422, true], [567]];
 
 // ── a sandbox: its folders and the env that points the app at them ──────────
 // data: "empty" (nothing, like a brand-new Mac) · "newuser" (empty box, three starters ready) ·

@@ -1710,7 +1710,7 @@ function createOverlay() {
   // skipTransformProcessType: otherwise macOS turns the whole app into a UIElement (no Dock icon,
   // main window never comes to the front)
   overlay.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true, skipTransformProcessType: true });
-  overlay.on("hide", () => { drag = null; }); // a drag never outlives the overlay
+  overlay.on("hide", () => { drag = null; overlayFit(); }); // a drag never outlives the overlay
   overlay.setIgnoreMouseEvents(true, { forward: true }); // see-through until the pointer is on a card
   overlay.webContents.on("will-navigate", (e) => e.preventDefault());
   overlay.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -1730,6 +1730,17 @@ function overlayWants({ focused = !!BrowserWindow.getFocusedWindow(), quiet = QU
   return !!((away || overlayForced || overlayTry) && (workspaces.size || (o.partner && partner.party().list.length)) && o.on && something);
 }
 let overlayFront = null; // tests: would it show with Tamer in front — logged when it changes (#97)
+// the cards' size, kept during a press and applied when it ends (#138 — a click that never ended it left the window
+// short of the cards, cutting off what's on top)
+let overlaySize = null;
+function overlayFit() {
+  if (drag || !overlaySize || !overlay || overlay.isDestroyed()) return;
+  const w = Math.round(Math.min(Math.max(Number(overlaySize.width) || 0, 40), 640)); // 640: a 384 px partner's normal card (#127)
+  const h = Math.round(Math.min(Math.max(Number(overlaySize.height) || 0, 40), 900));
+  const b = overlay.getBounds();
+  if (b.width === w && b.height === h) return;
+  overlay.setBounds({ x: b.x + b.width - w, y: b.y + b.height - h, width: w, height: h });
+}
 function overlaySync() {
   if (!overlay || overlay.isDestroyed()) return;
   if (draining) { overlay.hide(); return; } // quitting (#54): the hidden window's blur mustn't bring it back
@@ -1869,14 +1880,7 @@ const overlayCommands = {
   // the evolution notice (#111): 내 포켓몬 on the one that evolved (#121, STA-15 — it opened Tamer's window, APP-22 rule 8)
   evolve_open({ sel } = {}) { pokeOpen({ view: "box", sel }); logLine("evolve open from overlay"); },
   // the cards' size: shrink / grow the window around them, bottom-right corner fixed
-  overlay_fit({ width, height }) {
-    if (drag) return;
-    const w = Math.round(Math.min(Math.max(Number(width) || 0, 40), 640)); // 640: a 384 px partner's normal card (#127)
-    const h = Math.round(Math.min(Math.max(Number(height) || 0, 40), 900));
-    const b = overlay.getBounds();
-    if (b.width === w && b.height === h) return;
-    overlay.setBounds({ x: b.x + b.width - w, y: b.y + b.height - h, width: w, height: h });
-  },
+  overlay_fit({ width, height }) { overlaySize = { width, height }; overlayFit(); },
   overlay_collapse() {
     overlayCollapsed = !overlayCollapsed;
     const [wx, wy] = overlay.getPosition(), [w, h] = overlay.getSize();
@@ -1892,10 +1896,12 @@ const overlayCommands = {
     if (phase === "start") drag = { dx: x - wx, dy: y - wy };
     else if (phase === "move" && drag) overlay.setPosition(x - drag.dx, y - drag.dy);
     else if (phase === "end" && drag) {
+    else if (phase === "cancel") { drag = null; overlayFit(); } // a click: no move (#138)
       drag = null;
       const [w, h] = overlay.getSize();
       writeFile(OVERLAY_POS, JSON.stringify({ right: wx + w, bottom: wy + h, collapsed: overlayCollapsed }));
     }
+      overlayFit();
   },
   sprite_b64: (args) => commands.sprite_b64(args),
   wild_throw: (args) => commands.wild_throw(args),
@@ -2832,6 +2838,24 @@ const testCommands = {
   overlay_bounds_test: () => overlay.getBounds(),
   overlay_visible_test: () => !!overlay && !overlay.isDestroyed() && overlay.isVisible(),
   overlay_want_test: ({ focused }) => overlayWants({ focused: !!focused, quiet: false }), // would it show with Tamer in front / not (#97 #98)
+  // tests (#138): the page's own mouse listeners — a press and release on what sel finds; move: a drag; down / up
+  // false: stop or go on halfway, to do something during the press
+  overlay_press_test: ({ sel, move = 0, down = true, up = true }) => overlay.webContents.executeJavaScript(`(() => {
+    const el = document.querySelector(${JSON.stringify(String(sel))}) || document.body;
+    const m = (t, x, b) => el.dispatchEvent(new MouseEvent(t, { bubbles: true, screenX: x, screenY: 100, buttons: b, button: 0 }));
+    ${down ? 'm("mousedown", 100, 1);' : ""} ${down && Number(move) ? `m("mousemove", ${100 + Number(move)}, 1);` : ""} ${up ? `m("mouseup", ${100 + Number(move)}, 0);` : ""}
+    return true; })()`),
+  // a notice for that Pokémon alone, or its end (id null)
+  overlay_note_test({ id, name = "시험", token = "note-test" }) {
+    const gif = id ? path.join(CACHE, "pokemon", `${id}.gif`) : null;
+    overlay.webContents.send("host-event", id ? { event: "wild", payload: { token: `${token}-${id}`, id, name, gif: fs.existsSync(gif) ? gif : null, until: Date.now() + 60000 } } : { event: "wild-end", payload: { token: `${token}-${name}` } });
+  },
+  // is the notice inside the window: the window's and the cards' height, the notice's place in the page
+  async overlay_fit_test() {
+    const p = await overlay.webContents.executeJavaScript(`(() => { const s = document.getElementById("stack"), n = document.querySelector("#wild .wild-note")?.getBoundingClientRect(), i = document.querySelector("#wild img");
+      return { win: innerHeight, stack: s.offsetHeight, top: n ? Math.round(n.top) : null, noteH: n ? Math.round(n.height) : null, img: i ? [i.offsetWidth, i.offsetHeight, i.naturalWidth, i.naturalHeight] : null }; })()`);
+    return { ...p, bounds: overlay.getBounds() };
+  },
   overlay_payload_test: () => overlayPayload(),
   diag_test: () => diagnostics(),
   // the app menu's first submenu labels, and whether the notices ship with the app

@@ -158,15 +158,16 @@ function noteRect() {
 function endDrag(e, click) {
   const d = drag;
   drag = null;
-  if (d.moved) invoke("overlay_drag", { phase: "end", x: e.screenX, y: e.screenY });
-  else if (click && d.act === "wild") invoke("wild_open", { rect: noteRect() }); // the catch window beside it (#119)
-  else if (click && d.act === "hatch") invoke("hatch_open", { sel: d.sel }); // 내 포켓몬 on the hatchling (#121)
-  else if (click && d.act === "evolve") invoke("evolve_open", { sel: d.sel }); // 내 포켓몬 on the one that evolved (#121 — was Tamer's window)
-  else if (click && d.act === "party") invoke("party_open"); // 파티 card (#107): the Pokémon window's 홈 (#122 J2 — not Tamer's window)
-  else if (click && d.ws) invoke("overlay_click", { ws: d.ws });
+  invoke("overlay_drag", { phase: d.moved ? "end" : "cancel", x: e.screenX, y: e.screenY }); // a click too: the main process holds the window's size during a press (#138)
+  if (d.moved || !click) return;
+  if (d.act === "wild") invoke("wild_open", { rect: noteRect() }); // the catch window beside it (#119)
+  else if (d.act === "hatch") invoke("hatch_open", { sel: d.sel }); // 내 포켓몬 on the hatchling (#121)
+  else if (d.act === "evolve") invoke("evolve_open", { sel: d.sel }); // 내 포켓몬 on the one that evolved (#121 — was Tamer's window)
+  else if (d.act === "party") invoke("party_open"); // 파티 card (#107): the Pokémon window's 홈 (#122 J2 — not Tamer's window)
+  else if (d.ws) invoke("overlay_click", { ws: d.ws });
 }
 document.addEventListener("mouseup", (e) => { if (drag) endDrag(e, true); });
-window.addEventListener("blur", () => { drag = null; });
+window.addEventListener("blur", () => { if (!drag) return; drag = null; invoke("overlay_drag", { phase: "cancel", x: 0, y: 0 }); });
 
 // the window follows the cards' size (see main.cjs overlay_fit)
 new ResizeObserver(() => invoke("overlay_fit", { width: stack.offsetWidth, height: stack.offsetHeight })).observe(stack);
