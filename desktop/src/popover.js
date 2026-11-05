@@ -197,9 +197,17 @@ const wild = createWild($("#pop-wild"), {
   dexButton: (e) => invoke("popover_poke", { view: "dex", sel: e.id }),
 });
 listen("wild", (e) => { wild.show(e.payload); drawDot(); });
-listen("wild-throw", (e) => wild.play(e.payload));
+// a ball thrown elsewhere while this is hidden isn't played (it'd play on from where it stopped when shown, an ended catch
+// "잡았다!" again with its 📕 lost — #137): opening matches the card to the wild one now (STA-22 rule 4)
+listen("wild-throw", (e) => { if (!document.hidden) wild.play(e.payload); });
 listen("wild-end", (e) => { wild.end(e.payload); drawDot(); });
-listen("popover", (e) => draw(e.payload));
+listen("popover", (e) => {
+  draw(e.payload);
+  if (!e.payload?.shown) return;
+  const w = e.payload.wild;
+  if (!w) { if (wild.token()) wild.hide(); } else if (w.token !== wild.token()) wild.show({ ...w, balls: e.payload.balls });
+  drawDot();
+});
 listen("party", () => invoke("popover_state").then(draw).catch(() => {}));
 
 document.addEventListener("click", (e) => {

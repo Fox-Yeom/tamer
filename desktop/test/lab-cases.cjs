@@ -549,7 +549,7 @@ module.exports = [
     },
   },
   {
-    id: "limits-claude", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켬): 처음 한 번 묻고(가짜 답 '켜기') 그때 로그인 정보를 한 번 읽어 5시간 23%·주간 9% · 15분 자동 갱신은 메모리의 토큰으로(로그인 안 읽음) · 만료(401)면 토큰을 버리고 저절로 한 번 더 읽음 — 그것도 만료면 '눌러야 읽어요', 그 뒤 자동 갱신은 안 읽음 · 메뉴바 새로 고침을 누르면 다시 읽음 · 토큰 값은 기록·데이터 어디에도 없음 (STA-21, POL-AGENT-02 1-2~1-4, #104 #115 A1)",
+    id: "limits-claude", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켬): 처음 한 번 묻고(가짜 답 '켜기') 그때 로그인 정보를 한 번 읽어 5시간 23%·주간 9% · 15분 자동 갱신은 메모리의 토큰으로(로그인 안 읽음) · 만료(401)면 토큰을 버리고 저절로는 안 읽음 — '눌러야 읽어요' · 메뉴바 새로 고침을 누르면 다시 읽음 · 토큰 값은 기록·데이터 어디에도 없음 (STA-21, POL-AGENT-02 1-2~1-4, #104 #136)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_CONSENT: "yes" },
     files: {
@@ -575,15 +575,15 @@ module.exports = [
         ok(first?.keychainReads === 1 && first?.fetches === 1 && first?.token === true, `켤 때 로그인 정보 한 번 읽고 한 번 물음 ${JSON.stringify(first && { k: first.keychainReads, f: first.fetches, t: first.token })}`),
         ok(trays[0]?.some((l) => /Claude Code\s+5시간 23%.*주간 9%/.test(l)), `메뉴바 Claude 줄 ${JSON.stringify(trays[0]?.filter((l) => /%/.test(l)))}`),
         ok(auto?.keychainReads === 1 && auto?.fetches === 2, `자동 갱신은 메모리의 토큰으로 — 키체인 안 읽음 ${JSON.stringify(auto && { k: auto.keychainReads, f: auto.fetches })}`),
-        ok(expired?.token === false && expired?.state?.claude?.error === "expired" && expired?.keychainReads === 2 && expired?.fetches === 4 && trays[1]?.includes("↻ 한도 새로 고침 — Claude는 눌러야 읽어요"), `만료면 버리고 저절로 한 번 더 읽음(그것도 만료) → '눌러야 읽어요' ${JSON.stringify(expired && { s: expired.state?.claude, k: expired.keychainReads, f: expired.fetches })} ${JSON.stringify(trays[1]?.filter((l) => /↻/.test(l)))}`),
-        ok(after?.keychainReads === 2 && after?.fetches === 4 && after?.token === false, `그 뒤 자동 갱신은 로그인을 다시 읽지 않음 ${JSON.stringify(after && { k: after.keychainReads, f: after.fetches })}`),
-        ok(/^lab-invoke tray_click_test true$/m.test(log) && pressed?.keychainReads === 3 && pressed?.token === true && !pressed?.state?.claude?.error, `누르면 다시 읽음 ${JSON.stringify(pressed && { k: pressed.keychainReads, t: pressed.token, s: pressed.state?.claude })}`),
+        ok(expired?.token === false && expired?.state?.claude?.error === "expired" && expired?.keychainReads === 1 && expired?.fetches === 3 && trays[1]?.includes("↻ 한도 새로 고침 — Claude는 눌러야 읽어요"), `만료면 버리고 저절로는 안 읽음 → '눌러야 읽어요' ${JSON.stringify(expired && { s: expired.state?.claude, k: expired.keychainReads, f: expired.fetches })} ${JSON.stringify(trays[1]?.filter((l) => /↻/.test(l)))}`),
+        ok(after?.keychainReads === 1 && after?.fetches === 3 && after?.token === false, `그 뒤 자동 갱신도 로그인을 읽지 않음 ${JSON.stringify(after && { k: after.keychainReads, f: after.fetches })}`),
+        ok(/^lab-invoke tray_click_test true$/m.test(log) && pressed?.keychainReads === 2 && pressed?.token === true && !pressed?.state?.claude?.error, `누르면 다시 읽음 ${JSON.stringify(pressed && { k: pressed.keychainReads, t: pressed.token, s: pressed.state?.claude })}`),
         ok(!log.includes("LAB-SECRET-TOKEN-104") && !leaked.length, `토큰 값이 앱 기록·데이터에 없어야 ${JSON.stringify(leaked.map((f) => path.relative(box.data, f)))}`),
       ];
     },
   },
   {
-    id: "limits-claude-start", tags: ["smoke", "agent"], what: "Claude 한도가 켜져 있으면 앱이 뜰 때 로그인을 저절로 한 번 읽어 5시간·주간을 채움(전엔 누를 때까지 비어 있었음) · 확인 창에서 '거부'(가짜)면 그 실행 동안 자동 갱신은 다시 묻지 않고, 누르면 다시 물음 (STA-21 규칙 2, POL-AGENT-02 1-3, #115 A1)",
+    id: "limits-claude-start", tags: ["smoke", "agent"], what: "Claude 한도가 켜져 있어도 앱이 뜰 때 로그인을 저절로 읽지 않음 — '눌러야 읽어요'(#136: Claude Code의 갱신이 허용을 지워 뜰 때마다 암호 창) · 누르면 물음 · 확인 창에서 '거부'(가짜)면 자동 갱신은 안 읽고, 다시 누르면 다시 물음 (STA-21 규칙 2·8, POL-AGENT-02 1-3, #115 A1 #136)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits") },
     files: {
@@ -593,24 +593,23 @@ module.exports = [
     setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true } })); },
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
       { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true },
-      { invoke: "limits_deny_test", args: { on: true } }, { invoke: "limits_test", args: { status: 401, auto: true }, log: true },
-      { invoke: "limits_test", args: { status: 200, auto: true }, log: true },
-      { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true },
-      { invoke: "limits_deny_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }],
+      { invoke: "limits_deny_test", args: { on: true } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true },
+      { invoke: "limits_test", args: { auto: true }, log: true },
+      { invoke: "limits_deny_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true }],
     check: ({ log }) => {
-      const [start, deny, quiet, pressDenied, pressOk] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
-      const tray = (JSON.parse(log.match(/^lab-invoke tray_test (.*)$/m)?.[1] || "{}").items || []).map((i) => i.label || "");
+      const [start, deny, quiet, pressOk] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const [t0, t1] = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => (JSON.parse(m[1]).items || []).map((i) => i.label || ""));
       return [
-        ok(!/^limits ask$/m.test(log) && start?.keychainReads === 1 && start?.token === true && tray.some((l) => /Claude Code\s+5시간 31%.*주간 12%/.test(l)), `앱이 뜰 때 저절로 한 번 읽음 — 묻지 않음, 메뉴바에 5시간 31%·주간 12% ${JSON.stringify(start && { k: start.keychainReads, t: start.token })} ${JSON.stringify(tray.filter((l) => /%/.test(l)))}`),
-        ok(deny?.state?.claude?.error === "denied" && deny?.keychainReads === 2, `만료 뒤 저절로 읽다 거부 ${JSON.stringify(deny && { s: deny.state?.claude, k: deny.keychainReads })}`),
-        ok(quiet?.keychainReads === 2 && quiet?.state?.claude?.error === "denied", `거부 뒤 자동 갱신은 다시 묻지 않음 ${JSON.stringify(quiet && { s: quiet.state?.claude, k: quiet.keychainReads })}`),
-        ok(pressDenied?.keychainReads === 3 && pressOk?.keychainReads === 4 && pressOk?.token === true && !pressOk?.state?.claude?.error, `누르면 다시 물음(거부 → 허용) ${JSON.stringify([pressDenied?.keychainReads, pressOk && { k: pressOk.keychainReads, t: pressOk.token, s: pressOk.state?.claude }])}`),
+        ok(!/^limits ask$/m.test(log) && start?.keychainReads === 0 && start?.prompts === 0 && start?.token === false && t0?.includes("↻ 한도 새로 고침 — Claude는 눌러야 읽어요"), `앱이 뜰 때 저절로 안 읽음 — '눌러야 읽어요' ${JSON.stringify(start && { k: start.keychainReads, t: start.token })} ${JSON.stringify(t0?.filter((l) => /↻/.test(l)))}`),
+        ok(deny?.state?.claude?.error === "denied" && deny?.keychainReads === 1, `누르면 물음 — 거부 ${JSON.stringify(deny && { s: deny.state?.claude, k: deny.keychainReads })}`),
+        ok(quiet?.keychainReads === 1 && quiet?.state?.claude?.error === "denied", `거부 뒤 자동 갱신은 안 읽음 ${JSON.stringify(quiet && { s: quiet.state?.claude, k: quiet.keychainReads })}`),
+        ok(pressOk?.keychainReads === 2 && pressOk?.token === true && !pressOk?.state?.claude?.error && t1?.some((l) => /Claude Code\s+5시간 31%.*주간 12%/.test(l)), `다시 누르면 다시 물음(허용) → 5시간 31%·주간 12% ${JSON.stringify(pressOk && { k: pressOk.keychainReads, t: pressOk.token, s: pressOk.state?.claude })}`),
         ok(!log.includes("LAB-SECRET-TOKEN-115"), "토큰 값이 앱 기록에 없음"),
       ];
     },
   },
   {
-    id: "limits-claude-press", tags: ["smoke", "agent"], what: "키체인 확인 창(#124): 앱이 뜰 때 처음 한 번만 묻고('항상 허용' 가짜) 그 뒤 새로 고침은 창 없이 · Claude Code가 항목을 다시 써 허용이 풀려도(가짜) 쓸 수 있는 토큰이 있으면 새로 고침에서 묻지 않음(keychain=kept) · 토큰이 만료돼 없을 때만 다시 물음 — 어떻게 얻었는지는 앱 기록에(값은 없음) (STA-21 규칙 2, POL-AGENT-02 1-3)",
+    id: "limits-claude-press", tags: ["smoke", "agent"], what: "키체인 확인 창(#124 #136): 처음 누를 때 한 번 묻고('항상 허용' 가짜) · 그 뒤 새로 고침은 메모리의 토큰으로 — 키체인을 안 읽음(keychain=kept) · Claude Code가 항목을 다시 써 허용이 지워져도(가짜) 토큰이 통하면 묻지 않음 · Anthropic이 토큰을 거부한 뒤에도 저절로는 안 읽고, 누를 때만 다시 물음 — 어떻게 얻었는지·걸린 시간은 앱 기록에(값은 없음) (STA-21 규칙 2, POL-AGENT-02 1-3)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits") },
     files: {
@@ -619,20 +618,21 @@ module.exports = [
     },
     setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true } })); },
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
-      { invoke: "limits_test", log: true }, // the start: one prompt, "Always Allow"
-      { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // a press: read again without a prompt
-      { invoke: "limits_allow_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // allowance gone: the token kept
-      { invoke: "limits_test", args: { status: 401, auto: true }, log: true }, // no longer accepted: read again — the prompt
+      { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // the first press: one prompt, "Always Allow"
+      { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // a press: the token in memory, no read
+      { invoke: "limits_allow_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // allowance gone: still no read
+      { invoke: "limits_test", args: { status: 401, auto: true }, log: true }, // no longer accepted: dropped, not read by itself
       { invoke: "limits_test", args: { status: 200 } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }],
     check: ({ log }) => {
-      const [start, press, kept, expired, after] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
-      const how = [...log.matchAll(/^limits claude (\S+)(?: \(asked\))?(?: keychain=(\w+))?$/gm)].map((m) => `${m[1]}:${m[2] || "-"}`);
+      const [first, press, kept, expired, after] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const how = [...log.matchAll(/^limits claude (\S+) \(asked\) keychain=(\w+)(?: (\d+)ms)?$/gm)].map((m) => `${m[1]}:${m[2]}${m[3] != null ? ":ms" : ""}`);
       return [
-        ok(start?.prompts === 1 && start?.token === true && !start?.state?.claude?.error, `앱이 뜰 때 한 번 물음 ${JSON.stringify(start && { p: start.prompts, t: start.token })}`),
-        ok(press?.prompts === 1 && press?.keychainReads === 2 && press?.token === true, `'항상 허용' 뒤 새로 고침은 창 없이 다시 읽음 ${JSON.stringify(press && { p: press.prompts, k: press.keychainReads })}`),
-        ok(kept?.prompts === 1 && kept?.token === true && !kept?.state?.claude?.error, `허용이 풀려도 쓸 수 있는 토큰이면 새로 고침에서 안 물음 ${JSON.stringify(kept && { p: kept.prompts, t: kept.token, s: kept.state?.claude })}`),
-        ok(expired?.prompts === 2 && after?.prompts === 2 && after?.token === true, `토큰을 못 쓰게 되면 그때만 다시 물음 — 그 뒤 새로 고침은 창 없이 ${JSON.stringify([expired?.prompts, after && { p: after.prompts, t: after.token }])}`),
-        ok(how.includes("ok:prompt") && how.includes("ok:silent") && how.includes("ok:kept"), `앱 기록의 keychain= ${JSON.stringify(how)}`),
+        ok(first?.prompts === 1 && first?.keychainReads === 1 && first?.token === true && !first?.state?.claude?.error, `처음 누를 때 한 번 물음 ${JSON.stringify(first && { p: first.prompts, k: first.keychainReads, t: first.token })}`),
+        ok(press?.prompts === 1 && press?.keychainReads === 1 && press?.fetches === 2, `그 뒤 새로 고침은 키체인을 안 읽음 ${JSON.stringify(press && { p: press.prompts, k: press.keychainReads, f: press.fetches })}`),
+        ok(kept?.prompts === 1 && kept?.keychainReads === 1 && kept?.token === true && !kept?.state?.claude?.error, `허용이 지워져도 토큰이 통하면 안 물음 ${JSON.stringify(kept && { p: kept.prompts, k: kept.keychainReads, t: kept.token })}`),
+        ok(expired?.prompts === 1 && expired?.keychainReads === 1 && expired?.state?.claude?.error === "expired", `거부된 토큰은 버리고 저절로는 안 읽음 ${JSON.stringify(expired && { p: expired.prompts, k: expired.keychainReads, s: expired.state?.claude })}`),
+        ok(after?.prompts === 2 && after?.keychainReads === 2 && after?.token === true, `누를 때만 다시 물음 ${JSON.stringify(after && { p: after.prompts, k: after.keychainReads, t: after.token })}`),
+        ok(JSON.stringify(how) === JSON.stringify(["ok:read:ms", "ok:kept", "ok:kept", "ok:read:ms"]), `앱 기록의 keychain= ${JSON.stringify(how)}`),
         ok(!log.includes("LAB-SECRET-TOKEN-124"), "토큰 값이 앱 기록에 없음"),
       ];
     },
@@ -646,7 +646,7 @@ module.exports = [
       "limits/claude-usage.json": '{"five_hour":{"utilization":31.0,"resets_at":"2099-01-01T05:00:00.000+00:00"},"seven_day":{"utilization":12.0,"resets_at":"2099-01-04T23:00:00+00:00"}}',
     },
     setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true }, menubar: { ...(cur.menubar || {}), text: "limit" } })); },
-    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 }, { invoke: "limits_bg_test" }, { wait: 15000 }],
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 }, { invoke: "limits_refresh", args: { user: true } }, { wait: 500 }, { invoke: "limits_bg_test" }, { wait: 15000 }],
     check: ({ log }) => {
       const line = (w) => log.match(new RegExp(`^lim ${w} (.*)$`, "m"))?.[1] || "";
       const [before, closed, back] = ["before", "closed", "reopened"].map(line);
@@ -790,6 +790,36 @@ module.exports = [
         return ok(x?.hover?.over && same && x.hover.outline === "solid" && x.hover.contrast >= x.rest.contrast - 0.01,
           `${w}: ${JSON.stringify(x && { rest: [x.rest.bg, x.rest.fg, x.rest.contrast], hover: [x.hover.bg, x.hover.fg, x.hover.contrast, x.hover.outline, x.hover.over] })}`);
       });
+    },
+  },
+  {
+    id: "catch-then-dashboard", tags: ["smoke", "poke"], what: "대시보드를 한 번 연 뒤(숨은 창) 잡기 창에서 잡고 ✕ — 다시 연 대시보드는 끝난 잡기를 '잡았다!'로 다시 재생하지 않음(전엔 숨은 동안 멈춘 연출이 열 때 이어지고 📕가 종을 잃음) · 대시보드 도감 → 포켓몬 창 '새로 잡은' 줄에 잡은 포켓몬, 앱 기록에 연 때의 줄(검색어 내용은 없음) (STA-22 규칙 4, PKM-08, #137)",
+    data: "owner", offline: true, mode: "direct", folders: ["proj"], env: { CVIM_WILD_CHANCE: "1" },
+    setup: (box) => {
+      const d = todayLocal();
+      putEcon(box, { "ledger.jsonl": [{ day: d, kind: "start", n: 0, amount: 2000 }, { day: d, kind: "buy", item: "master", n: 1, amount: -1500 }].map((x) => JSON.stringify(x)).join("\n") + "\n", "state.json": { startSeen: true } });
+      fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ next: { id: 16, shiny: false } }));
+    },
+    steps: [{ until: "tabs.0" }, { until: "partnerKnown", timeout: 8000 }, { wait: 300 },
+      { invoke: "popover_test", args: { open: true } }, { wait: 1500 }, { invoke: "popover_test", args: { open: false } }, { wait: 500 }, // the dashboard made once, then hidden
+      ...DONE("$ws"), { wait: 1500 },
+      { invoke: "wild_open_test" }, { wait: 1200 },
+      { invoke: "own_click_test", args: { name: "catch", sel: "#catch-wild .wild-balls [data-ball='master']" }, log: true }, { wait: 200 },
+      { invoke: "own_click_test", args: { name: "catch", sel: "#catch-wild .wild-throw" }, log: true }, { wait: 4200 },
+      { invoke: "own_click_test", args: { name: "catch", sel: "#catch-close" }, log: true }, { wait: 800 }, // ✕ while it says "잡았다!"
+      { invoke: "own_up_test", args: { name: "catch" }, log: true },
+      { invoke: "popover_test", args: { open: true } }, { wait: 4000 }, { invoke: "popover_read_test", log: true },
+      { invoke: "popover_click_test", args: { sel: "#pop-poke [data-poke='dex']" }, log: true }, { wait: 3000 },
+      { invoke: "own_call_test", args: { name: "poke", fn: "state" }, log: true }],
+    check: ({ log }) => {
+      const pop = JSON.parse(log.match(/^lab-invoke popover_read_test (.*)$/m)?.[1] || "{}");
+      const poke = JSON.parse(log.match(/^lab-invoke own_call_test (.*)$/m)?.[1] || "{}");
+      const after = log.slice(log.indexOf("\ncatch closed"));
+      return [
+        ok(/^wild throw caught/m.test(log) && /^catch closed$/m.test(log) && /^lab-invoke own_up_test false$/m.test(log), `잡기 창에서 잡고 ✕로 닫힘 ${JSON.stringify(log.match(/^(wild throw|catch) .*$/gm))}`),
+        ok(pop?.wild === false && !/^popover wild caught/m.test(after) && !/잡았다/.test(pop?.text || ""), `다시 연 대시보드에 끝난 잡기가 다시 나오지 않음 wild=${pop?.wild} ${JSON.stringify(after.match(/^popover wild .*$/gm))}`),
+        ok(poke?.recent?.[0] === 16 && /^poke dex dex sel=- recent=#16(,|\s)[^\n]* search=off$/m.test(log), `포켓몬 창 '새로 잡은' 줄 맨 앞에 16 · 앱 기록 ${JSON.stringify(poke?.recent)} ${JSON.stringify(log.match(/^poke dex .*$/gm))}`),
+      ];
     },
   },
   {

@@ -1233,9 +1233,8 @@ function leadTick() {
 
 // ── 채팅 없이 한도 (STA-21, #104 — POL-AGENT-02 rules 1 … 1-6) ──────────────────────────────────
 // Codex: its app server, on a timer too. Claude: only when turned on (asked once); the login read by the core
-// when it's turned on, when the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d · the dashboard),
-// and by itself at the start and when the token expires — not after a "no" (limits.cjs, #115 A1). The timer
-// uses the token kept in memory. Results go to the windows as "limits" — they merge them like an agent's report
+// when it's turned on and when the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d · the dashboard) with
+// no token in memory that works — never by itself (limits.cjs, #136). The timer uses the token kept in memory. Results go to the windows as "limits" — they merge them like an agent's report
 const limitsState = { claude: { at: 0, error: null }, codex: { at: 0, error: null } };
 let limitsBusy = null, limitsLast = 0, limitsResetTimer = null;
 const codexCmd = () => (TEST ? process.env.CVIM_LIMITS_CODEX_CMD || null : agents.where("codex"));
@@ -1252,7 +1251,8 @@ async function limitsRefresh({ user = false } = {}) {
       const r = await job;
       limitsState[key] = r.error ? { ...limitsState[key], error: r.error } : { at: Date.now(), error: null };
       if (!r.error) { usageMerge(key, { five_hour: r.five_hour, seven_day: r.seven_day }); broadcast("limits", { key, five_hour: r.five_hour, seven_day: r.seven_day }); }
-      logLine(`limits ${key} ${r.error || "ok"}${user ? " (asked)" : ""}${r.how ? ` keychain=${r.how}` : ""}`); // how the token came: the 진단 정보 shows whether macOS asked (#124)
+      // how the token came and how long the Keychain took (a prompt answered: seconds) — the 진단 정보 shows whether macOS asked (#124 #136)
+      logLine(`limits ${key} ${r.error || "ok"}${user ? " (asked)" : ""}${r.how ? ` keychain=${r.how}` : ""}${r.ms != null ? ` ${r.ms}ms` : ""}`);
     }
   })();
   try { await limitsBusy; } finally { limitsBusy = null; }
@@ -1278,7 +1278,7 @@ async function limitsConsent() {
       + "· 보내는 것: 로그인 토큰(Anthropic에만). 대화·폴더·파일은 보내지 않아요\n"
       + "· 토큰은 메모리에만 두고 저장하지 않아요\n"
       + "· 공개되지 않은 주소라 언제든 바뀌거나 막힐 수 있어요. Anthropic 약관상 허용되는지 Tamer는 확인하지 못했어요\n"
-      + "· 켤 때·Tamer가 뜰 때·로그인이 만료됐을 때·'한도 새로 고침'을 누를 때 macOS가 키체인 확인 창을 띄울 수 있어요(요청한 프로그램: Tamer의 cvim-core). '항상 허용'을 누르면 다음부터 안 떠요 — 그 허용은 Tamer의 cvim-core에만 붙어요. '거부'하면 이번 실행 동안은 다시 묻지 않아요(누를 때만)\n"
+      + "· 키체인은 켤 때와 '한도 새로 고침'을 누를 때만 읽어요 — 읽어 둔 로그인이 아직 쓸 수 있으면 누르더라도 안 읽어요. 그때 macOS가 키체인 확인 창을 띄울 수 있어요(요청한 프로그램: Tamer의 cvim-core, 허용은 그 프로그램에만). Claude Code가 로그인을 갱신하면 macOS가 '항상 허용'을 지워 다시 물을 수 있어요. '거부'하면 다시 누를 때까지 묻지 않아요\n"
       + "· 켜지 않으면 지금처럼 Claude가 응답할 때 받은 값을 써요. 설정 › 일반 › 한도에서 언제든 바꿀 수 있어요",
   });
   return r.response === 0;
@@ -1410,7 +1410,7 @@ function popoverPlace(bounds) {
 function popoverShow(bounds) {
   if (!popover || popover.isDestroyed()) popoverCreate();
   popoverPlace(bounds);
-  popover.webContents.send("host-event", { event: "popover", payload: popoverModel() });
+  popover.webContents.send("host-event", { event: "popover", payload: { ...popoverModel(), shown: true } }); // shown: the card follows the wild one now (#137)
   if (TEST) popover.showInactive(); else { popover.show(); popover.focus(); }
   limitsRefresh(); // older than a minute → read again (STA-21 rule 3)
   logLine("popover open");
@@ -2957,7 +2957,7 @@ app.whenReady().then(() => {
   // the core starts at once (tabs and shells don't wait for the shell environment, #35); the
   // agents' log folders follow when the environment has been read
   core = new RustCore({ onEvent: onCoreEvent, log: logLine });
-  limits.useKeychain((services, read, silent) => core.request("claude_login", { services, read, silent })); // the core reads the Keychain (#115 A1) — silent: never a prompt (#124)
+  limits.useKeychain((services, read, silent) => core.request("claude_login", { services, read, silent })); // the core reads the Keychain (#115 A1) — silent (no prompt, #124) is no longer asked for (#136)
   titlesToCore(); // 세션 제목 (#99): the core reads no title until told it's on
   const envT0 = since();
   ready = agents.prepareEnv().then((env) => {

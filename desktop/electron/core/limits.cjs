@@ -4,9 +4,10 @@
 //   Claude — only when the user turned it on (asked once, POL-AGENT-02 rules 1-1 … 1-6): Claude Code's
 //            OAuth token, from <config>/.credentials.json or the macOS Keychain — the Keychain read by the
 //            core (cvim-core, keychain.rs — rule 1-3, #115 A1: macOS's prompt names it, never /usr/bin/security),
-//            which hands over the access token and its expiry only. Read when it's turned on, when the user
-//            presses 새로 고침, and by itself once at the app's start and once when the token in memory
-//            expires — not again by itself after a "no" or a token that came back already expired. Kept in
+//            which hands over the access token and its expiry only. Read only on the user's doing — turning
+//            it on, pressing 새로 고침 — and then only when no token in memory still works (#136: Claude Code
+//            writes its item anew at each renewal, about hourly, and macOS then drops the "Always Allow"
+//            given to cvim-core — a read by itself would ask for the password every few hours). Kept in
 //            memory only, sent to Anthropic's usage address (unofficial) and nowhere else. Never refreshed,
 //            never written back, never logged
 // Each window comes back as { pct, resets_at (unix s), at (ms, when read) } — the renderer merges it with
@@ -27,12 +28,11 @@ const USAGE_URL = "https://api.anthropic.com/api/oauth/usage";
 const SERVICE = "Claude Code-credentials";
 
 let token = null; // { value, exp (ms | null) } — memory only (rule 1-4)
-let auto = true; // may the timer read the login by itself (the app's start · an expired token) — not after a "no"
-let denied = false; // the last read: the Keychain prompt said no
+let lost = "token"; // why there's no token, until a press reads one: "token" (never read) | "expired" | "denied" | "login" …
 let keychain = null; // (services, read, silent) → the core's answer (main.cjs: cvim-core's claude_login)
 const KEYCHAIN_WAIT = 120000; // a prompt nobody answers: given up after 2 minutes (the core keeps waiting alone)
 // what a test can see (counts, never values) and set — allowed: an "Always Allow" given (a silent read works),
-// prompts: macOS's prompts shown (#124)
+// prompts: macOS's prompts shown (#124 — a read while allowed shows none)
 const test = { keychainReads: 0, prompts: 0, fetches: 0, status: 200, denied: false, allowed: false };
 
 // Claude Code keeps its login under "Claude Code-credentials", or with CLAUDE_CONFIG_DIR set, that name
@@ -59,25 +59,22 @@ const parseCred = (text) => {
     return o?.accessToken ? { value: String(o.accessToken), exp: Number.isFinite(Number(o.expiresAt)) ? Number(o.expiresAt) : null } : null;
   } catch { return null; }
 };
-// the token, read now → { token, how } | { error: "login" | "denied" | "asking" | "ask" }. First without macOS's prompt
-// (an "Always Allow" already given reads at once — how "silent"); only when that fails, and prompt allows it, with the
-// prompt (how "prompt") — else { error: "ask" } (#124). how "file": <config>/.credentials.json, no Keychain at all
-async function readToken(env, { prompt = true } = {}) {
+// the token, read now → { token, how } | { error: "login" | "denied" | "asking" } — macOS may ask first (how "read",
+// with how long it took: a prompt answered shows as seconds). A read without the prompt first isn't tried: it didn't
+// hold back the prompt once Claude Code had written its item anew (#136 — measured). how "file": <config>/.credentials.json
+async function readToken(env) {
   test.keychainReads++;
   if (TEST) {
     let t = null; try { t = TEST_DIR && parseCred(fs.readFileSync(path.join(TEST_DIR, "claude-cred.json"), "utf8")); } catch {}
-    if (test.allowed && !test.denied) return t ? { token: t, how: "silent" } : { error: "login" };
-    if (!prompt) return { error: "ask" };
-    test.prompts++;
+    if (!test.allowed || test.denied) test.prompts++;
     if (test.denied) return { error: "denied" };
     test.allowed = true; // the prompt answered "Always Allow"
-    return t ? { token: t, how: "prompt" } : { error: "login" };
+    return t ? { token: t, how: "read", ms: 0 } : { error: "login" };
   }
   try { const t = parseCred(fs.readFileSync(credFile(env), "utf8")); if (t) return { token: t, how: "file" }; } catch {}
-  let r = await ask(env, true, true), how = "silent";
-  if (r?.ask) { if (!prompt) return { error: "ask" }; r = await ask(env, true); how = "prompt"; }
-  if (typeof r?.token === "string" && r.token) return { token: { value: r.token, exp: Number.isFinite(r.exp) ? r.exp : null }, how };
-  return { error: r?.denied ? "denied" : r?.busy || r?.timeout ? "asking" : "login" };
+  const t0 = Date.now(), r = await ask(env, true), ms = Date.now() - t0;
+  if (typeof r?.token === "string" && r.token) return { token: { value: r.token, exp: Number.isFinite(r.exp) ? r.exp : null }, how: "read", ms };
+  return { error: r?.denied ? "denied" : r?.busy || r?.timeout ? "asking" : "login", ms };
 }
 
 const isoSec = (s) => { const t = Date.parse(s); return Number.isFinite(t) ? Math.floor(t / 1000) : null; };
@@ -107,41 +104,36 @@ function get(value) {
   });
 }
 
-// Claude: { five_hour, seven_day } or { error } — error "token" (none in memory and not read by itself: press
-// 새로 고침), "login" (no login found), "denied" (the Keychain prompt said no), "asking" (a prompt is open),
-// "expired" (dropped; read once more by itself, then press 새로 고침), "busy" (429), "net", "shape" (the answer changed)
+// Claude: { five_hour, seven_day, how } or { error } — error "token" (none in memory: press 새로 고침), "login" (no login
+// found), "denied" (the Keychain prompt said no), "asking" (a prompt is open), "expired" (dropped: press 새로 고침),
+// "busy" (429), "net", "shape" (the answer changed). The Keychain is read only when user (a press · turning it on) and no
+// token in memory works — one read a press (#136); how "kept": a press answered with the token in memory
 async function claude(env, { user = false } = {}) {
-  let fresh = false, how = null; // read from the login in this call · how (the app's log: silent | prompt | kept | file)
-  if (user) { // a press reads again, and lets the timer read by itself again
-    auto = true;
-    if (token && !(token.exp && token.exp < Date.now())) {
-      // one that still works is kept unless a read without a prompt finds another (an account switched, a renewed token):
-      // no prompt over a token we can use (#124 — "Always Allow" given, then a press asked again)
-      const r = await readToken(env, { prompt: false });
-      if (r.token) { token = r.token; fresh = true; how = r.how; } else how = "kept";
-    } else token = null;
-  }
+  let how = null, ms = null, read = false;
+  if (token?.exp && token.exp < Date.now()) { token = null; lost = "expired"; }
+  if (user && token) how = "kept";
   for (;;) {
     if (!token) {
-      if (!auto) return { error: denied ? "denied" : "token" };
+      if (!user || read) return { error: lost };
+      read = true;
       const r = await readToken(env);
-      fresh = true; how = r.how || null;
-      if (!r.token) { if (r.error !== "asking") { auto = false; denied = r.error === "denied"; } return { error: r.error }; }
-      token = r.token; denied = false;
+      how = r.how || null; ms = r.ms ?? null;
+      if (!r.token) { if (r.error !== "asking") lost = r.error; return { error: r.error, how, ms }; }
+      token = r.token;
+      // one that came back expired: Claude Code hasn't renewed it yet (not used for a while)
+      if (token.exp && token.exp < Date.now()) { token = null; lost = "expired"; return { error: "expired", how, ms }; }
     }
-    // expired: read once more (Claude Code may have renewed it) — one that comes back expired stops the timer's reads
-    if (token.exp && token.exp < Date.now()) { token = null; if (fresh) { auto = false; return { error: "expired" }; } continue; }
     const r = await get(token.value);
-    if (r.status === 401 || r.status === 403) { token = null; if (fresh) { auto = false; return { error: "expired" }; } continue; }
-    if (r.status === 429) return { error: "busy" };
-    if (r.status !== 200) return { error: "net" };
+    if (r.status === 401 || r.status === 403) { token = null; lost = "expired"; continue; } // a press reads once more
+    if (r.status === 429) return { error: "busy", how, ms };
+    if (r.status !== 200) return { error: "net", how, ms };
     let o = null; try { o = JSON.parse(r.body); } catch {}
     const u = parseUsage(o, Date.now());
-    return u ? { ...u, how } : { error: "shape" };
+    return u ? { ...u, how, ms } : { error: "shape", how, ms };
   }
 }
 // turned off: the token goes, and the next turning on starts over
-function forget() { token = null; auto = true; denied = false; }
+function forget() { token = null; lost = "token"; }
 
 // Codex: the app server, asked once and closed — the windows by their length (300 min → 5h,
 // 10080 → 7d), else primary → 5h, secondary → 7d (as in its session logs)

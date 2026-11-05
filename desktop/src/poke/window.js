@@ -73,6 +73,8 @@ async function openDex(sel, view) {
   const ri = sel ? d.recent?.findIndex((m) => m.id === sel) ?? -1 : d.recent?.findIndex((m) => m.new) ?? -1;
   dexState = { ...d, byNo, box, party, boxSel: view === "box" ? sel || null : null, view: "dex", zone: ri >= 0 ? "recent" : "grid", ri: Math.max(0, ri),
     sel: sel || d.recent?.[ri]?.id || party?.list?.[0]?.id || d.entries[0]?.id || 1 };
+  // the 진단 정보 shows what the "새로 잡은" row had when opened, and whether a kept search hid some (#137 — never the words)
+  invoke("poke_log", { line: `dex ${view || "-"} sel=${sel ? `#${sel}` : "-"} recent=${(d.recent || []).filter((m) => m.how !== "egg").slice(0, 3).map((m) => `#${m.id}`).join(",") || "-"} search=${dexQuery.trim() ? "on" : "off"}` }).catch(() => {});
   coins = await invoke("economy_state").catch(() => coins);
   dexTitle();
   const nWild = (d.recent || []).filter((m) => m.how !== "egg").length, nEgg = (d.recent || []).length - nWild;
@@ -1175,6 +1177,7 @@ function labState() {
     toast: $("#toast")?.classList.contains("show") ? $("#toast").textContent : null,
     focus: document.activeElement?.id || document.activeElement?.className?.toString().slice(0, 40) || null,
     incubator: on ? $("#box-grid .pk-inc-row")?.textContent || null : null, // #85
+    recent: on ? [...document.querySelectorAll("#dex-grid .cells.recent .cell:not(.nomatch)")].map((c) => Number(c.dataset.n)) : null, // the "새로 잡은" row shown (#137)
     bagInc: on ? { now: $("#box-grid .pk-inc-now")?.textContent.replace(/\s+/g, " ").trim() || null, soon: !!$("#box-grid .pk-inc-now.soon"),
       line: [...document.querySelectorAll("#box-grid .pk-incq")].map((c) => c.textContent.replace(/\s+/g, "")), empty: $("#box-grid .pk-inc-empty")?.textContent.replace(/\s+/g, " ").trim() || null,
       born: $("#box-grid .pk-inc-born")?.textContent.replace(/\s+/g, " ").trim() || null } : null,
