@@ -118,12 +118,12 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" || (e.metaKey && e.key.toLowerCase() === "w")) { e.preventDefault(); invoke("settings_close"); }
 });
 
-// 한도 (#104): when each was last read · Claude needs a press when the login wasn't read by itself (#115 A1)
+// 한도 (#104): when each was last read · Claude needs a press only where it can't be read by itself (#136)
 const agoText = (t) => { const m = Math.round((Date.now() - t) / MINUTE); return m < 1 ? "방금" : m < 60 ? `${m}분 전` : `${Math.round(m / 60)}시간 전`; };
 function limitsStateShow(v) {
   if (!v) return;
   const part = (name, on, s, needs) => (!on ? null : needs ? `${name} 눌러야 읽어요` : s?.error && !s.at ? `${name} 못 읽음` : s?.at ? `${name} ${agoText(s.at)}` : null);
-  const t = [part("Codex", v.codex, v.state?.codex), part("Claude", v.claude, v.state?.claude, !v.token || v.state?.claude?.error === "expired")].filter(Boolean).join(" · ");
+  const t = [part("Codex", v.codex, v.state?.codex), part("Claude", v.claude, v.state?.claude, v.press)].filter(Boolean).join(" · ");
   $("#set-limits-state").textContent = t || "상단 바 5h·7d를 눌러도 돼요";
 }
 listen("limits-state", (e) => limitsStateShow(e.payload));

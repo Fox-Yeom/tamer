@@ -20,6 +20,8 @@ const filesWith = (dir, needle) => { const out = []; if (!fs.existsSync(dir)) re
 // #45: a stand-in Claude for the shell (prints its arguments, feeds a status line through Tamer's script)
 const FAKE_CLAUDE = "#!/bin/sh\n# a stand-in Claude: says what it was started with, then — like the real one, which redraws its status line all the time — reports a status line through Tamer's script every second\necho \"fake-claude args: $*\"\nfor i in $(seq 30); do\n  now=$(date +%s)\n  printf '{\"model\":{\"id\":\"claude-opus-5-5\",\"display_name\":\"Opus 5.5\"},\"rate_limits\":{\"five_hour\":{\"used_percentage\":30,\"resets_at\":%s},\"seven_day\":{\"used_percentage\":12}},\"context_window\":{\"used_percentage\":21,\"context_window_size\":1000000}}' $((now+3600)) | bash \"$CVIM_ROOT/claude/statusline.sh\" >/dev/null\n  sleep 1\ndone\n";
 // sprites of different sizes for the overlay's notice (#138): the smallest · usual ones · Blissey · the tallest cached
+// a stand-in for what Claude Code writes when it renews its login (#136) — not a real value
+const RENEWED_LOGIN = "LAB-SECRET-TOKEN-136";
 const NOTE_IDS = [100, 16, 25, 134, 222, 242, 567];
 const noteSteps = (id) => [{ invoke: "overlay_note_test", args: { id } }, { wait: 500 }, { invoke: "overlay_fit_test", log: true }, { invoke: "overlay_note_test", args: { id: null, name: id } }, { wait: 300 }];
 // a 메인 파트너 one task away from evolving (Charmander Lv 15, evolves at 16 — #74): uid 1, the party's first and only
@@ -552,7 +554,7 @@ module.exports = [
     },
   },
   {
-    id: "limits-claude", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켬): 처음 한 번 묻고(가짜 답 '켜기') 그때 로그인 정보를 한 번 읽어 5시간 23%·주간 9% · 15분 자동 갱신은 메모리의 토큰으로(로그인 안 읽음) · 만료(401)면 토큰을 버리고 저절로는 안 읽음 — '눌러야 읽어요' · 메뉴바 새로 고침을 누르면 다시 읽음 · 토큰 값은 기록·데이터 어디에도 없음 (STA-21, POL-AGENT-02 1-2~1-4, #104 #136)",
+    id: "limits-claude", tags: ["smoke", "agent"], what: "채팅 없이 Claude 한도(켬): 처음 한 번 묻고(가짜 답 '켜기') 그때 로그인 정보를 한 번 읽어 5시간 23%·주간 9% · 15분 자동 갱신은 메모리의 토큰으로(로그인 안 읽음) · 만료(401)면 버리고 누르지 않아도 다시 읽음, '눌러야 읽어요'는 안 나옴 · 토큰 값은 기록·데이터 어디에도 없음 (STA-21, POL-AGENT-02 1-2~1-4, #104 #136)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_CONSENT: "yes" },
     files: {
@@ -563,13 +565,11 @@ module.exports = [
       { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true },
       { invoke: "limits_test", args: { auto: true }, log: true },
       { invoke: "limits_test", args: { status: 401, auto: true }, log: true }, { invoke: "tray_test", log: true },
-      { invoke: "limits_test", args: { status: 200, auto: true }, log: true },
-      { invoke: "tray_click_test", args: { path: ["↻ 한도 새로 고침 — Claude는 눌러야 읽어요"] }, log: true }, { wait: 800 },
-      { invoke: "limits_test", log: true }],
+      { invoke: "limits_test", args: { status: 200, auto: true }, log: true }],
     check: ({ log, box }) => {
       const st = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const trays = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => (JSON.parse(m[1]).items || []).map((i) => i.label || ""));
-      const [first, auto, expired, after, pressed] = st;
+      const [first, auto, expired, after] = st;
       const files = []; const walk = (d) => { for (const n of fs.readdirSync(d, { withFileTypes: true })) { const p = path.join(d, n.name); if (n.isDirectory()) walk(p); else files.push(p); } };
       try { walk(box.data); } catch {}
       const leaked = files.filter((f) => { try { return fs.readFileSync(f, "utf8").includes("LAB-SECRET-TOKEN-104"); } catch { return false; } });
@@ -578,41 +578,69 @@ module.exports = [
         ok(first?.keychainReads === 1 && first?.fetches === 1 && first?.token === true, `켤 때 로그인 정보 한 번 읽고 한 번 물음 ${JSON.stringify(first && { k: first.keychainReads, f: first.fetches, t: first.token })}`),
         ok(trays[0]?.some((l) => /Claude Code\s+5시간 23%.*주간 9%/.test(l)), `메뉴바 Claude 줄 ${JSON.stringify(trays[0]?.filter((l) => /%/.test(l)))}`),
         ok(auto?.keychainReads === 1 && auto?.fetches === 2, `자동 갱신은 메모리의 토큰으로 — 키체인 안 읽음 ${JSON.stringify(auto && { k: auto.keychainReads, f: auto.fetches })}`),
-        ok(expired?.token === false && expired?.state?.claude?.error === "expired" && expired?.keychainReads === 1 && expired?.fetches === 3 && trays[1]?.includes("↻ 한도 새로 고침 — Claude는 눌러야 읽어요"), `만료면 버리고 저절로는 안 읽음 → '눌러야 읽어요' ${JSON.stringify(expired && { s: expired.state?.claude, k: expired.keychainReads, f: expired.fetches })} ${JSON.stringify(trays[1]?.filter((l) => /↻/.test(l)))}`),
-        ok(after?.keychainReads === 1 && after?.fetches === 3 && after?.token === false, `그 뒤 자동 갱신도 로그인을 읽지 않음 ${JSON.stringify(after && { k: after.keychainReads, f: after.fetches })}`),
-        ok(/^lab-invoke tray_click_test true$/m.test(log) && pressed?.keychainReads === 2 && pressed?.token === true && !pressed?.state?.claude?.error, `누르면 다시 읽음 ${JSON.stringify(pressed && { k: pressed.keychainReads, t: pressed.token, s: pressed.state?.claude })}`),
+        ok(expired?.token === false && expired?.state?.claude?.error === "expired" && expired?.keychainReads === 2 && expired?.fetches === 4 && !trays[1]?.some((l) => /눌러야/.test(l)), `거부된 토큰은 버리고 다시 읽음, 눌러야 한다고 안 함 ${JSON.stringify(expired && { s: expired.state?.claude, k: expired.keychainReads, f: expired.fetches })} ${JSON.stringify(trays[1]?.filter((l) => /↻/.test(l)))}`),
+        ok(after?.keychainReads === 3 && after?.fetches === 5 && after?.token === true && !after?.state?.claude?.error && after?.prompts === 0, `누르지 않아도 다음 읽기에 이어짐, 확인 창 없음 ${JSON.stringify(after && { k: after.keychainReads, f: after.fetches, t: after.token, p: after.prompts })}`),
         ok(!log.includes("LAB-SECRET-TOKEN-104") && !leaked.length, `토큰 값이 앱 기록·데이터에 없어야 ${JSON.stringify(leaked.map((f) => path.relative(box.data, f)))}`),
       ];
     },
   },
   {
-    id: "limits-claude-start", tags: ["smoke", "agent"], what: "Claude 한도가 켜져 있어도 앱이 뜰 때 로그인을 저절로 읽지 않음 — '눌러야 읽어요'(#136: Claude Code의 갱신이 허용을 지워 뜰 때마다 암호 창) · 누르면 물음 · 확인 창에서 '거부'(가짜)면 자동 갱신은 안 읽고, 다시 누르면 다시 물음 (STA-21 규칙 2·8, POL-AGENT-02 1-3, #115 A1 #136)",
+    id: "limits-claude-start", tags: ["smoke", "agent"], what: "앱이 뜰 때 Claude 한도를 누르지 않아도 읽음 — 키체인의 토큰까지 만료면(Claude Code를 오래 안 씀) '눌러야 읽어요'가 아니라 조용히 기다리고, Claude Code가 갱신하면(가짜) 다음 읽기에 저절로 값이 들어옴 · 확인 창 없음 (STA-21 규칙 2·5·8, POL-AGENT-02 1-3, #136)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits") },
     files: {
-      "limits/claude-cred.json": '{"claudeAiOauth":{"accessToken":"LAB-SECRET-TOKEN-115","expiresAt":4102444800000}}',
+      "limits/claude-cred.json": '{"claudeAiOauth":{"accessToken":"LAB-SECRET-TOKEN-115","expiresAt":1000}}',
       "limits/claude-usage.json": '{"five_hour":{"utilization":31.0,"resets_at":"2099-01-01T05:00:00.000+00:00"},"seven_day":{"utilization":12.0,"resets_at":"2099-01-04T23:00:00+00:00"}}',
     },
     setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true } })); },
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
       { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true },
-      { invoke: "limits_deny_test", args: { on: true } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true },
-      { invoke: "limits_test", args: { auto: true }, log: true },
-      { invoke: "limits_deny_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true }],
+      { invoke: "limits_cred_test", args: { token: RENEWED_LOGIN, exp: 4102444800000 } }, { invoke: "limits_test", args: { auto: true }, log: true }, { invoke: "tray_test", log: true }],
     check: ({ log }) => {
-      const [start, deny, quiet, pressOk] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const [start, renewed] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const [t0, t1] = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => (JSON.parse(m[1]).items || []).map((i) => i.label || ""));
       return [
-        ok(!/^limits ask$/m.test(log) && start?.keychainReads === 0 && start?.prompts === 0 && start?.token === false && t0?.includes("↻ 한도 새로 고침 — Claude는 눌러야 읽어요"), `앱이 뜰 때 저절로 안 읽음 — '눌러야 읽어요' ${JSON.stringify(start && { k: start.keychainReads, t: start.token })} ${JSON.stringify(t0?.filter((l) => /↻/.test(l)))}`),
-        ok(deny?.state?.claude?.error === "denied" && deny?.keychainReads === 1, `누르면 물음 — 거부 ${JSON.stringify(deny && { s: deny.state?.claude, k: deny.keychainReads })}`),
-        ok(quiet?.keychainReads === 1 && quiet?.state?.claude?.error === "denied", `거부 뒤 자동 갱신은 안 읽음 ${JSON.stringify(quiet && { s: quiet.state?.claude, k: quiet.keychainReads })}`),
-        ok(pressOk?.keychainReads === 2 && pressOk?.token === true && !pressOk?.state?.claude?.error && t1?.some((l) => /Claude Code\s+5시간 31%.*주간 12%/.test(l)), `다시 누르면 다시 물음(허용) → 5시간 31%·주간 12% ${JSON.stringify(pressOk && { k: pressOk.keychainReads, t: pressOk.token, s: pressOk.state?.claude })}`),
-        ok(!log.includes("LAB-SECRET-TOKEN-115"), "토큰 값이 앱 기록에 없음"),
+        ok(!/^limits ask$/m.test(log) && start?.keychainReads === 1 && start?.prompts === 0 && start?.token === false && start?.state?.claude?.error === "expired" && !start?.press && !t0?.some((l) => /눌러야/.test(l)), `앱이 뜰 때 저절로 읽음 — 만료여도 눌러야 한다고 안 함 ${JSON.stringify(start && { k: start.keychainReads, p: start.prompts, t: start.token, s: start.state?.claude })} ${JSON.stringify(t0?.filter((l) => /↻/.test(l)))}`),
+        ok(renewed?.keychainReads === 2 && renewed?.prompts === 0 && renewed?.token === true && !renewed?.state?.claude?.error && t1?.some((l) => /Claude Code\s+5시간 31%.*주간 12%/.test(l)), `Claude Code가 갱신하면 누르지 않아도 5시간 31%·주간 12% ${JSON.stringify(renewed && { k: renewed.keychainReads, t: renewed.token, s: renewed.state?.claude })}`),
+        ok(/^limits claude ok keychain=tool \d+ms$/m.test(log), "기록 keychain=tool"),
+        ok(!log.includes("LAB-SECRET-TOKEN"), "토큰 값이 앱 기록에 없음"),
       ];
     },
   },
   {
-    id: "limits-claude-press", tags: ["smoke", "agent"], what: "키체인 확인 창(#124 #136): 처음 누를 때 한 번 묻고('항상 허용' 가짜) · 그 뒤 새로 고침은 메모리의 토큰으로 — 키체인을 안 읽음(keychain=kept) · Claude Code가 항목을 다시 써 허용이 지워져도(가짜) 토큰이 통하면 묻지 않음 · Anthropic이 토큰을 거부한 뒤에도 저절로는 안 읽고, 누를 때만 다시 물음 — 어떻게 얻었는지·걸린 시간은 앱 기록에(값은 없음) (STA-21 규칙 2, POL-AGENT-02 1-3)",
+    id: "limits-claude-blocked", tags: ["smoke", "agent"], what: "`security`로 못 읽는 맥(가짜): 앱이 뜰 때 한 번만 해 보고 막힘 — 확인 창 없이 '눌러야 읽어요', 자동 갱신은 더 안 읽음 · 누를 때만 cvim-core 확인 창, '거부'(가짜)면 다시 누를 때까지 안 읽음 · 허용하면 값 · 그 토큰이 안 통해도 저절로는 안 읽음 (STA-21 규칙 2·8, POL-AGENT-02 1-3, POL-OS-01 2-1, #136)",
+    data: "owner", offline: true, mode: "direct", folders: ["a"],
+    env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits"), CVIM_TEST_LIMITS_TOOL: "no" },
+    files: {
+      "limits/claude-cred.json": '{"claudeAiOauth":{"accessToken":"LAB-SECRET-TOKEN-1361","expiresAt":4102444800000}}',
+      "limits/claude-usage.json": '{"five_hour":{"utilization":31.0,"resets_at":"2099-01-01T05:00:00.000+00:00"},"seven_day":{"utilization":12.0,"resets_at":"2099-01-04T23:00:00+00:00"}}',
+    },
+    setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true } })); },
+    steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
+      { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true },
+      { invoke: "limits_test", args: { auto: true }, log: true },
+      { invoke: "limits_deny_test", args: { on: true } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true },
+      { invoke: "limits_test", args: { auto: true }, log: true },
+      { invoke: "limits_deny_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, { invoke: "tray_test", log: true },
+      { invoke: "limits_test", args: { status: 401, auto: true }, log: true }, { invoke: "tray_test", log: true }],
+    check: ({ log }) => {
+      const [start, auto, deny, quiet, allow, gone] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const [t0, t1, t2] = [...log.matchAll(/^lab-invoke tray_test (.*)$/gm)].map((m) => (JSON.parse(m[1]).items || []).map((i) => i.label || ""));
+      const need = "↻ 한도 새로 고침 — Claude는 눌러야 읽어요", brief = (x) => x && { k: x.keychainReads, p: x.prompts, t: x.token, e: x.state?.claude?.error, press: x.press };
+      return [
+        ok(start?.keychainReads === 1 && start?.prompts === 0 && start?.token === false && start?.press === true && start?.state?.claude?.error === "press" && t0?.includes(need), `막히면 확인 창 없이 '눌러야 읽어요' ${JSON.stringify(brief(start))}`),
+        ok(auto?.keychainReads === 1 && auto?.prompts === 0, `자동 갱신은 더 안 읽음 ${JSON.stringify(brief(auto))}`),
+        ok(deny?.keychainReads === 2 && deny?.prompts === 1 && deny?.state?.claude?.error === "denied" && deny?.press === true, `누르면 확인 창 — 거부 ${JSON.stringify(brief(deny))}`),
+        ok(quiet?.keychainReads === 2 && quiet?.prompts === 1, `거부 뒤 자동 갱신은 안 읽음 ${JSON.stringify(brief(quiet))}`),
+        ok(allow?.keychainReads === 3 && allow?.prompts === 2 && allow?.token === true && !allow?.press && t1?.some((l) => /Claude Code\s+5시간 31%.*주간 12%/.test(l)) && !t1?.includes(need), `허용하면 값 ${JSON.stringify(brief(allow))}`),
+        ok(gone?.keychainReads === 3 && gone?.token === false && gone?.press === true && t2?.includes(need), `그 토큰이 안 통해도 저절로는 안 읽음 ${JSON.stringify(brief(gone))}`),
+        ok(/^limits claude ok \(asked\) keychain=read \d+ms$/m.test(log), "기록 keychain=read"),
+        ok(!log.includes("LAB-SECRET-TOKEN-1361"), "토큰 값이 앱 기록에 없음"),
+      ];
+    },
+  },
+  {
+    id: "limits-claude-press", tags: ["smoke", "agent"], what: "새로 고침을 눌러도 쓸 수 있는 토큰이 있으면 키체인을 안 읽음(keychain=kept) — 메모리의 토큰으로 물음 · Anthropic이 토큰을 거부한 뒤 누르면 한 번 다시 읽음 · 확인 창 없음 — 어떻게 얻었는지·걸린 시간은 앱 기록에(값은 없음) (STA-21 규칙 2, POL-AGENT-02 1-3, #124 #136)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     env: { CVIM_TEST_LIMITS: (box) => path.join(box.dir, "limits") },
     files: {
@@ -621,21 +649,20 @@ module.exports = [
     },
     setup: (box) => { const f = path.join(box.data, "ui", "settings.json"); const cur = fs.existsSync(f) ? JSON.parse(fs.readFileSync(f, "utf8")) : {}; fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, JSON.stringify({ ...cur, limits: { ...(cur.limits || {}), claude: true } })); },
     steps: [{ until: "tabs.0" }, { wait: 1500 }, { call: "closeDex" }, { wait: 6000 },
-      { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // the first press: one prompt, "Always Allow"
+      { invoke: "limits_test", log: true }, // read by itself at the start
       { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // a press: the token in memory, no read
-      { invoke: "limits_allow_test", args: { on: false } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // allowance gone: still no read
-      { invoke: "limits_test", args: { status: 401, auto: true }, log: true }, // no longer accepted: dropped, not read by itself
+      { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true },
+      { invoke: "limits_test", args: { status: 401 } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }, // refused: one read, refused again
       { invoke: "limits_test", args: { status: 200 } }, { invoke: "limits_refresh", args: { user: true } }, { invoke: "limits_test", log: true }],
     check: ({ log }) => {
-      const [first, press, kept, expired, after] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const [start, press, kept, refused, after] = [...log.matchAll(/^lab-invoke limits_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
       const how = [...log.matchAll(/^limits claude (\S+) \(asked\) keychain=(\w+)(?: (\d+)ms)?$/gm)].map((m) => `${m[1]}:${m[2]}${m[3] != null ? ":ms" : ""}`);
       return [
-        ok(first?.prompts === 1 && first?.keychainReads === 1 && first?.token === true && !first?.state?.claude?.error, `처음 누를 때 한 번 물음 ${JSON.stringify(first && { p: first.prompts, k: first.keychainReads, t: first.token })}`),
-        ok(press?.prompts === 1 && press?.keychainReads === 1 && press?.fetches === 2, `그 뒤 새로 고침은 키체인을 안 읽음 ${JSON.stringify(press && { p: press.prompts, k: press.keychainReads, f: press.fetches })}`),
-        ok(kept?.prompts === 1 && kept?.keychainReads === 1 && kept?.token === true && !kept?.state?.claude?.error, `허용이 지워져도 토큰이 통하면 안 물음 ${JSON.stringify(kept && { p: kept.prompts, k: kept.keychainReads, t: kept.token })}`),
-        ok(expired?.prompts === 1 && expired?.keychainReads === 1 && expired?.state?.claude?.error === "expired", `거부된 토큰은 버리고 저절로는 안 읽음 ${JSON.stringify(expired && { p: expired.prompts, k: expired.keychainReads, s: expired.state?.claude })}`),
-        ok(after?.prompts === 2 && after?.keychainReads === 2 && after?.token === true, `누를 때만 다시 물음 ${JSON.stringify(after && { p: after.prompts, k: after.keychainReads, t: after.token })}`),
-        ok(JSON.stringify(how) === JSON.stringify(["ok:read:ms", "ok:kept", "ok:kept", "ok:read:ms"]), `앱 기록의 keychain= ${JSON.stringify(how)}`),
+        ok(start?.keychainReads === 1 && start?.prompts === 0 && start?.token === true && !start?.state?.claude?.error, `앱이 뜰 때 저절로 읽음, 확인 창 없음 ${JSON.stringify(start && { p: start.prompts, k: start.keychainReads, t: start.token })}`),
+        ok(press?.keychainReads === 1 && press?.fetches === 2 && kept?.keychainReads === 1 && kept?.fetches === 3, `누르더라도 토큰이 통하면 키체인을 안 읽음 ${JSON.stringify([press, kept].map((x) => x && { k: x.keychainReads, f: x.fetches }))}`),
+        ok(refused?.keychainReads === 2 && refused?.state?.claude?.error === "expired" && refused?.token === false, `거부되면 한 번 다시 읽음 ${JSON.stringify(refused && { k: refused.keychainReads, s: refused.state?.claude })}`),
+        ok(after?.keychainReads === 3 && after?.token === true && after?.prompts === 0, `다시 읽어 이어짐, 확인 창 없음 ${JSON.stringify(after && { p: after.prompts, k: after.keychainReads, t: after.token })}`),
+        ok(JSON.stringify(how) === JSON.stringify(["ok:kept", "ok:kept", "expired:tool:ms", "ok:tool:ms"]), `앱 기록의 keychain= ${JSON.stringify(how)}`),
         ok(!log.includes("LAB-SECRET-TOKEN-124"), "토큰 값이 앱 기록에 없음"),
       ];
     },
@@ -2290,31 +2317,6 @@ sleep 40
     },
   },
   {
-    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 기본 배경 0%라 처음부터 최소 모드(#100), 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 알림 옆 잡기 창(#119, 끌어서 옮김), 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
-    data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1" },
-    setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: true, next: { id: 16, shiny: false } })),
-    steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
-      { invoke: "settings_get", log: true }, { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
-      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
-      { invoke: "settings_set", args: { patch: { overlay: { alpha: 20 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
-      { invoke: "settings_set", args: { patch: { overlay: { minimal: "never" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
-      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82, shadow: false } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
-      { invoke: "settings_set", args: { patch: { overlay: { minimal: "always" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
-      { invoke: "overlay_tip_test", log: true },
-      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 1500 },
-      { invoke: "overlay_dom_test", log: true },
-      { invoke: "settings_set", args: { patch: { overlay: { alpha: 0 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true }, // #92
-      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82 } } } },
-      { invoke: "wild_open_test" }, { wait: 1500 }, { invoke: "catch_read_test", log: true }, { invoke: "catch_move_test", args: { dx: -60, dy: -40 }, log: true }, { invoke: "catch_test", args: { open: false } },
-      { invoke: "settings_set", args: { patch: { overlay: { minimal: "bogus" } } } }, { invoke: "settings_get", log: true },
-      { invoke: "overlay_show_test", args: { on: false } }],
-    check: ({ probe, log, box }) => {
-      const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
-      const [deflt, first, clear, never, flat, always, wild, zero] = dom;
-      const alphaOf = (c) => { const m = /rgba?\(([^)]*)\)/.exec(c || ""); const p = m ? m[1].split(",").map(Number) : []; return p.length === 4 ? p[3] : p.length === 3 ? 1 : null; };
-    },
-  },
-  {
     id: "overlay-note-fit", tags: ["smoke", "app", "poke"], what: "바탕화면 알림이 창 안에 다 들어옴(#138): 그림 크기가 다른 포켓몬 일곱 — 카드를 누른 뒤에도(전엔 누름이 끝나지 않아 창이 카드를 안 따라가 알림 위가 잘림), 알림을 누른 뒤 사라지면 창이 다시 줄고, 끄는 동안 바뀐 크기는 놓을 때 따라감 (STA-15 규칙 3)",
     data: "owner", offline: true, mode: "direct", folders: ["a"],
     steps: [{ until: "tabs.0" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
@@ -2341,6 +2343,31 @@ sleep 40
         ok(during && during.win < during.stack, `끄는 동안엔 창 크기가 그대로여야 ${JSON.stringify(during)}`),
         ok(inside(dropped), `놓으면 끄는 동안 바뀐 크기를 따라가야 ${JSON.stringify(dropped)}`),
       ];
+    },
+  },
+  {
+    id: "overlay-minimal", tags: ["smoke", "app", "poke"], what: "오버레이 최소 모드(배경 30% 이하·항상·안 씀): 기본 배경 0%라 처음부터 최소 모드(#100), 글자 없이 파트너+몬스터볼, 그림자는 투명도를 따르고 끌 수 있음, 야생은 작은 알림 → 누르면 알림 옆 잡기 창(#119, 끌어서 옮김), 마우스 한 줄이 생겨도 파트너가 안 밀림 (#63 #65 #66 #68)",
+    data: "owner", offline: true, mode: "direct", folders: ["a", "b"], env: { CVIM_WILD_CHANCE: "1" },
+    setup: (box) => fs.writeFileSync(path.join(box.data, "wild.json"), JSON.stringify({ enabled: true, next: { id: 16, shiny: false } })),
+    steps: [{ until: "tabs.1" }, { wait: 1200 }, { call: "closeDex" }, { wait: 300 },
+      { invoke: "settings_get", log: true }, { invoke: "overlay_show_test", args: { on: true } }, { wait: 800 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 20 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "never" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82, shadow: false } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "always" } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true },
+      { invoke: "overlay_tip_test", log: true },
+      { invoke: "agent_state_test", args: { ws: "$ws", from: "idle", to: "thinking" } }, { invoke: "agent_state_test", args: { ws: "$ws", from: "thinking", to: "done" } }, { wait: 1500 },
+      { invoke: "overlay_dom_test", log: true },
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 0 } } } }, { wait: 600 }, { invoke: "overlay_dom_test", log: true }, // #92
+      { invoke: "settings_set", args: { patch: { overlay: { alpha: 82 } } } },
+      { invoke: "wild_open_test" }, { wait: 1500 }, { invoke: "catch_read_test", log: true }, { invoke: "catch_move_test", args: { dx: -60, dy: -40 }, log: true }, { invoke: "catch_test", args: { open: false } },
+      { invoke: "settings_set", args: { patch: { overlay: { minimal: "bogus" } } } }, { invoke: "settings_get", log: true },
+      { invoke: "overlay_show_test", args: { on: false } }],
+    check: ({ probe, log, box }) => {
+      const dom = [...log.matchAll(/^lab-invoke overlay_dom_test (.*)$/gm)].map((m) => JSON.parse(m[1]));
+      const [deflt, first, clear, never, flat, always, wild, zero] = dom;
+      const alphaOf = (c) => { const m = /rgba?\(([^)]*)\)/.exec(c || ""); const p = m ? m[1].split(",").map(Number) : []; return p.length === 4 ? p[3] : p.length === 3 ? 1 : null; };
       const gets = [...log.matchAll(/^lab-invoke settings_get (.*)$/gm)].map((m) => JSON.parse(m[1])), got = gets.at(-1) || {};
       let saved = null; try { saved = JSON.parse(fs.readFileSync(path.join(box.data, "ui", "settings.json"), "utf8")); } catch {}
       const none = (sh) => !sh || sh === "none" || /rgba\(0, 0, 0, 0\)/.test(sh);

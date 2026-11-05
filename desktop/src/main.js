@@ -1101,7 +1101,7 @@ $("#usage").addEventListener("click", (e) => {
   toast("한도를 새로 읽는 중…");
   invoke("limits_refresh", { user: true }).then((v) => {
     const err = v?.claude && v.state?.claude?.error;
-    if (err) toast(err === "login" ? "Claude 로그인 정보를 찾지 못했어요 — Claude Code에 로그인해 주세요" : err === "denied" ? "키체인 확인 창에서 거부했어요 — 다시 누르면 다시 물어요" : err === "asking" ? "키체인 확인 창이 열려 있어요 — 답하면 읽어요" : err === "expired" ? "Claude 로그인이 만료됐어요 — Claude Code를 한 번 쓰고 다시 눌러 주세요" : "Claude 한도를 읽지 못했어요 — 응답할 때 받은 값을 써요");
+    if (err) toast(err === "login" ? "Claude 로그인 정보를 찾지 못했어요 — Claude Code에 로그인해 주세요" : err === "denied" ? "키체인 확인 창에서 거부했어요 — 다시 누르면 다시 물어요" : err === "asking" ? "키체인 확인 창이 열려 있어요 — 답하면 읽어요" : err === "expired" ? "Claude 로그인이 만료됐어요 — Claude Code를 쓰면 저절로 다시 읽어요" : "Claude 한도를 읽지 못했어요 — 응답할 때 받은 값을 써요");
   }).catch(() => {});
 });
 const live = (w) => w && (w.resets_at == null || w.resets_at * 1000 > Date.now());

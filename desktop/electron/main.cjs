@@ -1233,12 +1233,12 @@ function leadTick() {
 
 // ── 채팅 없이 한도 (STA-21, #104 — POL-AGENT-02 rules 1 … 1-6) ──────────────────────────────────
 // Codex: its app server, on a timer too. Claude: only when turned on (asked once); the login read by the core
-// when it's turned on and when the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d · the dashboard) with
-// no token in memory that works — never by itself (limits.cjs, #136). The timer uses the token kept in memory. Results go to the windows as "limits" — they merge them like an agent's report
+// whenever no token in memory works, the way Claude Code reads it — no prompt, no press needed (limits.cjs, #136). Where that
+// can't read it, only when the user presses 새로 고침 (tray · 설정 · the top bar's 5h / 7d · the dashboard). Results go to the windows as "limits" — they merge them like an agent's report
 const limitsState = { claude: { at: 0, error: null }, codex: { at: 0, error: null } };
 let limitsBusy = null, limitsLast = 0, limitsResetTimer = null;
 const codexCmd = () => (TEST ? process.env.CVIM_LIMITS_CODEX_CMD || null : agents.where("codex"));
-const limitsView = () => ({ codex: settings.limits.codex, claude: settings.limits.claude === true, token: limits.hasToken(), state: limitsState });
+const limitsView = () => ({ codex: settings.limits.codex, claude: settings.limits.claude === true, token: limits.hasToken(), press: limits.needsPress(), state: limitsState });
 async function limitsRefresh({ user = false } = {}) {
   if (limitsBusy) return limitsBusy;
   if (!user && Date.now() - limitsLast < 60000) return limitsView();
@@ -1278,7 +1278,8 @@ async function limitsConsent() {
       + "· 보내는 것: 로그인 토큰(Anthropic에만). 대화·폴더·파일은 보내지 않아요\n"
       + "· 토큰은 메모리에만 두고 저장하지 않아요\n"
       + "· 공개되지 않은 주소라 언제든 바뀌거나 막힐 수 있어요. Anthropic 약관상 허용되는지 Tamer는 확인하지 못했어요\n"
-      + "· 키체인은 켤 때와 '한도 새로 고침'을 누를 때만 읽어요 — 읽어 둔 로그인이 아직 쓸 수 있으면 누르더라도 안 읽어요. 그때 macOS가 키체인 확인 창을 띄울 수 있어요(요청한 프로그램: Tamer의 cvim-core, 허용은 그 프로그램에만). Claude Code가 로그인을 갱신하면 macOS가 '항상 허용'을 지워 다시 물을 수 있어요. '거부'하면 다시 누를 때까지 묻지 않아요\n"
+      + "· 키체인은 읽어 둔 로그인이 더는 안 통할 때 저절로 읽어요(앱을 켤 때도). Claude Code가 자기 로그인을 읽는 방식(macOS의 security 명령)과 같아서 보통 확인 창이 뜨지 않고, 읽는 순간도 따로 보이지 않아요\n"
+        + "· 그 방식으로 못 읽는 맥에서는 '한도 새로 고침'을 누를 때만 macOS 확인 창이 떠요(요청한 프로그램: Tamer의 cvim-core, 허용은 그 프로그램에만). '거부'하면 다시 누를 때까지 묻지 않아요\n"
       + "· 켜지 않으면 지금처럼 Claude가 응답할 때 받은 값을 써요. 설정 › 일반 › 한도에서 언제든 바꿀 수 있어요",
   });
   return r.response === 0;
@@ -1729,7 +1730,6 @@ function overlayWants({ focused = !!BrowserWindow.getFocusedWindow(), quiet = QU
   // no tab (in the menu bar only, #106): the party shows instead (#107, STA-15 rule 11)
   return !!((away || overlayForced || overlayTry) && (workspaces.size || (o.partner && partner.party().list.length)) && o.on && something);
 }
-let overlayFront = null; // tests: would it show with Tamer in front — logged when it changes (#97)
 // the cards' size, kept during a press and applied when it ends (#138 — a click that never ended it left the window
 // short of the cards, cutting off what's on top)
 let overlaySize = null;
@@ -1741,6 +1741,7 @@ function overlayFit() {
   if (b.width === w && b.height === h) return;
   overlay.setBounds({ x: b.x + b.width - w, y: b.y + b.height - h, width: w, height: h });
 }
+let overlayFront = null; // tests: would it show with Tamer in front — logged when it changes (#97)
 function overlaySync() {
   if (!overlay || overlay.isDestroyed()) return;
   if (draining) { overlay.hide(); return; } // quitting (#54): the hidden window's blur mustn't bring it back
@@ -1895,13 +1896,13 @@ const overlayCommands = {
     const [wx, wy] = overlay.getPosition();
     if (phase === "start") drag = { dx: x - wx, dy: y - wy };
     else if (phase === "move" && drag) overlay.setPosition(x - drag.dx, y - drag.dy);
-    else if (phase === "end" && drag) {
     else if (phase === "cancel") { drag = null; overlayFit(); } // a click: no move (#138)
+    else if (phase === "end" && drag) {
       drag = null;
       const [w, h] = overlay.getSize();
       writeFile(OVERLAY_POS, JSON.stringify({ right: wx + w, bottom: wy + h, collapsed: overlayCollapsed }));
-    }
       overlayFit();
+    }
   },
   sprite_b64: (args) => commands.sprite_b64(args),
   wild_throw: (args) => commands.wild_throw(args),
@@ -2638,9 +2639,10 @@ const testCommands = {
     if (process.env.CVIM_DESKTOP_SHOTS) fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, "overlay-evolve.png"), (await overlay.webContents.capturePage()).toPNG());
     return true;
   },
-  // auto: the timer's read now (as if a minute had passed — the login only as limits.cjs allows by itself)
+  // auto: the timer's read now (as if a minute had passed)
   limits_deny_test({ on }) { limits.test.denied = !!on; if (on) limits.test.allowed = false; return true; }, // the Keychain prompt answered "no" (#115 A1)
   limits_allow_test({ on }) { limits.test.allowed = !!on; return true; }, // an "Always Allow" given / gone (Claude Code wrote its item anew — #124)
+  limits_cred_test({ token, exp }) { fs.writeFileSync(path.join(process.env.CVIM_TEST_LIMITS, "claude-cred.json"), JSON.stringify({ claudeAiOauth: { accessToken: token, expiresAt: exp } })); return true; }, // Claude Code renewed its login (#136)
   async limits_test({ status, auto } = {}) {
     if (status != null) limits.setTestStatus(status);
     if (auto) { limitsLast = 0; await limitsRefresh(); }
@@ -2836,8 +2838,6 @@ const testCommands = {
     fs.writeFileSync(path.join(process.env.CVIM_DESKTOP_SHOTS, `${String(name).replace(/[^\w-]/g, "")}.png`), img.toPNG());
   },
   overlay_bounds_test: () => overlay.getBounds(),
-  overlay_visible_test: () => !!overlay && !overlay.isDestroyed() && overlay.isVisible(),
-  overlay_want_test: ({ focused }) => overlayWants({ focused: !!focused, quiet: false }), // would it show with Tamer in front / not (#97 #98)
   // tests (#138): the page's own mouse listeners — a press and release on what sel finds; move: a drag; down / up
   // false: stop or go on halfway, to do something during the press
   overlay_press_test: ({ sel, move = 0, down = true, up = true }) => overlay.webContents.executeJavaScript(`(() => {
@@ -2856,6 +2856,8 @@ const testCommands = {
       return { win: innerHeight, stack: s.offsetHeight, top: n ? Math.round(n.top) : null, noteH: n ? Math.round(n.height) : null, img: i ? [i.offsetWidth, i.offsetHeight, i.naturalWidth, i.naturalHeight] : null }; })()`);
     return { ...p, bounds: overlay.getBounds() };
   },
+  overlay_visible_test: () => !!overlay && !overlay.isDestroyed() && overlay.isVisible(),
+  overlay_want_test: ({ focused }) => overlayWants({ focused: !!focused, quiet: false }), // would it show with Tamer in front / not (#97 #98)
   overlay_payload_test: () => overlayPayload(),
   diag_test: () => diagnostics(),
   // the app menu's first submenu labels, and whether the notices ship with the app
@@ -2981,7 +2983,7 @@ app.whenReady().then(() => {
   // the core starts at once (tabs and shells don't wait for the shell environment, #35); the
   // agents' log folders follow when the environment has been read
   core = new RustCore({ onEvent: onCoreEvent, log: logLine });
-  limits.useKeychain((services, read, silent) => core.request("claude_login", { services, read, silent })); // the core reads the Keychain (#115 A1) — silent (no prompt, #124) is no longer asked for (#136)
+  limits.useKeychain((services, read, tool) => core.request("claude_login", { services, read, tool })); // the core reads the Keychain (#115 A1) — tool: the way Claude Code does (#136)
   titlesToCore(); // 세션 제목 (#99): the core reads no title until told it's on
   const envT0 = since();
   ready = agents.prepareEnv().then((env) => {

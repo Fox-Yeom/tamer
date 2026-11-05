@@ -206,11 +206,11 @@ fn read_login(id: Value, p: &Value) {
         return;
     }
     let list = services(p);
-    let silent = p["silent"] == true; // #124: without a prompt — { "ask": true } when macOS would have asked
+    let tool = p["tool"] == true; // #136: the way Claude Code reads it — { "ask": true } where that doesn't answer
     std::thread::spawn(move || {
         let mut out = json!({ "found": false });
         for s in &list {
-            match keychain::read(s, silent) {
+            match if tool { keychain::read_tool(s, keychain::TOOL_WAIT) } else { keychain::read(s) } {
                 keychain::Found::Token { value, exp } => {
                     out = json!({ "token": value, "exp": exp });
                     break;

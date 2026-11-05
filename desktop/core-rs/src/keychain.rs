@@ -1,10 +1,11 @@
-//! Claude Code's login in the macOS Keychain (STA-21 rules 2 · 9, #115 A1 — POL-AGENT-02 rule 1-3), read
-//! by the core itself through the Security framework: macOS's prompt then names this program, and its
-//! "Always Allow" applies to it alone. Never `/usr/bin/security` — an "Always Allow" given to that lets
-//! any program on the Mac take the token. Only items named "Claude Code-credentials" (with
-//! CLAUDE_CONFIG_DIR: that name, "-" and 8 hex); only the access token and its expiry leave this module —
-//! the refresh token and the rest of the item are dropped here. Nothing is logged or written.
-//! The system frameworks are declared directly (no crate).
+//! Claude Code's login in the macOS Keychain (STA-21 rules 2 · 9, #115 A1, #136 — POL-AGENT-02 rule 1-3). Two ways, in
+//! order: `read_tool` the way Claude Code reads its own item — `/usr/bin/security`, which it keeps on the item's list,
+//! so macOS doesn't ask and Claude Code writing the item anew doesn't undo it (an "Always Allow" given to this program
+//! goes each time, about hourly); and where that doesn't answer, on a press only, `read` by the core itself through the
+//! Security framework: macOS's prompt then names this program, and its "Always Allow" applies to it alone. Only items
+//! named "Claude Code-credentials" (with CLAUDE_CONFIG_DIR: that name, "-" and 8 hex); only the access token and its
+//! expiry leave this module — the refresh token and the rest of the item are dropped here. Nothing is logged or
+//! written. The system frameworks are declared directly (no crate).
 
 pub const SERVICE: &str = "Claude Code-credentials";
 
@@ -26,7 +27,7 @@ pub enum Found {
     NotFound,
     /// the user said no (Deny / Cancel) or there was no one to ask
     Denied,
-    /// read without a prompt (silent) and macOS would have asked: not "Always Allow"ed yet (#124)
+    /// `security` didn't answer in time: macOS is asking here — cut off, so no "Always Allow" goes to that command (#136)
     NeedsAsk,
     Error(i32),
 }
@@ -67,16 +68,12 @@ mod sys {
         pub static kSecMatchLimit: CFTypeRef;
         pub static kSecMatchLimitOne: CFTypeRef;
         pub static kSecReturnData: CFTypeRef;
-        pub static kSecUseAuthenticationUI: CFTypeRef;
-        pub static kSecUseAuthenticationUIFail: CFTypeRef;
         pub fn SecItemCopyMatching(query: CFTypeRef, result: *mut CFTypeRef) -> i32;
     }
 }
 
-// silent: macOS mustn't ask (kSecUseAuthenticationUIFail) — an "Always Allow" already given reads at once, else
-// errSecInteractionNotAllowed (#124: read like this first, the prompt only when that fails)
 #[cfg(target_os = "macos")]
-fn copy_matching(service: &str, data: bool, silent: bool) -> (i32, Option<Vec<u8>>) {
+fn copy_matching(service: &str, data: bool) -> (i32, Option<Vec<u8>>) {
     use sys::*;
     const UTF8: u32 = 0x0800_0100;
     unsafe {
@@ -89,10 +86,6 @@ fn copy_matching(service: &str, data: bool, silent: bool) -> (i32, Option<Vec<u8
         if data {
             keys.push(kSecReturnData);
             values.push(kCFBooleanTrue);
-        }
-        if silent {
-            keys.push(kSecUseAuthenticationUI);
-            values.push(kSecUseAuthenticationUIFail);
         }
         let query = CFDictionaryCreate(std::ptr::null(), keys.as_ptr(), values.as_ptr(), keys.len() as CFIndex, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
         CFRelease(name);
@@ -114,7 +107,6 @@ fn copy_matching(service: &str, data: bool, silent: bool) -> (i32, Option<Vec<u8
 
 const NOT_FOUND: i32 = -25300; // errSecItemNotFound
 const DENIED: [i32; 3] = [-128, -25293, -25308]; // errSecUserCanceled · errSecAuthFailed · errSecInteractionNotAllowed
-const NOT_ALLOWED: i32 = -25308; // errSecInteractionNotAllowed: a silent read that would have prompted
 
 /// is the item there? Its attributes only — no prompt. None: couldn't tell
 #[cfg(target_os = "macos")]
@@ -122,32 +114,87 @@ pub fn exists(service: &str) -> Option<bool> {
     if !allowed(service) {
         return Some(false);
     }
-    match copy_matching(service, false, false).0 {
+    match copy_matching(service, false).0 {
         0 => Some(true),
         NOT_FOUND => Some(false),
         _ => None,
     }
 }
 
-/// the item's access token — macOS may ask the user (this waits for the answer); silent: never asks (NeedsAsk)
+// the item's text → what leaves this module; the text itself (refresh token too) doesn't stay around
 #[cfg(target_os = "macos")]
-pub fn read(service: &str, silent: bool) -> Found {
+fn token_in(mut bytes: Vec<u8>) -> Found {
+    let t = token_of(&bytes);
+    bytes.iter_mut().for_each(|b| *b = 0);
+    match t {
+        Some((value, exp)) => Found::Token { value, exp },
+        None => Found::Bad,
+    }
+}
+
+/// the item's access token — macOS may ask the user (this waits for the answer)
+#[cfg(target_os = "macos")]
+pub fn read(service: &str) -> Found {
     if !allowed(service) {
         return Found::NotFound;
     }
-    match copy_matching(service, true, silent) {
-        (0, Some(mut bytes)) => {
-            let t = token_of(&bytes);
-            bytes.iter_mut().for_each(|b| *b = 0); // the item's text (refresh token too) doesn't stay around
-            match t {
-                Some((value, exp)) => Found::Token { value, exp },
-                None => Found::Bad,
-            }
-        }
+    match copy_matching(service, true) {
+        (0, Some(bytes)) => token_in(bytes),
         (NOT_FOUND, _) => Found::NotFound,
-        (NOT_ALLOWED, _) if silent => Found::NeedsAsk,
         (s, _) if DENIED.contains(&s) => Found::Denied,
         (s, _) => Found::Error(s),
+    }
+}
+
+/// how long `security` gets: it answers at once when it may read; past this, macOS is asking
+pub const TOOL_WAIT: std::time::Duration = std::time::Duration::from_secs(3);
+const TOOL_NOT_FOUND: i32 = 44; // `security`'s exit code for errSecItemNotFound
+
+/// the item's access token, the way Claude Code reads it: no prompt where it can (#136), cut off after `wait` where
+/// it can't. No shell, and the secret comes on its output — never in an argument
+#[cfg(target_os = "macos")]
+pub fn read_tool(service: &str, wait: std::time::Duration) -> Found {
+    if !allowed(service) {
+        return Found::NotFound;
+    }
+    run_tool("/usr/bin/security", &["find-generic-password", "-s", service, "-w"], wait)
+}
+
+#[cfg(target_os = "macos")]
+fn run_tool(program: &str, args: &[&str], wait: std::time::Duration) -> Found {
+    use std::io::Read;
+    use std::process::{Command, Stdio};
+    let Ok(mut child) = Command::new(program).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null()).spawn() else {
+        return Found::NeedsAsk;
+    };
+    let Some(mut out) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Found::NeedsAsk;
+    };
+    let reader = std::thread::spawn(move || {
+        let mut text = Vec::new();
+        let _ = out.read_to_end(&mut text);
+        text
+    });
+    let start = std::time::Instant::now();
+    let code = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status.code(),
+            Ok(None) if start.elapsed() < wait => std::thread::sleep(std::time::Duration::from_millis(10)),
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                break None;
+            }
+        }
+    };
+    let Some(code) = code else { return Found::NeedsAsk }; // cut off: its output isn't waited for
+    let text = reader.join().unwrap_or_default();
+    match code {
+        0 => token_in(text),
+        TOOL_NOT_FOUND => Found::NotFound,
+        _ => Found::Denied,
     }
 }
 
@@ -156,7 +203,11 @@ pub fn exists(_: &str) -> Option<bool> {
     Some(false)
 }
 #[cfg(not(target_os = "macos"))]
-pub fn read(_: &str, _: bool) -> Found {
+pub fn read(_: &str) -> Found {
+    Found::NotFound
+}
+#[cfg(not(target_os = "macos"))]
+pub fn read_tool(_: &str, _: std::time::Duration) -> Found {
     Found::NotFound
 }
 
@@ -172,8 +223,8 @@ mod tests {
         assert!(!allowed("Claude Code-credentials-zz1b2c3d"));
         assert!(!allowed("Claude Code-credentials2"));
         assert!(!allowed("github.com"));
-        assert_eq!(read("github.com", false), Found::NotFound);
-        assert_eq!(read("github.com", true), Found::NotFound);
+        assert_eq!(read("github.com"), Found::NotFound);
+        assert_eq!(read_tool("github.com", TOOL_WAIT), Found::NotFound); // never gets as far as the command
         assert_eq!(exists("Chrome Safe Storage"), Some(false));
     }
 
@@ -191,7 +242,24 @@ mod tests {
     #[test]
     fn missing_item() {
         assert_eq!(exists("Claude Code-credentials-00000000"), Some(false));
-        assert_eq!(read("Claude Code-credentials-00000000", false), Found::NotFound);
-        assert_eq!(read("Claude Code-credentials-00000000", true), Found::NotFound); // silent: same, no prompt
+        assert_eq!(read("Claude Code-credentials-00000000"), Found::NotFound);
+        assert_eq!(read_tool("Claude Code-credentials-00000000", TOOL_WAIT), Found::NotFound);
+    }
+
+    // what the command answers → what leaves here, with a stand-in for it: no Keychain involved
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn the_command_s_answers() {
+        use std::time::{Duration, Instant};
+        let sh = |script: &str, ms: u64| run_tool("/bin/sh", &["-c", script], Duration::from_millis(ms));
+        let item = r#"echo '{"claudeAiOauth":{"accessToken":"tok","refreshToken":"ref","expiresAt":5}}'"#;
+        assert_eq!(sh(item, 3000), Found::Token { value: "tok".into(), exp: Some(5) });
+        assert_eq!(sh("echo not-json", 3000), Found::Bad);
+        assert_eq!(sh("exit 44", 3000), Found::NotFound);
+        assert_eq!(sh("exit 51", 3000), Found::Denied);
+        let start = Instant::now();
+        assert_eq!(sh("sleep 30", 100), Found::NeedsAsk); // macOS asking: cut off, even with a child holding its output
+        assert!(start.elapsed() < Duration::from_secs(3));
+        assert_eq!(run_tool("/no/such/program", &[], Duration::from_millis(100)), Found::NeedsAsk);
     }
 }

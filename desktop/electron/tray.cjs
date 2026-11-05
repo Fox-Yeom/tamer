@@ -51,11 +51,11 @@ function trayModel({ tabs = [], usage = {}, settings, coins = null, prog = null,
     items.push({ label: `${name}  ${parts.join(" · ")}`, enabled: false });
   }
   if (!any) items.push({ label: "한도: 에이전트가 아직 알려 주지 않았어요", enabled: false });
-  // 한도 새로 고침 (#104): when it was last read; a turned-on Claude without a token reads only when pressed
+  // 한도 새로 고침 (#104): when it was last read; a Claude that can't be read by itself reads only when pressed (#136)
   if (limits && (limits.codex || limits.claude)) {
     const last = Math.max(limits.state?.claude?.at || 0, limits.state?.codex?.at || 0);
     const ago = last ? Math.max(0, Math.round((now - last) / 60000)) : null;
-    const need = limits.claude && (!limits.token || limits.state?.claude?.error === "expired");
+    const need = limits.claude && limits.press;
     items.push({ label: `↻ 한도 새로 고침${need ? " — Claude는 눌러야 읽어요" : ago != null ? ` (${ago ? `${ago}분 전` : "방금"})` : ""}`, act: "limits" });
   }
   // 🪙 포켓코인 (#72, SCREENS_P3 S10): one line, not clickable — never on the icon's text

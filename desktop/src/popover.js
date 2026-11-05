@@ -149,7 +149,7 @@ function drawLimits(m, now) {
   }
   const L = m.limits || {}, st = L.state || {};
   const last = Math.max(st.claude?.at || 0, st.codex?.at || 0);
-  const need = L.claude && (!L.token || st.claude?.error === "expired");
+  const need = L.claude && L.press;
   const note = need ? "Claude는 눌러야 읽어요" : last ? ago(last, now) : "";
   $("#pop-limits").innerHTML = `<div class="pop-h"><span>사용 한도</span>${L.codex || L.claude ? `<button id="pop-refresh" title="지금 다시 읽기">↻ 새로 고침${note ? ` · ${esc(note)}` : ""}</button>` : ""}</div>
     ${blocks.length ? blocks.join("") : '<div class="pop-limits-none">에이전트가 아직 알려 주지 않았어요</div>'}`;
